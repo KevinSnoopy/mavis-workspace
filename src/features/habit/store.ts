@@ -10,6 +10,9 @@ interface HabitStore {
   checkIns: CheckIn[]
   achievements: Achievement[]
   
+  // 矛盾分析与习惯的关联
+  analysisInsights: AnalysisInsight[]
+  
   // 习惯操作
   addHabit: (habit: Omit<Habit, 'id' | 'createdAt' | 'order'>) => void
   updateHabit: (id: string, updates: Partial<Habit>) => void
@@ -28,6 +31,16 @@ interface HabitStore {
   
   // 成就
   checkAchievements: (habitId: string) => Achievement[]
+  
+  // 矛盾分析关联
+  addAnalysisInsight: (insight: Omit<AnalysisInsight, 'id' | 'createdAt'>) => void
+}
+
+export interface AnalysisInsight {
+  id: string
+  mainConflict: string
+  suggestedHabits: string[]
+  createdAt: string
 }
 
 export const useHabitStore = create<HabitStore>()(
@@ -36,6 +49,7 @@ export const useHabitStore = create<HabitStore>()(
       habits: [],
       checkIns: [],
       achievements: [],
+      analysisInsights: [],
       
       addHabit: (habitData) => {
         const habit: Habit = {
@@ -190,9 +204,9 @@ export const useHabitStore = create<HabitStore>()(
         
         // 检查里程碑
         const milestones = [
-          { count: 7, name: '坚持一周', description: '连续打卡7天' },
-          { count: 30, name: '坚持一月', description: '连续打卡30天' },
-          { count: 100, name: '百次达人', description: '累计打卡100次' },
+          { count: 7, name: '坚持一周', description: '连续打卡7天', icon: '🏆' },
+          { count: 30, name: '坚持一月', description: '连续打卡30天', icon: '🏆' },
+          { count: 100, name: '百次达人', description: '累计打卡100次', icon: '🌟' },
         ]
         
         milestones.forEach((m) => {
@@ -237,6 +251,15 @@ export const useHabitStore = create<HabitStore>()(
         }
         
         return newAchievements
+      },
+      
+      addAnalysisInsight: (insight) => {
+        const newInsight: AnalysisInsight = {
+          ...insight,
+          id: Date.now().toString(),
+          createdAt: new Date().toISOString(),
+        }
+        set((state) => ({ analysisInsights: [newInsight, ...state.analysisInsights] }))
       },
     }),
     {
