@@ -4,8 +4,9 @@ import HomePage from './pages/HomePage'
 import AnalyzerPage from './pages/AnalyzerPage'
 import PracticePage from './pages/PracticePage'
 import HistoryPage from './pages/HistoryPage'
+import { HabitFlowPage } from './features/habit'
 
-type Page = 'home' | 'analyzer' | 'practice' | 'history'
+type Page = 'home' | 'analyzer' | 'practice' | 'history' | 'habitflow'
 
 function App() {
   const [currentPage, setCurrentPage] = useState<Page>('home')
@@ -16,6 +17,7 @@ function App() {
       case 'analyzer': return <AnalyzerPage onBack={() => setCurrentPage('home')} />
       case 'practice': return <PracticePage onBack={() => setCurrentPage('home')} />
       case 'history': return <HistoryPage onBack={() => setCurrentPage('home')} />
+      case 'habitflow': return <HabitFlowPage onBack={() => setCurrentPage('home')} />
     }
   }
 
@@ -31,7 +33,7 @@ function App() {
           {[
             { key: 'home', label: '首页', icon: '🏠' },
             { key: 'analyzer', label: '矛盾分析', icon: '⚖️' },
-            { key: 'practice', label: '实践', icon: '⚡' },
+            { key: 'habitflow', label: '习惯', icon: '⚡' },
             { key: 'history', label: '记录', icon: '📝' },
           ].map(item => (
             <button

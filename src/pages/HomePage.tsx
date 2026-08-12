@@ -1,4 +1,4 @@
-type Page = 'home' | 'analyzer' | 'practice' | 'history'
+type Page = 'home' | 'analyzer' | 'habitflow' | 'history'
 
 interface HomePageProps {
   onNavigate: (page: Page) => void
@@ -36,32 +36,40 @@ function HomePage({ onNavigate }: HomePageProps) {
         </div>
       </div>
 
-      {/* 今日实践 */}
+      {/* HabitFlow 习惯追踪卡片 */}
       <div 
-        onClick={() => onNavigate('practice')}
+        onClick={() => onNavigate('habitflow')}
         className="bg-[#1a1a2e] rounded-2xl p-5 mb-6 cursor-pointer active:scale-[0.98] transition-transform border border-white/5"
       >
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-3">
             <span className="text-2xl">⚡</span>
             <div>
-              <h2 className="font-bold">今日实践</h2>
-              <p className="text-[#a0a0b0] text-sm">闭环反馈循环</p>
+              <h2 className="font-bold">习惯追踪</h2>
+              <p className="text-[#a0a0b0] text-sm">建立并坚持好习惯</p>
             </div>
           </div>
-          <span className="text-xs px-2 py-1 bg-[#c41e3a]/20 text-[#c41e3a] rounded-full">进行中</span>
+          <span className="text-xs px-2 py-1 bg-[#22c55e]/20 text-[#22c55e] rounded-full">新功能</span>
         </div>
         
-        {/* 循环示意 */}
-        <div className="flex justify-between items-center py-3">
-          {['做', '记', '复', '改'].map((step, i) => (
-            <div key={i} className="flex items-center">
-              <div className="w-10 h-10 rounded-full bg-[#c41e3a]/20 flex items-center justify-center text-sm font-medium">
-                {step}
-              </div>
-              {i < 3 && <span className="mx-2 text-[#a0a0b0]">→</span>}
-            </div>
-          ))}
+        {/* 功能预览 */}
+        <div className="grid grid-cols-2 gap-3">
+          <div className="bg-[#0f0f1a] rounded-lg p-3">
+            <p className="text-lg mb-1">🎯</p>
+            <p className="text-xs text-[#a0a0b0]">创建习惯</p>
+          </div>
+          <div className="bg-[#0f0f1a] rounded-lg p-3">
+            <p className="text-lg mb-1">✅</p>
+            <p className="text-xs text-[#a0a0b0]">每日打卡</p>
+          </div>
+          <div className="bg-[#0f0f1a] rounded-lg p-3">
+            <p className="text-lg mb-1">📊</p>
+            <p className="text-xs text-[#a0a0b0]">进度统计</p>
+          </div>
+          <div className="bg-[#0f0f1a] rounded-lg p-3">
+            <p className="text-lg mb-1">🔥</p>
+            <p className="text-xs text-[#a0a0b0]">连续提醒</p>
+          </div>
         </div>
       </div>
 
