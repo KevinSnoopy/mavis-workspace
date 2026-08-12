@@ -1,0 +1,29 @@
+name: maodun_app
+description: "矛盾 - 基于《毛泽东选集》思想的个人成长管理系统"
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.5.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  provider: ^6.1.2
+  shared_preferences: ^2.3.2
+  flutter_local_notifications: ^17.2.2
+  intl: ^0.19.0
+  fl_chart: ^0.68.0
+  confetti: ^0.7.0
+
+dev_dependencies:
+  flutter_native_splash: ^2.4.1
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/
