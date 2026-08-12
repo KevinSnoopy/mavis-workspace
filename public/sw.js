@@ -1,27 +1,82 @@
-// Service Worker for HabitFlow Push Notifications
+// Service Worker for HabitFlow PWA
 
-const CACHE_NAME = 'habitflow-v1'
+const CACHE_NAME = 'habitflow-v1.0'
+const STATIC_ASSETS = [
+  '/',
+  '/index.html',
+  '/manifest.json',
+  '/icon.svg',
+]
 
-// 安装 Service Worker
+// 安装 - 缓存静态资源
 self.addEventListener('install', (event) => {
   console.log('[SW] Installing...')
-  self.skipWaiting()
+  event.waitUntil(
+    caches.open(CACHE_NAME)
+      .then(cache => {
+        console.log('[SW] Caching static assets')
+        return cache.addAll(STATIC_ASSETS)
+      })
+      .then(() => self.skipWaiting())
+  )
 })
 
-// 激活时清理旧缓存
+// 激活 - 清理旧缓存
 self.addEventListener('activate', (event) => {
   console.log('[SW] Activating...')
-  event.waitUntil(clients.claim())
+  event.waitUntil(
+    caches.keys()
+      .then(keys => {
+        return Promise.all(
+          keys.filter(key => key !== CACHE_NAME)
+            .map(key => caches.delete(key))
+        )
+      })
+      .then(() => clients.claim())
+  )
+})
+
+// 拦截请求 - 缓存优先
+self.addEventListener('fetch', (event) => {
+  // 只处理同源请求
+  if (!event.request.url.startsWith(self.location.origin)) return
+  
+  // API 请求不走缓存
+  if (event.request.url.includes('/api/')) return
+  
+  event.respondWith(
+    caches.match(event.request)
+      .then(cached => {
+        // 找到缓存，直接返回
+        if (cached) return cached
+        
+        // 没找到，发起网络请求
+        return fetch(event.request)
+          .then(response => {
+            // 非成功状态不缓存
+            if (!response || response.status !== 200) return response
+            
+            // 缓存新的响应
+            const responseClone = response.clone()
+            caches.open(CACHE_NAME)
+              .then(cache => cache.put(event.request, responseClone))
+            
+            return response
+          })
+          .catch(() => {
+            // 网络失败且没缓存，返回离线页面
+            return caches.match('/index.html')
+          })
+      })
+  )
 })
 
 // 处理推送通知
 self.addEventListener('push', (event) => {
-  console.log('[SW] Push received')
-  
   let data = {
-    title: 'HabitFlow 习惯提醒',
+    title: '⚖️ 矛盾提醒',
     body: '今天还有习惯没有完成哦 💪',
-    icon: '⚡',
+    icon: '/icon.svg',
     tag: 'habit-reminder'
   }
   
@@ -35,10 +90,10 @@ self.addEventListener('push', (event) => {
   
   const options = {
     body: data.body,
-    icon: data.icon || '/favicon.svg',
-    badge: '/favicon.svg',
+    icon: data.icon,
+    badge: '/icon.svg',
     tag: data.tag,
-    requireInteraction: true, // 让通知保持可见
+    requireInteraction: true,
     vibrate: [200, 100, 200],
     actions: [
       { action: 'open', title: '去打卡' },
@@ -54,30 +109,26 @@ self.addEventListener('push', (event) => {
 
 // 处理通知点击
 self.addEventListener('notificationclick', (event) => {
-  console.log('[SW] Notification clicked:', event.action)
   event.notification.close()
   
   if (event.action === 'dismiss') return
   
-  // 打开或聚焦应用
   event.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true })
-      .then((clientList) => {
-        // 如果已有窗口，打开它
-        for (const client of clientList) {
+      .then(clients => {
+        // 如果有窗口，聚焦它
+        for (const client of clients) {
           if (client.url.includes('habitflow') && 'focus' in client) {
             return client.focus()
           }
         }
         // 否则打开新窗口
-        if (clients.openWindow) {
-          return clients.openWindow('/')
-        }
+        return clients.openWindow('/')
       })
   )
 })
 
-// 定期同步（如果支持）
+// 定期同步（Background Sync API）
 self.addEventListener('periodicsync', (event) => {
   if (event.tag === 'habit-reminder') {
     event.waitUntil(checkAndNotify())
@@ -87,51 +138,63 @@ self.addEventListener('periodicsync', (event) => {
 // 后台同步
 self.addEventListener('sync', (event) => {
   if (event.tag === 'habit-reminder-sync') {
-    event.waitUntil(scheduleNextNotification())
+    event.waitUntil(checkAndNotify())
   }
 })
 
 // 检查并发送通知
 async function checkAndNotify() {
-  // 从 IndexedDB 获取习惯数据（简化版，实际应该用更复杂的存储）
-  const data = await getStoredData()
-  
-  if (!data || !data.habits || data.habits.length === 0) return
-  
-  const today = new Date().toISOString().split('T')[0]
-  const todayHabits = data.habits.filter(h => !h.archived)
-  const completedCount = data.checkIns?.filter(c => 
-    c.date === today && c.count >= 1
-  )?.length || 0
-  
-  if (completedCount < todayHabits.length && todayHabits.length > 0) {
-    const options = {
-      body: `还有 ${todayHabits.length - completedCount} 个习惯等待完成 🔥`,
-      icon: '⚡',
-      tag: 'habit-reminder',
-      requireInteraction: true
-    }
-    
-    await self.registration.showNotification('HabitFlow', options)
-  }
-}
-
-// 获取存储的数据
-async function getStoredData() {
   try {
+    // 尝试获取存储的数据
     const cache = await caches.open(CACHE_NAME)
-    const response = await cache.match('habit-data')
-    if (response) {
-      return response.json()
-    }
+    const response = await cache.match('/manifest.json')
+    
+    if (!response) return
+    
+    // 发送通知提示用户打开App
+    await self.registration.showNotification('⚖️ 矛盾提醒', {
+      body: '打开App完成今日习惯打卡 🔥',
+      icon: '/icon.svg',
+      tag: 'habit-check',
+      requireInteraction: false
+    })
   } catch (e) {
-    console.log('[SW] Error getting stored data:', e)
+    console.log('[SW] Check notification error:', e)
   }
-  return null
 }
 
-// 安排下一次通知
-async function scheduleNextNotification() {
-  // 通知调度被触发，可以重新检查数据
-  await checkAndNotify()
+// 消息处理
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'SKIP_WAITING') {
+    self.skipWaiting()
+  }
+  
+  if (event.data && event.data.type === 'SCHEDULE_NOTIFICATION') {
+    const { time } = event.data
+    scheduleNotification(time)
+  }
+})
+
+// 调度通知
+function scheduleNotification(targetTime) {
+  const [hours, minutes] = targetTime.split(':').map(Number)
+  const now = new Date()
+  const target = new Date()
+  target.setHours(hours, minutes, 0, 0)
+  
+  if (target <= now) {
+    target.setDate(target.getDate() + 1)
+  }
+  
+  const msUntil = target.getTime() - now.getTime()
+  
+  setTimeout(() => {
+    if (self.registration) {
+      self.registration.showNotification('⚖️ 矛盾提醒', {
+        body: '今日习惯打卡时间到 🔥',
+        icon: '/icon.svg',
+        tag: 'habit-reminder'
+      })
+    }
+  }, msUntil)
 }

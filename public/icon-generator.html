@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html>
+<head><title>Icon Generator</title></head>
+<body>
+<canvas id="c" width="512" height="512"></canvas>
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+
+// 渐变背景
+const grad = ctx.createLinearGradient(0, 0, 512, 512);
+grad.addColorStop(0, '#e85d4c');
+grad.addColorStop(1, '#c94a3a');
+ctx.fillStyle = grad;
+ctx.beginPath();
+ctx.roundRect(0, 0, 512, 512, 100);
+ctx.fill();
+
+// 文字
+ctx.fillStyle = 'white';
+ctx.font = '280px sans-serif';
+ctx.textAlign = 'center';
+ctx.textBaseline = 'middle';
+ctx.fillText('⚖️', 256, 280);
+
+canvas.toBlob(blob => {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'icon-512.png';
+  a.click();
+}, 'image/png');
+</script>
+</body>
+</html>

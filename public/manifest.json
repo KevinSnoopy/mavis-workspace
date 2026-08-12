@@ -1,0 +1,19 @@
+{
+  "name": "矛盾 - 习惯追踪",
+  "short_name": "矛盾",
+  "description": "基于《矛盾论》和《实践论》的个人成长管理系统",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0f0f1a",
+  "theme_color": "#e85d4c",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ],
+  "categories": ["productivity", "lifestyle"],
+  "lang": "zh-CN"
+}
