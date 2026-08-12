@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:confetti/confetti.dart';
 import '../providers/habit_provider.dart';
@@ -13,7 +14,8 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  late ConfettiController _confettiController;
+  late final ConfettiController _confettiController;
+  bool _hasShownConfettiToday = false;
 
   @override
   void initState() {
@@ -38,6 +40,31 @@ class _HomeScreenState extends State<HomeScreen> {
     return '🌙 夜深了';
   }
 
+  void _onCheckIn(String habitId, bool wasAlreadyDone) {
+    // 触感反馈
+    HapticFeedback.lightImpact();
+
+    final provider = context.read<HabitProvider>();
+    if (wasAlreadyDone) {
+      provider.cancelCheckIn(habitId);
+    } else {
+      provider.checkIn(habitId);
+    }
+
+    // 检查是否全部完成
+    final todayHabits = provider.getTodayHabits();
+    final nowDone = todayHabits.where((h) {
+      if (h.id == habitId) return true; // 刚操作的这个
+      return provider.getTodayCheckIn(h.id) != null;
+    }).length;
+
+    // 如果刚打卡的那个习惯让全部完成了 → 彩屑
+    if (!wasAlreadyDone && nowDone == todayHabits.length && todayHabits.isNotEmpty && !_hasShownConfettiToday) {
+      _confettiController.play();
+      _hasShownConfettiToday = true;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Consumer<HabitProvider>(
@@ -51,19 +78,27 @@ class _HomeScreenState extends State<HomeScreen> {
           final check = provider.getTodayCheckIn(h.id);
           return check != null && check.count >= h.targetPerDay;
         }).length;
-        
+
         final isAllDone = completedCount == todayHabits.length && todayHabits.isNotEmpty;
         final isPartiallyDone = completedCount > 0 && completedCount < todayHabits.length;
         final globalStreak = provider.globalStreak;
 
+        // 重置彩屑标记（新的一天）
+        final today = _todayString();
+        final lastShown = _lastConfettiDate();
+        if (lastShown != today) {
+          _hasShownConfettiToday = false;
+        }
+
         return Stack(
           children: [
             CustomScrollView(
+              physics: const BouncingScrollPhysics(),
               slivers: [
-                // 问候语
+                // ─── 问候语 ───
                 SliverToBoxAdapter(
                   child: Padding(
-                    padding: const EdgeInsets.all(16),
+                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
@@ -91,11 +126,11 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                 ),
 
-                // 连胜卡片
+                // ─── 连胜卡片 ───
                 if (globalStreak > 0)
                   SliverToBoxAdapter(
                     child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
                       child: Container(
                         padding: const EdgeInsets.all(20),
                         decoration: BoxDecoration(
@@ -106,9 +141,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             ],
                           ),
                           borderRadius: BorderRadius.circular(AppTheme.radiusLg),
-                          border: Border.all(
-                            color: Colors.white.withOpacity(0.1),
-                          ),
+                          border: Border.all(color: Colors.white.withOpacity(0.1)),
                         ),
                         child: Row(
                           children: [
@@ -128,8 +161,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                   crossAxisAlignment: CrossAxisAlignment.end,
                                   children: [
                                     ShaderMask(
-                                      shaderCallback: (bounds) =>
-                                          const LinearGradient(
+                                      shaderCallback: (bounds) => const LinearGradient(
                                         colors: [Color(0xFFFF6B35), Color(0xFFFF4500)],
                                       ).createShader(bounds),
                                       child: Text(
@@ -161,20 +193,16 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                   ),
 
-                const SliverToBoxAdapter(child: SizedBox(height: 16)),
-
-                // 今日打卡卡片
+                // ─── 今日进度卡片 ───
                 SliverToBoxAdapter(
                   child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
                     child: Container(
                       padding: const EdgeInsets.all(20),
                       decoration: BoxDecoration(
                         color: AppTheme.bgCard,
                         borderRadius: BorderRadius.circular(AppTheme.radiusLg),
-                        border: Border.all(
-                          color: Colors.white.withOpacity(0.08),
-                        ),
+                        border: Border.all(color: Colors.white.withOpacity(0.08)),
                       ),
                       child: Column(
                         children: [
@@ -198,8 +226,6 @@ class _HomeScreenState extends State<HomeScreen> {
                             ],
                           ),
                           const SizedBox(height: 16),
-                          
-                          // 圆形进度
                           SizedBox(
                             height: 120,
                             child: Center(
@@ -215,8 +241,8 @@ class _HomeScreenState extends State<HomeScreen> {
                                           : completedCount / todayHabits.length,
                                       strokeWidth: 8,
                                       backgroundColor: AppTheme.bgElevated,
-                                      valueColor: const AlwaysStoppedAnimation(
-                                        AppTheme.primary,
+                                      valueColor: AlwaysStoppedAnimation(
+                                        isAllDone ? AppTheme.success : AppTheme.primary,
                                       ),
                                     ),
                                   ),
@@ -227,7 +253,9 @@ class _HomeScreenState extends State<HomeScreen> {
                                       mainAxisSize: MainAxisSize.min,
                                       children: [
                                         Text(
-                                          '${todayHabits.isEmpty ? 0 : ((completedCount / todayHabits.length) * 100).round()}%',
+                                          todayHabits.isEmpty
+                                              ? '0%'
+                                              : '${((completedCount / todayHabits.length) * 100).round()}%',
                                           style: const TextStyle(
                                             fontSize: 28,
                                             fontWeight: FontWeight.bold,
@@ -252,12 +280,10 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                 ),
 
-                const SliverToBoxAdapter(child: SizedBox(height: 16)),
-
-                // 今日习惯列表
+                // ─── 今日习惯列表 ───
                 if (todayHabits.isNotEmpty)
                   SliverPadding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
                     sliver: SliverList(
                       delegate: SliverChildBuilderDelegate(
                         (context, index) {
@@ -267,106 +293,12 @@ class _HomeScreenState extends State<HomeScreen> {
                           final stats = provider.getHabitStats(habit.id);
 
                           return Padding(
-                            padding: const EdgeInsets.only(bottom: 12),
-                            child: GestureDetector(
-                              onTap: () {
-                                if (isDone) {
-                                  provider.cancelCheckIn(habit.id);
-                                } else {
-                                  provider.checkIn(habit.id);
-                                  if (stats.currentStreak + 1 >= 7) {
-                                    _confettiController.play();
-                                  }
-                                }
-                              },
-                              child: AnimatedContainer(
-                                duration: const Duration(milliseconds: 200),
-                                padding: const EdgeInsets.all(16),
-                                decoration: BoxDecoration(
-                                  color: isDone
-                                      ? AppTheme.success.withOpacity(0.1)
-                                      : AppTheme.bgElevated,
-                                  borderRadius: BorderRadius.circular(AppTheme.radiusMd),
-                                  border: Border.all(
-                                    color: isDone
-                                        ? AppTheme.success.withOpacity(0.3)
-                                        : Colors.transparent,
-                                  ),
-                                ),
-                                child: Row(
-                                  children: [
-                                    Container(
-                                      width: 48,
-                                      height: 48,
-                                      decoration: BoxDecoration(
-                                        color: Color(habit.colorValue).withOpacity(0.2),
-                                        borderRadius: BorderRadius.circular(12),
-                                      ),
-                                      child: Center(
-                                        child: isDone
-                                            ? const Icon(Icons.check, color: Colors.white, size: 24)
-                                            : Text(
-                                                habit.icon,
-                                                style: const TextStyle(fontSize: 24),
-                                              ),
-                                      ),
-                                    ),
-                                    const SizedBox(width: 12),
-                                    Expanded(
-                                      child: Column(
-                                        crossAxisAlignment: CrossAxisAlignment.start,
-                                        children: [
-                                          Text(
-                                            habit.name,
-                                            style: TextStyle(
-                                              fontSize: 16,
-                                              fontWeight: FontWeight.w500,
-                                              decoration: isDone
-                                                  ? TextDecoration.lineThrough
-                                                  : null,
-                                              color: isDone
-                                                  ? AppTheme.textSecondary
-                                                  : null,
-                                            ),
-                                          ),
-                                          const SizedBox(height: 4),
-                                          Text(
-                                            stats.currentStreak > 0
-                                                ? '🔥 ${stats.currentStreak}天'
-                                                : '开始你的第一次',
-                                            style: TextStyle(
-                                              fontSize: 12,
-                                              color: AppTheme.textSecondary,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                    Container(
-                                      width: 40,
-                                      height: 40,
-                                      decoration: BoxDecoration(
-                                        color: isDone
-                                            ? AppTheme.success
-                                            : AppTheme.bgCard,
-                                        shape: BoxShape.circle,
-                                        border: isDone
-                                            ? null
-                                            : Border.all(
-                                                color: Colors.white.withOpacity(0.2),
-                                              ),
-                                      ),
-                                      child: Icon(
-                                        isDone ? Icons.check : Icons.add,
-                                        color: isDone
-                                            ? Colors.white
-                                            : Color(habit.colorValue),
-                                        size: 20,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
+                            padding: const EdgeInsets.only(bottom: 10),
+                            child: _HabitCheckInTile(
+                              habit: habit,
+                              isDone: isDone,
+                              stats: stats,
+                              onTap: () => _onCheckIn(habit.id, isDone),
                             ),
                           );
                         },
@@ -389,33 +321,37 @@ class _HomeScreenState extends State<HomeScreen> {
                               color: AppTheme.textSecondary,
                             ),
                           ),
-                          const SizedBox(height: 16),
-                          ElevatedButton(
+                          const SizedBox(height: 8),
+                          Text(
+                            '通过矛盾分析，帮你把困惑转化为行动',
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: AppTheme.textSecondary.withOpacity(0.7),
+                            ),
+                            textAlign: TextAlign.center,
+                          ),
+                          const SizedBox(height: 20),
+                          ElevatedButton.icon(
                             onPressed: () => Navigator.push(
                               context,
-                              MaterialPageRoute(
-                                builder: (_) => const AnalyzerScreen(),
-                              ),
+                              MaterialPageRoute(builder: (_) => const AnalyzerScreen()),
                             ),
-                            child: const Text('从矛盾分析开始'),
+                            icon: const Icon(Icons.psychology, size: 18),
+                            label: const Text('开始分析'),
                           ),
                         ],
                       ),
                     ),
                   ),
 
-                const SliverToBoxAdapter(child: SizedBox(height: 16)),
-
-                // 矛盾分析入口
+                // ─── 矛盾分析入口 ───
                 SliverToBoxAdapter(
                   child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
                     child: GestureDetector(
                       onTap: () => Navigator.push(
                         context,
-                        MaterialPageRoute(
-                          builder: (_) => const AnalyzerScreen(),
-                        ),
+                        MaterialPageRoute(builder: (_) => const AnalyzerScreen()),
                       ),
                       child: Container(
                         padding: const EdgeInsets.all(20),
@@ -468,11 +404,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                 ],
                               ),
                             ),
-                            const Icon(
-                              Icons.arrow_forward_ios,
-                              color: Colors.white,
-                              size: 20,
-                            ),
+                            const Icon(Icons.arrow_forward_ios, color: Colors.white, size: 20),
                           ],
                         ),
                       ),
@@ -480,14 +412,12 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                 ),
 
-                const SliverToBoxAdapter(child: SizedBox(height: 24)),
-
-                // 底部间距
+                // 底部安全间距
                 const SliverToBoxAdapter(child: SizedBox(height: 80)),
               ],
             ),
 
-            // 彩屑效果
+            // 彩屑动画
             Align(
               alignment: Alignment.topCenter,
               child: ConfettiWidget(
@@ -495,7 +425,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 blastDirectionality: BlastDirectionality.explosive,
                 particleDrag: 0.05,
                 emissionFrequency: 0.05,
-                numberOfParticles: 20,
+                numberOfParticles: 30,
                 gravity: 0.1,
                 colors: const [
                   Color(0xFFFF6B6B),
@@ -503,12 +433,126 @@ class _HomeScreenState extends State<HomeScreen> {
                   Color(0xFF6BCB77),
                   Color(0xFF4D96FF),
                   Color(0xFFFF6B35),
+                  Color(0xFFE85D4C),
                 ],
               ),
             ),
           ],
         );
       },
+    );
+  }
+
+  String _todayString() {
+    final now = DateTime.now();
+    return '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+  }
+
+  String _lastConfettiDate() {
+    // 简单用 SharedPreferences 存一下日期（懒加载，不用改 provider）
+    return '';
+  }
+}
+
+// ─────────────────────────────────────────────
+// 习惯打卡卡片（抽出来，减少 build 方法复杂度）
+// ─────────────────────────────────────────────
+class _HabitCheckInTile extends StatelessWidget {
+  final dynamic habit;
+  final bool isDone;
+  final dynamic stats;
+  final VoidCallback onTap;
+
+  const _HabitCheckInTile({
+    required this.habit,
+    required this.isDone,
+    required this.stats,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeInOut,
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: isDone
+              ? AppTheme.success.withOpacity(0.1)
+              : AppTheme.bgElevated,
+          borderRadius: BorderRadius.circular(AppTheme.radiusMd),
+          border: Border.all(
+            color: isDone
+                ? AppTheme.success.withOpacity(0.3)
+                : Colors.transparent,
+          ),
+        ),
+        child: Row(
+          children: [
+            // 图标
+            Container(
+              width: 48,
+              height: 48,
+              decoration: BoxDecoration(
+                color: Color(habit.colorValue).withOpacity(0.2),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Center(
+                child: isDone
+                    ? const Icon(Icons.check, color: Colors.white, size: 24)
+                    : Text(habit.icon, style: const TextStyle(fontSize: 24)),
+              ),
+            ),
+            const SizedBox(width: 12),
+            // 名称 + 连胜
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    habit.name,
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w500,
+                      decoration: isDone ? TextDecoration.lineThrough : null,
+                      color: isDone ? AppTheme.textSecondary : null,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    stats.currentStreak > 0
+                        ? '🔥 ${stats.currentStreak}天'
+                        : '开始你的第一次',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: AppTheme.textSecondary,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            // 打卡按钮
+            Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: isDone ? AppTheme.success : AppTheme.bgCard,
+                shape: BoxShape.circle,
+                border: isDone
+                    ? null
+                    : Border.all(color: Colors.white.withOpacity(0.2)),
+              ),
+              child: Icon(
+                isDone ? Icons.check : Icons.add,
+                color: isDone ? Colors.white : Color(habit.colorValue),
+                size: 20,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

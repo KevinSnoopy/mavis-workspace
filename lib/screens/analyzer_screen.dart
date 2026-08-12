@@ -17,6 +17,14 @@ class _AnalyzerScreenState extends State<AnalyzerScreen> {
   AnalysisResult? _result;
 
   @override
+  void initState() {
+    super.initState();
+    _controller.addListener(_onTextChanged);
+  }
+
+  void _onTextChanged() => setState(() {});
+
+  @override
   void dispose() {
     _controller.dispose();
     super.dispose();
@@ -215,8 +223,12 @@ class _AnalyzerScreenState extends State<AnalyzerScreen> {
                 const SizedBox(height: 12),
                 TextField(
                   controller: _controller,
-                  maxLines: 4,
-                  style: const TextStyle(fontSize: 16),
+                  maxLines: null,
+                  minLines: 4,
+                  expands: false,
+                  textInputAction: TextInputAction.done,
+                  style: const TextStyle(fontSize: 16, height: 1.6),
+                  onSubmitted: (_) => _analyze(),
                   decoration: InputDecoration(
                     hintText: '比如：想转行做程序员，但不知道学什么，怕学完还是找不到工作...',
                     hintStyle: TextStyle(color: AppTheme.textSecondary.withOpacity(0.5)),
@@ -232,7 +244,7 @@ class _AnalyzerScreenState extends State<AnalyzerScreen> {
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton(
-                    onPressed: _controller.text.trim().isEmpty || _isAnalyzing
+                    onPressed: (_controller.text.trim().isEmpty || _isAnalyzing)
                         ? null
                         : _analyze,
                     child: _isAnalyzing
