@@ -29,6 +29,19 @@
   --shadow-glow: 0 0 30px rgba(232,93,76,0.3);
 }
 
+/* 浅色模式 */
+.light-mode {
+  --color-bg: #f5f5f7;
+  --color-bg-card: #ffffff;
+  --color-bg-elevated: #f0f0f2;
+  --color-text: #1a1a2e;
+  --color-text-secondary: #6b6b7b;
+  --color-border: rgba(0,0,0,0.08);
+  --shadow-sm: 0 2px 8px rgba(0,0,0,0.08);
+  --shadow-md: 0 4px 16px rgba(0,0,0,0.1);
+  --shadow-lg: 0 8px 32px rgba(0,0,0,0.12);
+}
+
 * {
   margin: 0;
   padding: 0;
@@ -42,6 +55,7 @@ body {
   min-height: 100vh;
   -webkit-font-smoothing: antialiased;
   -webkit-tap-highlight-color: transparent;
+  transition: background 0.3s, color 0.3s;
 }
 
 /* 滚动条 */
@@ -87,11 +101,18 @@ body {
   100% { transform: scale(1); }
 }
 
+@keyframes achievementPopup {
+  0% { transform: scale(0.5); opacity: 0; }
+  50% { transform: scale(1.1); }
+  100% { transform: scale(1); opacity: 1; }
+}
+
 .animate-fadeIn { animation: fadeIn 0.4s ease-out; }
 .animate-slideUp { animation: slideUp 0.4s ease-out; }
 .animate-pulse { animation: pulse 2s ease-in-out infinite; }
 .animate-shake { animation: shake 0.3s ease-in-out; }
 .animate-checkBounce { animation: checkBounce 0.4s cubic-bezier(0.68, -0.55, 0.265, 1.55); }
+.animate-achievement { animation: achievementPopup 0.5s cubic-bezier(0.68, -0.55, 0.265, 1.55); }
 .fire-glow { animation: fireGlow 1.5s ease-in-out infinite; }
 
 /* 卡片样式 */
@@ -99,12 +120,14 @@ body {
   background: var(--color-bg-card);
   border-radius: var(--radius-md);
   border: 1px solid var(--color-border);
+  transition: background 0.3s, border-color 0.3s;
 }
 
 .card-elevated {
   background: var(--color-bg-elevated);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-md);
+  transition: background 0.3s;
 }
 
 /* 按钮主样式 */
@@ -132,6 +155,7 @@ body {
 .check-btn-pending {
   background: var(--color-bg-elevated);
   border: 2px solid var(--color-border);
+  transition: background 0.3s, border-color 0.3s;
 }
 
 /* 连胜火焰效果 */
@@ -168,9 +192,14 @@ body {
 
 /* 玻璃拟态 */
 .glass {
-  background: rgba(255,255,255,0.05);
+  background: rgba(255,255,255,0.08);
   backdrop-filter: blur(10px);
-  border: 1px solid rgba(255,255,255,0.1);
+  border: 1px solid rgba(255,255,255,0.12);
+}
+
+.light-mode .glass {
+  background: rgba(255,255,255,0.7);
+  border: 1px solid rgba(0,0,0,0.1);
 }
 
 /* 习惯卡片悬停 */
@@ -185,4 +214,53 @@ body {
 .habit-card:hover {
   border-color: var(--color-primary);
   box-shadow: 0 0 20px rgba(232,93,76,0.15);
+}
+
+/* 成就弹窗 */
+.achievement-toast {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 1000;
+  animation: achievementPopup 0.5s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+}
+
+/* 暗色模式下圆形进度条 */
+.light-mode svg circle {
+  filter: none;
+}
+
+/* 主题切换按钮 */
+.theme-toggle {
+  position: relative;
+  width: 52px;
+  height: 28px;
+  border-radius: 14px;
+  background: var(--color-bg-elevated);
+  cursor: pointer;
+  transition: background 0.3s;
+}
+
+.theme-toggle::before {
+  content: '🌙';
+  position: absolute;
+  left: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--color-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  transition: all 0.3s;
+}
+
+.light-mode .theme-toggle::before {
+  content: '☀️';
+  left: calc(100% - 24px);
+  background: var(--color-accent);
 }
