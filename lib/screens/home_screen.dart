@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -8,7 +9,96 @@ import '../providers/habit_provider.dart';
 import '../providers/notification_provider.dart';
 import '../theme/app_theme.dart';
 import 'analyzer_screen.dart';
+import 'habits_screen.dart';
 import 'settings_screen.dart';
+
+/// 渐变圆弧绘制器
+class _GradientArcPainter extends CustomPainter {
+  final double progress;
+  final Gradient gradient;
+  final Color bgColor;
+  final double strokeWidth;
+
+  _GradientArcPainter({
+    required this.progress,
+    required this.gradient,
+    required this.bgColor,
+    required this.strokeWidth,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height / 2);
+    final radius = (size.width - strokeWidth) / 2;
+    const startAngle = -math.pi / 2;
+    final sweepAngle = 2 * math.pi * progress;
+
+    // 背景弧
+    final bgPaint = Paint()
+      ..color = bgColor
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = strokeWidth
+      ..strokeCap = StrokeCap.round;
+    canvas.drawCircle(center, radius, bgPaint);
+
+    // 渐变前景弧
+    final rect = Rect.fromCircle(center: center, radius: radius);
+    final paint = Paint()
+      ..shader = gradient.createShader(rect)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = strokeWidth
+      ..strokeCap = StrokeCap.round;
+    canvas.drawArc(rect, startAngle, sweepAngle, false, paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _GradientArcPainter old) =>
+      old.progress != progress;
+}
+
+/// 动画 FractionallySizedBox（用于进度条宽度动画）
+class AnimatedFractionallySizedBox extends ImplicitlyAnimatedWidget {
+  final double widthFactor;
+  final Widget child;
+
+  const AnimatedFractionallySizedBox({
+    super.key,
+    required this.widthFactor,
+    required this.child,
+    required super.duration,
+    super.curve,
+  });
+
+  @override
+  ImplicitlyAnimatedWidgetState<AnimatedFractionallySizedBox> createState() =>
+      _AnimatedFractionallySizedBoxState();
+}
+
+class _AnimatedFractionallySizedBoxState
+    extends ImplicitlyAnimatedWidgetState<AnimatedFractionallySizedBox> {
+  Tween<double>? _widthFactor;
+
+  @override
+  void forEachTween(TweenVisitor<dynamic> visitor) {
+    _widthFactor = visitor(
+      _widthFactor,
+      widget.widthFactor,
+      (dynamic v) => Tween<double>(begin: v as double),
+    ) as Tween<double>?;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        return SizedBox(
+          width: constraints.maxWidth * (_widthFactor?.evaluate(animation) ?? 0),
+          child: widget.child,
+        );
+      },
+    );
+  }
+}
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -164,11 +254,10 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                   ),
 
-                  // ─── 连胜卡片 ───
-                  if (globalStreak > 0)
-                    SliverToBoxAdapter(
-                      child: _StreakCard(streak: globalStreak),
-                    ),
+                  // ─── 连胜卡片（永远显示）───
+                  SliverToBoxAdapter(
+                    child: _StreakCard(streak: globalStreak),
+                  ),
 
                   // ─── 今日进度卡片 ───
                   SliverToBoxAdapter(
@@ -183,78 +272,143 @@ class _HomeScreenState extends State<HomeScreen> {
                           border:
                               Border.all(color: Colors.white.withOpacity(0.08)),
                         ),
-                        child: Column(
+                        child: Row(
                           children: [
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                const Text(
-                                  '今日行动',
-                                  style: TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                                Text(
-                                  '$completedCount/${todayHabits.length}',
-                                  style: TextStyle(
-                                    fontSize: 14,
-                                    color: AppTheme.textSecondary,
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 16),
-                            SizedBox(
-                              height: 120,
-                              child: Center(
-                                child: Stack(
-                                  alignment: Alignment.center,
-                                  children: [
-                                    SizedBox(
-                                      width: 120,
-                                      height: 120,
-                                      child: CircularProgressIndicator(
-                                        value: todayHabits.isEmpty
-                                            ? 0
-                                            : completedCount /
-                                                todayHabits.length,
-                                        strokeWidth: 8,
-                                        backgroundColor: AppTheme.bgElevated,
-                                        valueColor: AlwaysStoppedAnimation(
-                                          isAllDone
-                                              ? AppTheme.success
-                                              : AppTheme.primary,
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    mainAxisAlignment:
+                                        MainAxisAlignment.spaceBetween,
+                                    children: [
+                                      const Text(
+                                        '今日行动',
+                                        style: TextStyle(
+                                          fontSize: 15,
+                                          fontWeight: FontWeight.w600,
                                         ),
                                       ),
+                                      Text(
+                                        '$completedCount/${todayHabits.length}',
+                                        style: TextStyle(
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.w500,
+                                          color: isAllDone
+                                              ? AppTheme.success
+                                              : AppTheme.textSecondary,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    isAllDone
+                                        ? '全部完成，太棒了！'
+                                        : isPartiallyDone
+                                            ? '继续坚持，马上就完成了'
+                                            : '开始今天的第一个习惯吧',
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: AppTheme.textSecondary,
                                     ),
-                                    if (isAllDone)
-                                      const Text('🎉',
-                                          style: TextStyle(fontSize: 36))
-                                    else
-                                      Column(
-                                        mainAxisSize: MainAxisSize.min,
+                                  ),
+                                  const SizedBox(height: 16),
+                                  // 进度条版本
+                                  ClipRRect(
+                                    borderRadius: BorderRadius.circular(6),
+                                    child: SizedBox(
+                                      height: 8,
+                                      child: Stack(
                                         children: [
-                                          Text(
-                                            todayHabits.isEmpty
-                                                ? '0%'
-                                                : '${((completedCount / todayHabits.length) * 100).round()}%',
-                                            style: const TextStyle(
-                                              fontSize: 28,
-                                              fontWeight: FontWeight.bold,
+                                          Container(
+                                            decoration: BoxDecoration(
+                                              color: AppTheme.bgElevated,
+                                              borderRadius:
+                                                  BorderRadius.circular(6),
                                             ),
                                           ),
-                                          Text(
-                                            '完成',
-                                            style: TextStyle(
-                                              fontSize: 12,
-                                              color: AppTheme.textSecondary,
+                                          AnimatedFractionallySizedBox(
+                                            duration: const Duration(
+                                                milliseconds: 500),
+                                            curve: Curves.easeOutCubic,
+                                            widthFactor: todayHabits.isEmpty
+                                                ? 0
+                                                : completedCount /
+                                                    todayHabits.length,
+                                            child: Container(
+                                              decoration: BoxDecoration(
+                                                gradient:
+                                                    isAllDone || completedCount > 0
+                                                        ? AppTheme
+                                                            .successGradient
+                                                        : AppTheme.primaryGradient,
+                                                borderRadius:
+                                                    BorderRadius.circular(6),
+                                              ),
                                             ),
                                           ),
                                         ],
                                       ),
-                                  ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: 24),
+                            // 环形进度
+                            SizedBox(
+                              width: 80,
+                              height: 80,
+                              child: TweenAnimationBuilder<double>(
+                                tween: Tween(
+                                  begin: 0,
+                                  end: todayHabits.isEmpty
+                                      ? 0.0
+                                      : completedCount / todayHabits.length,
                                 ),
+                                duration:
+                                    const Duration(milliseconds: 800),
+                                curve: Curves.easeOutCubic,
+                                builder: (context, value, child) {
+                                  return CustomPaint(
+                                    painter: _GradientArcPainter(
+                                      progress: value,
+                                      gradient: isAllDone
+                                          ? AppTheme.successGradient
+                                          : AppTheme.primaryGradient,
+                                      bgColor: AppTheme.bgElevated,
+                                      strokeWidth: 6,
+                                    ),
+                                    child: Center(
+                                      child: isAllDone
+                                          ? const Text('🎉',
+                                              style: TextStyle(fontSize: 28))
+                                          : TweenAnimationBuilder<int>(
+                                              tween: IntTween(
+                                                begin: 0,
+                                                end: todayHabits.isEmpty
+                                                    ? 0
+                                                    : (value * 100).round(),
+                                              ),
+                                              duration: const Duration(
+                                                  milliseconds: 800),
+                                              curve: Curves.easeOutCubic,
+                                              builder: (context, val, __) =>
+                                                  Text(
+                                                '$val%',
+                                                style: TextStyle(
+                                                  fontSize: 17,
+                                                  fontWeight: FontWeight.bold,
+                                                  color: isAllDone
+                                                      ? AppTheme.success
+                                                      : null,
+                                                ),
+                                              ),
+                                            ),
+                                    ),
+                                  );
+                                },
                               ),
                             ),
                           ],
@@ -304,33 +458,68 @@ class _HomeScreenState extends State<HomeScreen> {
                         padding: const EdgeInsets.all(32),
                         child: Column(
                           children: [
-                            const Text('🌱', style: TextStyle(fontSize: 48)),
-                            const SizedBox(height: 16),
-                            Text(
-                              '还没有习惯',
+                            // 装饰性图标
+                            Container(
+                              width: 80,
+                              height: 80,
+                              decoration: BoxDecoration(
+                                gradient: AppTheme.primaryGradient,
+                                borderRadius: BorderRadius.circular(24),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: AppTheme.primary.withOpacity(0.3),
+                                    blurRadius: 24,
+                                    offset: const Offset(0, 8),
+                                  ),
+                                ],
+                              ),
+                              child: const Center(
+                                child: Text('⚡',
+                                    style: TextStyle(fontSize: 36)),
+                              ),
+                            ),
+                            const SizedBox(height: 24),
+                            const Text(
+                              '从一个小习惯开始',
                               style: TextStyle(
-                                fontSize: 16,
-                                color: AppTheme.textSecondary,
+                                fontSize: 20,
+                                fontWeight: FontWeight.bold,
                               ),
                             ),
                             const SizedBox(height: 8),
                             Text(
-                              '通过矛盾分析，帮你把困惑转化为行动',
+                              '好的习惯，会在时间里开花结果',
                               style: TextStyle(
-                                fontSize: 13,
-                                color: AppTheme.textSecondary.withOpacity(0.7),
+                                fontSize: 14,
+                                color: AppTheme.textSecondary,
                               ),
                               textAlign: TextAlign.center,
                             ),
-                            const SizedBox(height: 20),
-                            ElevatedButton.icon(
-                              onPressed: () => Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                    builder: (_) => const AnalyzerScreen()),
-                              ),
-                              icon: const Icon(Icons.psychology, size: 18),
-                              label: const Text('开始分析'),
+                            const SizedBox(height: 28),
+                            // 行动按钮
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                ElevatedButton.icon(
+                                  onPressed: () => Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                        builder: (_) => const HabitsScreen()),
+                                  ),
+                                  icon: const Icon(Icons.add, size: 18),
+                                  label: const Text('创建习惯'),
+                                ),
+                                const SizedBox(width: 12),
+                                OutlinedButton.icon(
+                                  onPressed: () => Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                        builder: (_) => const AnalyzerScreen()),
+                                  ),
+                                  icon: const Icon(Icons.psychology, size: 18),
+                                  label: const Text('矛盾分析'),
+                                ),
+                              ],
                             ),
                           ],
                         ),
@@ -443,7 +632,7 @@ class _HomeScreenState extends State<HomeScreen> {
 // ─────────────────────────────────────────────
 // 习惯打卡卡片（抽出来，减少 build 方法复杂度）
 // ─────────────────────────────────────────────
-class _HabitCheckInTile extends StatelessWidget {
+class _HabitCheckInTile extends StatefulWidget {
   final dynamic habit;
   final bool isDone;
   final dynamic stats;
@@ -457,84 +646,159 @@ class _HabitCheckInTile extends StatelessWidget {
   });
 
   @override
+  State<_HabitCheckInTile> createState() => _HabitCheckInTileState();
+}
+
+class _HabitCheckInTileState extends State<_HabitCheckInTile>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+  late final Animation<double> _scale;
+  bool _isPressed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      duration: const Duration(milliseconds: 150),
+      vsync: this,
+    );
+    _scale = Tween<double>(begin: 1.0, end: 0.96).animate(
+      CurvedAnimation(parent: _ctrl, curve: Curves.easeInOut),
+    );
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  void didUpdateWidget(covariant _HabitCheckInTile old) {
+    super.didUpdateWidget(old);
+    // 完成打卡时触发动画
+    if (!old.isDone && widget.isDone) {
+      _ctrl.forward().then((_) => _ctrl.reverse());
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final habitColor = Color(widget.habit.colorValue as int);
+
     return GestureDetector(
-      onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
-        curve: Curves.easeInOut,
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color:
-              isDone ? AppTheme.success.withOpacity(0.1) : AppTheme.bgElevated,
-          borderRadius: BorderRadius.circular(AppTheme.radiusMd),
-          border: Border.all(
-            color:
-                isDone ? AppTheme.success.withOpacity(0.3) : Colors.transparent,
+      onTapDown: (_) => setState(() => _isPressed = true),
+      onTapUp: (_) {
+        setState(() => _isPressed = false);
+        widget.onTap();
+      },
+      onTapCancel: () => setState(() => _isPressed = false),
+      child: AnimatedBuilder(
+        animation: _scale,
+        builder: (context, child) {
+          return Transform.scale(
+            scale: _isPressed ? _scale.value : 1.0,
+            child: child,
+          );
+        },
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeInOut,
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: widget.isDone
+                ? AppTheme.success.withOpacity(0.08)
+                : AppTheme.bgElevated,
+            borderRadius: BorderRadius.circular(AppTheme.radiusMd),
+            border: Border.all(
+              color: widget.isDone
+                  ? AppTheme.success.withOpacity(0.25)
+                  : Colors.transparent,
+            ),
           ),
-        ),
-        child: Row(
-          children: [
-            // 图标
-            Container(
-              width: 48,
-              height: 48,
-              decoration: BoxDecoration(
-                color: Color(habit.colorValue).withOpacity(0.2),
-                borderRadius: BorderRadius.circular(12),
+          child: Row(
+            children: [
+              // 图标背景
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: widget.isDone
+                      ? AppTheme.success.withOpacity(0.2)
+                      : habitColor.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Center(
+                  child: widget.isDone
+                      ? const Icon(Icons.check, color: Colors.white, size: 22)
+                      : Text(widget.habit.icon,
+                          style: const TextStyle(fontSize: 22)),
+                ),
               ),
-              child: Center(
-                child: isDone
-                    ? const Icon(Icons.check, color: Colors.white, size: 24)
-                    : Text(habit.icon, style: const TextStyle(fontSize: 24)),
-              ),
-            ),
-            const SizedBox(width: 12),
-            // 名称 + 连胜
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    habit.name,
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w500,
-                      decoration: isDone ? TextDecoration.lineThrough : null,
-                      color: isDone ? AppTheme.textSecondary : null,
+              const SizedBox(width: 12),
+              // 名称 + 连胜
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      widget.habit.name,
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                        decoration:
+                            widget.isDone ? TextDecoration.lineThrough : null,
+                        color: widget.isDone
+                            ? AppTheme.textSecondary
+                            : null,
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    stats.currentStreak > 0
-                        ? '🔥 ${stats.currentStreak}天'
-                        : '开始你的第一次',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: AppTheme.textSecondary,
+                    const SizedBox(height: 3),
+                    Text(
+                      widget.stats.currentStreak > 0
+                          ? '🔥 ${widget.stats.currentStreak}天'
+                          : '开始你的第一次',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: AppTheme.textSecondary,
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
-            ),
-            // 打卡按钮
-            Container(
-              width: 40,
-              height: 40,
-              decoration: BoxDecoration(
-                color: isDone ? AppTheme.success : AppTheme.bgCard,
-                shape: BoxShape.circle,
-                border: isDone
-                    ? null
-                    : Border.all(color: Colors.white.withOpacity(0.2)),
+              // 打卡按钮
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                width: 36,
+                height: 36,
+                decoration: BoxDecoration(
+                  gradient: widget.isDone ? AppTheme.successGradient : null,
+                  color: widget.isDone ? null : AppTheme.bgCard,
+                  shape: BoxShape.circle,
+                  border: widget.isDone
+                      ? null
+                      : Border.all(
+                          color: habitColor.withOpacity(0.4),
+                        ),
+                  boxShadow: widget.isDone
+                      ? [
+                          BoxShadow(
+                            color: AppTheme.success.withOpacity(0.3),
+                            blurRadius: 8,
+                            offset: const Offset(0, 2),
+                          ),
+                        ]
+                      : null,
+                ),
+                child: Icon(
+                  widget.isDone ? Icons.check : Icons.add,
+                  color: widget.isDone ? Colors.white : habitColor,
+                  size: 18,
+                ),
               ),
-              child: Icon(
-                isDone ? Icons.check : Icons.add,
-                color: isDone ? Colors.white : Color(habit.colorValue),
-                size: 20,
-              ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -556,85 +820,103 @@ class _HomeHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                greeting,
-                style: TextStyle(
-                  fontSize: 14,
-                  color: AppTheme.textSecondary,
+          // 品牌 logo
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              gradient: AppTheme.primaryGradient,
+              borderRadius: BorderRadius.circular(10),
+              boxShadow: [
+                BoxShadow(
+                  color: AppTheme.primary.withOpacity(0.3),
+                  blurRadius: 12,
+                  offset: const Offset(0, 4),
                 ),
-              ),
-              Row(
-                children: [
-                  // 通知铃铛
-                  Consumer<NotificationProvider>(
-                    builder: (ctx, notif, _) {
-                      return IconButton(
-                        icon: Stack(
-                          clipBehavior: Clip.none,
-                          children: [
-                            Icon(
-                              notif.hasUnread
-                                  ? Icons.notifications
-                                  : Icons.notifications_outlined,
-                              color: AppTheme.textSecondary,
-                            ),
-                            if (notif.hasUnread)
-                              Positioned(
-                                right: -2,
-                                top: -2,
-                                child: Container(
-                                  width: 8,
-                                  height: 8,
-                                  decoration: const BoxDecoration(
-                                    color: AppTheme.primary,
-                                    shape: BoxShape.circle,
-                                  ),
-                                ),
-                              ),
-                          ],
-                        ),
-                        onPressed: () {
-                          notif.clearAll();
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('通知已清空'),
-                              duration: Duration(seconds: 1),
-                            ),
-                          );
-                        },
-                      );
-                    },
-                  ),
-                  // 设置
-                  IconButton(
-                    icon: const Icon(Icons.settings_outlined,
-                        color: AppTheme.textSecondary),
-                    onPressed: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(builder: (_) => const SettingsScreen()),
-                    ),
-                  ),
-                ],
-              ),
-            ],
+              ],
+            ),
+            child: const Center(
+              child: Text('矛', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white)),
+            ),
           ),
-          const SizedBox(height: 4),
-          Text(
-            isAllDone
-                ? '太棒了！今天全部完成 🎉'
-                : isPartiallyDone
-                    ? '继续加油 💪'
-                    : '开始今天的行动吧',
-            style: const TextStyle(
-              fontSize: 24,
-              fontWeight: FontWeight.bold,
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  greeting,
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: AppTheme.textSecondary,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  isAllDone
+                      ? '太棒了！今天全部完成 🎉'
+                      : isPartiallyDone
+                          ? '继续加油 💪'
+                          : '开始今天的行动吧',
+                  style: const TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          // 通知铃铛
+          Consumer<NotificationProvider>(
+            builder: (ctx, notif, _) {
+              return IconButton(
+                icon: Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    Icon(
+                      notif.hasUnread
+                          ? Icons.notifications
+                          : Icons.notifications_outlined,
+                      color: AppTheme.textSecondary,
+                    ),
+                    if (notif.hasUnread)
+                      Positioned(
+                        right: -2,
+                        top: -2,
+                        child: Container(
+                          width: 8,
+                          height: 8,
+                          decoration: const BoxDecoration(
+                            color: AppTheme.primary,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+                onPressed: () {
+                  notif.clearAll();
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('通知已清空'),
+                      duration: Duration(seconds: 1),
+                    ),
+                  );
+                },
+              );
+            },
+          ),
+          // 设置
+          IconButton(
+            icon: const Icon(Icons.settings_outlined,
+                color: AppTheme.textSecondary),
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const SettingsScreen()),
             ),
           ),
         ],
@@ -643,7 +925,7 @@ class _HomeHeader extends StatelessWidget {
   }
 }
 
-/// 连胜卡片
+/// 连胜卡片（玻璃态设计，激励文案）
 class _StreakCard extends StatelessWidget {
   final int streak;
 
@@ -651,64 +933,172 @@ class _StreakCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
       child: Container(
-        padding: const EdgeInsets.all(20),
+        padding: const EdgeInsets.all(18),
         decoration: BoxDecoration(
-          gradient: LinearGradient(
-            colors: [
-              Colors.white.withOpacity(0.08),
-              Colors.white.withOpacity(0.03),
-            ],
-          ),
+          gradient: streak > 0
+              ? LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: streak >= 7
+                      ? [
+                          AppTheme.primary.withOpacity(isDark ? 0.3 : 0.15),
+                          AppTheme.accent.withOpacity(isDark ? 0.2 : 0.1),
+                        ]
+                      : [
+                          Colors.white.withOpacity(isDark ? 0.1 : 0.7),
+                          Colors.white.withOpacity(isDark ? 0.04 : 0.4),
+                        ],
+                )
+              : LinearGradient(
+                  colors: [
+                    Colors.white.withOpacity(isDark ? 0.06 : 0.6),
+                    Colors.white.withOpacity(isDark ? 0.02 : 0.3),
+                  ],
+                ),
           borderRadius: BorderRadius.circular(AppTheme.radiusLg),
-          border: Border.all(color: Colors.white.withOpacity(0.1)),
+          border: Border.all(
+            color: streak > 0
+                ? (isDark ? Colors.white.withOpacity(0.12) : Colors.white.withOpacity(0.5))
+                : (isDark ? Colors.white.withOpacity(0.08) : Colors.white.withOpacity(0.4)),
+          ),
+          boxShadow: streak > 3
+              ? [
+                  BoxShadow(
+                    color: (streak >= 7 ? AppTheme.primary : AppTheme.accent)
+                        .withOpacity(0.15),
+                    blurRadius: 20,
+                    offset: const Offset(0, 6),
+                  ),
+                ]
+              : null,
         ),
         child: Row(
           children: [
-            const Text('🔥', style: TextStyle(fontSize: 48)),
-            const SizedBox(width: 16),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '当前连胜',
+            // 火焰图标
+            Container(
+              width: 52,
+              height: 52,
+              decoration: BoxDecoration(
+                color: streak > 0
+                    ? (streak >= 7
+                        ? AppTheme.primary.withOpacity(0.2)
+                        : AppTheme.accent.withOpacity(0.2))
+                    : (isDark ? Colors.white.withOpacity(0.08) : Colors.grey.withOpacity(0.1)),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Center(
+                child: streak > 0
+                    ? ShaderMask(
+                        shaderCallback: (bounds) => LinearGradient(
+                          colors: streak >= 7
+                              ? [AppTheme.primary, AppTheme.primaryLight]
+                              : [AppTheme.accent, AppTheme.accentLight],
+                        ).createShader(bounds),
+                        child: Text(
+                          streak >= 30
+                              ? '🔥🔥'
+                              : streak >= 7
+                                  ? '🔥'
+                                  : '✨',
+                          style: const TextStyle(fontSize: 26),
+                        ),
+                      )
+                    : Text(
+                        '🌱',
+                        style: TextStyle(
+                          fontSize: 26,
+                          color: AppTheme.textSecondary.withOpacity(0.5),
+                        ),
+                      ),
+              ),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    streak > 0 ? '当前连胜' : '开始连胜',
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: AppTheme.textSecondary,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      ShaderMask(
+                        shaderCallback: (bounds) => LinearGradient(
+                          colors: streak >= 7
+                              ? [AppTheme.primary, AppTheme.primaryLight]
+                              : streak > 0
+                                  ? [AppTheme.accent, AppTheme.accentLight]
+                                  : [
+                                      AppTheme.textSecondary,
+                                      AppTheme.textSecondary
+                                    ],
+                        ).createShader(bounds),
+                        child: Text(
+                          streak > 0 ? '$streak' : '0',
+                          style: TextStyle(
+                            fontSize: 36,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 6, left: 4),
+                        child: Text(
+                          '天',
+                          style: TextStyle(
+                            fontSize: 15,
+                            color: AppTheme.textSecondary,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            // 激励文案
+            if (streak > 0)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(
+                  color: streak >= 7
+                      ? AppTheme.primary.withOpacity(0.15)
+                      : AppTheme.accent.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(AppTheme.radiusFull),
+                ),
+                child: Text(
+                  streak >= 30
+                      ? '传奇 🏆'
+                      : streak >= 7
+                          ? '习惯养成中'
+                          : '坚持就是胜利',
                   style: TextStyle(
-                    fontSize: 14,
-                    color: AppTheme.textSecondary,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w500,
+                    color: streak >= 7 ? AppTheme.primary : AppTheme.accent,
                   ),
                 ),
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    ShaderMask(
-                      shaderCallback: (bounds) => const LinearGradient(
-                        colors: [Color(0xFFE85D4C), Color(0xFFC94A3A)],
-                      ).createShader(bounds),
-                      child: Text(
-                        '$streak',
-                        style: const TextStyle(
-                          fontSize: 40,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white,
-                        ),
-                      ),
-                    ),
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 8, left: 4),
-                      child: Text(
-                        '天',
-                        style: TextStyle(
-                          fontSize: 16,
-                          color: AppTheme.textSecondary,
-                        ),
-                      ),
-                    ),
-                  ],
+              )
+            else
+              Text(
+                '今天开始',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: AppTheme.textSecondary.withOpacity(0.6),
                 ),
-              ],
-            ),
+              ),
           ],
         ),
       ),
@@ -816,8 +1206,15 @@ class _HeatmapCard extends StatelessWidget {
         children: [
           Row(
             children: [
-              const Text('📅 近三月打卡热力图',
-                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+              ShaderMask(
+                shaderCallback: (bounds) =>
+                    AppTheme.primaryGradient.createShader(bounds),
+                child: const Icon(Icons.grid_view_rounded,
+                    size: 16, color: Colors.white),
+              ),
+              const SizedBox(width: 6),
+              const Text('近三月打卡热力图',
+                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
               const Spacer(),
               // 图例
               _legendItem(AppTheme.bgElevated, '无'),
