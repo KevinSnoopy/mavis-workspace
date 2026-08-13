@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'providers/habit_provider.dart';
 import 'providers/theme_provider.dart';
+import 'providers/notification_provider.dart';
 import 'theme/app_theme.dart';
 import 'screens/home_screen.dart';
 import 'screens/analyzer_screen.dart';
@@ -32,6 +33,7 @@ class MaoDunApp extends StatelessWidget {
       providers: [
         ChangeNotifierProvider(create: (_) => HabitProvider()),
         ChangeNotifierProvider(create: (_) => ThemeProvider()),
+        ChangeNotifierProvider(create: (_) => NotificationProvider()),
       ],
       child: Consumer<ThemeProvider>(
         builder: (context, themeProvider, _) {
@@ -110,7 +112,172 @@ class _AppRootState extends State<_AppRoot> {
       return OnboardingScreen(onComplete: _onOnboardingComplete);
     }
 
-    return const MainScreen();
+    return Stack(
+      children: [
+        const MainScreen(),
+        const NotificationOverlay(),
+      ],
+    );
+  }
+}
+
+/// 通知横幅 — 挂在 App 最上层
+class NotificationOverlay extends StatelessWidget {
+  const NotificationOverlay({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Consumer<NotificationProvider>(
+      builder: (context, provider, _) {
+        if (provider.items.isEmpty) return const SizedBox.shrink();
+
+        final item = provider.items.first;
+        return Positioned(
+          top: 0,
+          left: 0,
+          right: 0,
+          child: SafeArea(
+            bottom: false,
+            child: _NotificationBanner(
+              title: item.title,
+              body: item.body,
+              emoji: item.emoji,
+              onTap: item.onTap,
+              onDismiss: () => provider.dismiss(item.id),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _NotificationBanner extends StatefulWidget {
+  final String title;
+  final String body;
+  final String? emoji;
+  final VoidCallback? onTap;
+  final VoidCallback onDismiss;
+
+  const _NotificationBanner({
+    required this.title,
+    required this.body,
+    this.emoji,
+    this.onTap,
+    required this.onDismiss,
+  });
+
+  @override
+  State<_NotificationBanner> createState() => _NotificationBannerState();
+}
+
+class _NotificationBannerState extends State<_NotificationBanner>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+  late final Animation<Offset> _slideAnim;
+  late final Animation<double> _fadeAnim;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 300),
+    );
+    _slideAnim = Tween<Offset>(
+      begin: const Offset(0, -1.2),
+      end: Offset.zero,
+    ).animate(CurvedAnimation(parent: _ctrl, curve: Curves.easeOutCubic));
+    _fadeAnim = Tween<double>(begin: 0, end: 1).animate(_ctrl);
+    _ctrl.forward();
+
+    // 5 秒后自动消失
+    Future.delayed(const Duration(seconds: 5), () {
+      if (mounted) _dismiss();
+    });
+  }
+
+  void _dismiss() {
+    _ctrl.reverse().then((_) => widget.onDismiss());
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SlideTransition(
+      position: _slideAnim,
+      child: FadeTransition(
+        opacity: _fadeAnim,
+        child: GestureDetector(
+          onTap: () {
+            widget.onTap?.call();
+            _dismiss();
+          },
+          child: Container(
+            margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [
+                  AppTheme.primary,
+                  AppTheme.primary.withOpacity(0.85),
+                ],
+              ),
+              borderRadius: BorderRadius.circular(16),
+              boxShadow: [
+                BoxShadow(
+                  color: AppTheme.primary.withOpacity(0.4),
+                  blurRadius: 16,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: Row(
+              children: [
+                if (widget.emoji != null) ...[
+                  Text(widget.emoji!, style: const TextStyle(fontSize: 20)),
+                  const SizedBox(width: 10),
+                ],
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        widget.title,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 14,
+                        ),
+                      ),
+                      Text(
+                        widget.body,
+                        style: TextStyle(
+                          color: Colors.white.withOpacity(0.85),
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.close, color: Colors.white, size: 18),
+                  onPressed: _dismiss,
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }
 

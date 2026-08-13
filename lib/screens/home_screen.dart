@@ -3,8 +3,10 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:confetti/confetti.dart';
 import '../providers/habit_provider.dart';
+import '../providers/notification_provider.dart';
 import '../theme/app_theme.dart';
 import 'analyzer_screen.dart';
+import 'settings_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -21,6 +23,23 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     _confettiController = ConfettiController(duration: const Duration(seconds: 2));
+    _checkDailyReminder();
+  }
+
+  void _checkDailyReminder() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final provider = context.read<HabitProvider>();
+      final notifProvider = context.read<NotificationProvider>();
+      final todayHabits = provider.getTodayHabits();
+      final notDone = todayHabits.where((h) => provider.getTodayCheckIn(h.id) == null).toList();
+      if (notDone.isNotEmpty && todayHabits.isNotEmpty) {
+        notifProvider.add(
+          title: '📅 今日打卡提醒',
+          body: '还有 ${notDone.length} 个习惯待完成，加油！',
+          emoji: '🔥',
+        );
+      }
+    });
   }
 
   @override
@@ -41,24 +60,23 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _onCheckIn(String habitId, bool wasAlreadyDone) {
-    // 触感反馈
     HapticFeedback.lightImpact();
-
     final provider = context.read<HabitProvider>();
     if (wasAlreadyDone) {
       provider.cancelCheckIn(habitId);
     } else {
       provider.checkIn(habitId);
+      context.read<NotificationProvider>().add(
+        title: '✅ 打卡成功',
+        body: '继续保持！🔥',
+        emoji: '🎉',
+      );
     }
-
-    // 检查是否全部完成
     final todayHabits = provider.getTodayHabits();
     final nowDone = todayHabits.where((h) {
-      if (h.id == habitId) return true; // 刚操作的这个
+      if (h.id == habitId) return true;
       return provider.getTodayCheckIn(h.id) != null;
     }).length;
-
-    // 如果刚打卡的那个习惯让全部完成了 → 彩屑
     if (!wasAlreadyDone && nowDone == todayHabits.length && todayHabits.isNotEmpty && !_hasShownConfettiToday) {
       _confettiController.play();
       _hasShownConfettiToday = true;
@@ -67,8 +85,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Consumer<HabitProvider>(
-      builder: (context, provider, _) {
+    return Consumer2<HabitProvider, NotificationProvider>(
+      builder: (context, provider, notifProvider, _) {
         if (provider.isLoading) {
           return const Center(child: CircularProgressIndicator());
         }
@@ -102,12 +120,71 @@ class _HomeScreenState extends State<HomeScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          _getGreeting(),
-                          style: TextStyle(
-                            fontSize: 14,
-                            color: AppTheme.textSecondary,
-                          ),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text(
+                              _getGreeting(),
+                              style: TextStyle(
+                                fontSize: 14,
+                                color: AppTheme.textSecondary,
+                              ),
+                            ),
+                            Row(
+                              children: [
+                                // 通知铃铛
+                                Consumer<NotificationProvider>(
+                                  builder: (ctx, notif, _) {
+                                    return IconButton(
+                                      icon: Stack(
+                                        clipBehavior: Clip.none,
+                                        children: [
+                                          Icon(
+                                            notif.hasUnread
+                                                ? Icons.notifications
+                                                : Icons.notifications_outlined,
+                                            color: AppTheme.textSecondary,
+                                          ),
+                                          if (notif.hasUnread)
+                                            Positioned(
+                                              right: -2,
+                                              top: -2,
+                                              child: Container(
+                                                width: 8,
+                                                height: 8,
+                                                decoration: const BoxDecoration(
+                                                  color: AppTheme.primary,
+                                                  shape: BoxShape.circle,
+                                                ),
+                                              ),
+                                            ),
+                                        ],
+                                      ),
+                                      onPressed: () {
+                                        notif.clearAll();
+                                        ScaffoldMessenger.of(context).showSnackBar(
+                                          const SnackBar(
+                                            content: Text('通知已清空'),
+                                            duration: Duration(seconds: 1),
+                                          ),
+                                        );
+                                      },
+                                    );
+                                  },
+                                ),
+                                // 设置
+                                IconButton(
+                                  icon: const Icon(Icons.settings_outlined,
+                                      color: AppTheme.textSecondary),
+                                  onPressed: () => Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                        builder: (_) => const SettingsScreen()),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
                         ),
                         const SizedBox(height: 4),
                         Text(
