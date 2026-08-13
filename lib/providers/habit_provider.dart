@@ -185,12 +185,6 @@ class HabitProvider extends ChangeNotifier {
     _cachedGlobalStreak = null;
   }
 
-  /// 清除全局连胜缓存（不影响单项 stats 缓存）
-  /// 用于归档状态改变等影响全局统计的操作
-  void _invalidateGlobalStreakCache() {
-    _cachedGlobalStreak = null;
-  }
-
   // ──────────────────────── 今日习惯 ────────────────────────
 
   List<Habit> getTodayHabits() {
@@ -397,16 +391,6 @@ class HabitProvider extends ChangeNotifier {
           }
         }
       }
-    }
-
-    if (dates.isEmpty) {
-      return HabitStats(
-        currentStreak: 0,
-        longestStreak: 0,
-        totalCount: 0,
-        completionRate: 0.0,
-        checkInDates: [],
-      );
     }
 
     // 基准日期取首次打卡（而非习惯创建日期），避免创建后未打卡期间拉低完成率

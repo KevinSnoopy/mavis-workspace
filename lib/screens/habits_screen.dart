@@ -469,6 +469,9 @@ class _HabitTile extends StatelessWidget {
     final descController = TextEditingController(text: habit.description ?? '');
     String selectedIcon = habit.icon;
     int selectedColor = habit.colorValue;
+    HabitFrequency selectedFrequency = habit.frequency;
+    List<int> selectedWeekDays = habit.weekDays ?? [DateTime.now().weekday % 7];
+    List<int> selectedMonthDays = habit.monthDays ?? [DateTime.now().day];
 
     showModalBottomSheet(
       context: context,
@@ -572,6 +575,29 @@ class _HabitTile extends StatelessWidget {
                         );
                       }).toList(),
                     ),
+                    const SizedBox(height: 16),
+                    const Text('频率', style: TextStyle(fontSize: 14)),
+                    const SizedBox(height: 8),
+                    _FrequencySelector(
+                      frequency: selectedFrequency,
+                      onChanged: (f, _) => setState(() => selectedFrequency = f),
+                    ),
+                    if (selectedFrequency == HabitFrequency.weekly) ...[
+                      const SizedBox(height: 12),
+                      _WeekDayPicker(
+                        selectedDays: selectedWeekDays,
+                        onChanged: (days) =>
+                            setState(() => selectedWeekDays = days),
+                      ),
+                    ],
+                    if (selectedFrequency == HabitFrequency.monthly) ...[
+                      const SizedBox(height: 12),
+                      _MonthDayPicker(
+                        selectedDays: selectedMonthDays,
+                        onChanged: (days) =>
+                            setState(() => selectedMonthDays = days),
+                      ),
+                    ],
                     const SizedBox(height: 24),
                     Row(
                       children: [
@@ -609,6 +635,13 @@ class _HabitTile extends StatelessWidget {
                                               : descController.text.trim(),
                                       icon: selectedIcon,
                                       colorValue: selectedColor,
+                                      frequency: selectedFrequency,
+                                      weekDays: selectedFrequency == HabitFrequency.weekly
+                                          ? selectedWeekDays
+                                          : null,
+                                      monthDays: selectedFrequency == HabitFrequency.monthly
+                                          ? selectedMonthDays
+                                          : null,
                                     ),
                                   );
                               if (ctx.mounted) Navigator.pop(ctx);

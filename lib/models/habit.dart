@@ -223,10 +223,13 @@ class AnalysisInsight {
 
   factory AnalysisInsight.fromJson(Map<String, dynamic> json) {
     return AnalysisInsight(
-      id: json['id'],
-      mainConflict: json['mainConflict'],
-      suggestedHabits: List<String>.from(json['suggestedHabits']),
-      createdAt: DateTime.parse(json['createdAt']),
+      id: _req(json, 'id'),
+      mainConflict: _req(json, 'mainConflict'),
+      suggestedHabits: (json['suggestedHabits'] as List<dynamic>?)
+              ?.map((e) => e.toString())
+              .toList() ??
+          [],
+      createdAt: DateTime.parse(_req(json, 'createdAt')),
     );
   }
 }
