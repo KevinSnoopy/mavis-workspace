@@ -107,6 +107,8 @@ class _AppRoot extends StatefulWidget {
 class _AppRootState extends State<_AppRoot> {
   bool _isLoading = true;
   bool _showOnboarding = false;
+  HabitProvider? _habitProvider;
+  NotificationProvider? _notifProvider;
 
   @override
   void initState() {
@@ -115,32 +117,38 @@ class _AppRootState extends State<_AppRoot> {
     _initNotifications();
   }
 
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // 缓存在 didChangeDependencies 确保 provider 引用始终新鲜
+    _habitProvider ??= context.read<HabitProvider>();
+    _notifProvider ??= context.read<NotificationProvider>();
+  }
+
   Future<void> _initNotifications() async {
-    // 初始化通知服务（Web 申请权限 / Native 配置）
     await NotificationService().init();
 
-    // 设置提醒回调：提醒触发时显示应用内通知
     NotificationService().onReminderDue = () {
       if (!mounted) return;
-      // 获取未打卡习惯数量，构建提醒文案
-      final habitProvider = context.read<HabitProvider>();
-      final todayCheckins = habitProvider.habits.map((h) {
-        return habitProvider.getTodayCheckIn(h.id) != null;
-      }).toList();
-      final uncheckedCount = todayCheckins.where((done) => !done).length;
+      final hp = _habitProvider;
+      final np = _notifProvider;
+      if (hp == null || np == null) return;
+
+      final uncheckedCount =
+          hp.getTodayHabits().where((h) => hp.getTodayCheckIn(h.id) == null).length;
 
       if (uncheckedCount > 0) {
-        context.read<NotificationProvider>().add(
-              title: '⏰ 每日打卡提醒',
-              body: '还有 $uncheckedCount 个习惯待完成，加油！',
-              emoji: '💪',
-            );
-      } else {
-        context.read<NotificationProvider>().add(
-              title: '✨ 今日完成！',
-              body: '所有习惯已打卡，继续保持连胜！',
-              emoji: '🎉',
-            );
+        np.add(
+          title: '⏰ 每日打卡提醒',
+          body: '还有 $uncheckedCount 个习惯待完成，加油！',
+          emoji: '💪',
+        );
+      } else if (hp.habits.isNotEmpty) {
+        np.add(
+          title: '✨ 今日完成！',
+          body: '所有习惯已打卡，继续保持连胜！',
+          emoji: '🎉',
+        );
       }
     };
   }

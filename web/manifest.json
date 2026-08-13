@@ -32,21 +32,5 @@
             "type": "image/png",
             "purpose": "maskable"
         }
-    ],
-    "shortcuts": [
-        {
-            "name": "开始打卡",
-            "short_name": "打卡",
-            "description": "快速打开今日打卡",
-            "url": "/?action=checkin",
-            "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }]
-        },
-        {
-            "name": "矛盾分析",
-            "short_name": "分析",
-            "description": "分析当前核心矛盾",
-            "url": "/?action=analyze",
-            "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }]
-        }
     ]
 }

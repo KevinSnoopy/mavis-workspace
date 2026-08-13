@@ -56,15 +56,17 @@ class HabitDetailScreen extends StatelessWidget {
             ),
             actions: [
               IconButton(
-                onPressed: () async {
-                  HapticFeedback.lightImpact();
-                  await provider.checkIn(habitId);
-                },
+                onPressed: habit.archived
+                    ? null
+                    : () async {
+                        HapticFeedback.lightImpact();
+                        await provider.checkIn(habitId);
+                      },
                 icon: Icon(
                   provider.getTodayCheckIn(habitId) != null
                       ? Icons.check_circle
                       : Icons.check_circle_outline,
-                  color: AppTheme.primary,
+                  color: habit.archived ? AppTheme.textSecondary : AppTheme.primary,
                 ),
               ),
             ],
