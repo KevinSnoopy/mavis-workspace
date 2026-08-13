@@ -80,7 +80,7 @@ class _OverviewTab extends StatelessWidget {
                       icon: '🔥',
                       value: '$globalStreak',
                       label: '当前连胜',
-                      color: const Color(0xFFFF6B35),
+                      color: AppTheme.accent,
                     ),
                   ),
                   const SizedBox(width: 12),

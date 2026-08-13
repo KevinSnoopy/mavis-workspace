@@ -29,86 +29,104 @@ class HabitProvider extends ChangeNotifier {
   // ──────────────────────── 清空数据 ────────────────────────
 
   Future<void> clearAll() async {
-    _habits.clear();
-    _checkIns.clear();
-    _achievements.clear();
-    _analysisInsights.clear();
-    _invalidateCache();
-    await _saveData();
-    notifyListeners();
+    try {
+      _habits.clear();
+      _checkIns.clear();
+      _achievements.clear();
+      _analysisInsights.clear();
+      _invalidateCache();
+      await _saveData();
+      notifyListeners();
+    } catch (e) {
+      // 数据清空失败时仍然重置内存状态，保持 UI 正常
+      _invalidateCache();
+      notifyListeners();
+    }
   }
 
   /// 导入数据，返回导入的记录数
   Future<_ImportResult> importData(String jsonStr) async {
-    final data = jsonDecode(jsonStr) as Map<String, dynamic>;
-    int habitsAdded = 0;
-    int checkInsAdded = 0;
+    try {
+      final data = jsonDecode(jsonStr) as Map<String, dynamic>;
+      int habitsAdded = 0;
+      int checkInsAdded = 0;
 
-    if (data['habits'] != null) {
-      final list = data['habits'] as List<dynamic>;
-      for (final h in list) {
-        _habits.add(Habit.fromJson(h as Map<String, dynamic>));
-        habitsAdded++;
+      if (data['habits'] != null) {
+        final list = data['habits'] as List<dynamic>;
+        for (final h in list) {
+          _habits.add(Habit.fromJson(h as Map<String, dynamic>));
+          habitsAdded++;
+        }
       }
-    }
 
-    if (data['checkIns'] != null) {
-      final list = data['checkIns'] as List<dynamic>;
-      for (final c in list) {
-        _checkIns.add(CheckIn.fromJson(c as Map<String, dynamic>));
-        checkInsAdded++;
+      if (data['checkIns'] != null) {
+        final list = data['checkIns'] as List<dynamic>;
+        for (final c in list) {
+          _checkIns.add(CheckIn.fromJson(c as Map<String, dynamic>));
+          checkInsAdded++;
+        }
       }
-    }
 
-    _invalidateCache();
-    await _saveData();
-    notifyListeners();
-    return _ImportResult(habitsAdded, checkInsAdded);
+      _invalidateCache();
+      await _saveData();
+      notifyListeners();
+      return _ImportResult(habitsAdded, checkInsAdded);
+    } catch (e) {
+      throw Exception('导入数据格式错误：${e.toString()}');
+    }
   }
 
   // ──────────────────────── 数据加载 ────────────────────────
 
   Future<void> _loadData() async {
-    final prefs = await SharedPreferences.getInstance();
-    _isLoading = true;
-    notifyListeners();
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      _isLoading = true;
+      notifyListeners();
 
-    final habitsJson = prefs.getString('habits');
-    if (habitsJson != null) {
-      final List<dynamic> list = jsonDecode(habitsJson);
-      _habits = list.map((e) => Habit.fromJson(e as Map<String, dynamic>)).toList();
+      final habitsJson = prefs.getString('habits');
+      if (habitsJson != null) {
+        final List<dynamic> list = jsonDecode(habitsJson);
+        _habits = list.map((e) => Habit.fromJson(e as Map<String, dynamic>)).toList();
+      }
+
+      final checkInsJson = prefs.getString('checkIns');
+      if (checkInsJson != null) {
+        final List<dynamic> list = jsonDecode(checkInsJson);
+        _checkIns = list.map((e) => CheckIn.fromJson(e as Map<String, dynamic>)).toList();
+      }
+
+      final achievementsJson = prefs.getString('achievements');
+      if (achievementsJson != null) {
+        final List<dynamic> list = jsonDecode(achievementsJson);
+        _achievements = list.map((e) => Achievement.fromJson(e as Map<String, dynamic>)).toList();
+      }
+
+      final insightsJson = prefs.getString('analysisInsights');
+      if (insightsJson != null) {
+        final List<dynamic> list = jsonDecode(insightsJson);
+        _analysisInsights = list.map((e) => AnalysisInsight.fromJson(e as Map<String, dynamic>)).toList();
+      }
+    } catch (e) {
+      // 数据加载失败，使用空状态
+    } finally {
+      _isLoading = false;
+      notifyListeners();
     }
-
-    final checkInsJson = prefs.getString('checkIns');
-    if (checkInsJson != null) {
-      final List<dynamic> list = jsonDecode(checkInsJson);
-      _checkIns = list.map((e) => CheckIn.fromJson(e as Map<String, dynamic>)).toList();
-    }
-
-    final achievementsJson = prefs.getString('achievements');
-    if (achievementsJson != null) {
-      final List<dynamic> list = jsonDecode(achievementsJson);
-      _achievements = list.map((e) => Achievement.fromJson(e as Map<String, dynamic>)).toList();
-    }
-
-    final insightsJson = prefs.getString('analysisInsights');
-    if (insightsJson != null) {
-      final List<dynamic> list = jsonDecode(insightsJson);
-      _analysisInsights = list.map((e) => AnalysisInsight.fromJson(e as Map<String, dynamic>)).toList();
-    }
-
-    _isLoading = false;
-    notifyListeners();
   }
 
   Future<void> _saveData() async {
-    final prefs = await SharedPreferences.getInstance();
-    await Future.wait([
-      prefs.setString('habits', jsonEncode(_habits.map((e) => e.toJson()).toList())),
-      prefs.setString('checkIns', jsonEncode(_checkIns.map((e) => e.toJson()).toList())),
-      prefs.setString('achievements', jsonEncode(_achievements.map((e) => e.toJson()).toList())),
-      prefs.setString('analysisInsights', jsonEncode(_analysisInsights.map((e) => e.toJson()).toList())),
-    ]);
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await Future.wait([
+        prefs.setString('habits', jsonEncode(_habits.map((e) => e.toJson()).toList())),
+        prefs.setString('checkIns', jsonEncode(_checkIns.map((e) => e.toJson()).toList())),
+        prefs.setString('achievements', jsonEncode(_achievements.map((e) => e.toJson()).toList())),
+        prefs.setString('analysisInsights', jsonEncode(_analysisInsights.map((e) => e.toJson()).toList())),
+      ]);
+    } catch (e) {
+      // 数据保存失败，静默忽略，下次写入会重试
+    }
   }
 
   // ──────────────────────── 缓存失效 ────────────────────────
@@ -155,77 +173,102 @@ class HabitProvider extends ChangeNotifier {
   // ──────────────────────── 打卡操作 ────────────────────────
 
   Future<void> checkIn(String habitId, {int count = 1, String? note}) async {
-    final today = _todayString();
-    final existingIndex = _checkIns.indexWhere((c) => c.habitId == habitId && c.date == today);
+    try {
+      final today = _todayString();
+      final existingIndex = _checkIns.indexWhere((c) => c.habitId == habitId && c.date == today);
 
-    if (existingIndex != -1) {
-      final existing = _checkIns[existingIndex];
-      _checkIns[existingIndex] = CheckIn(
-        id: existing.id,
-        habitId: habitId,
-        date: today,
-        count: existing.count + count,
-        note: note ?? existing.note,
-        createdAt: existing.createdAt,
-      );
-    } else {
-      _checkIns.add(CheckIn(
-        id: '${DateTime.now().millisecondsSinceEpoch}',
-        habitId: habitId,
-        date: today,
-        count: count,
-        note: note,
-        createdAt: DateTime.now(),
-      ));
+      if (existingIndex != -1) {
+        final existing = _checkIns[existingIndex];
+        _checkIns[existingIndex] = CheckIn(
+          id: existing.id,
+          habitId: habitId,
+          date: today,
+          count: existing.count + count,
+          note: note ?? existing.note,
+          createdAt: existing.createdAt,
+        );
+      } else {
+        _checkIns.add(CheckIn(
+          id: '${DateTime.now().millisecondsSinceEpoch}',
+          habitId: habitId,
+          date: today,
+          count: count,
+          note: note,
+          createdAt: DateTime.now(),
+        ));
+      }
+
+      _invalidateCache(habitId);
+      await _checkAchievements(habitId);
+      await _saveData();
+      notifyListeners();
+    } catch (e) {
+      // 打卡失败，通知 UI
+      notifyListeners();
     }
-
-    _invalidateCache(habitId);
-    await _checkAchievements(habitId);
-    await _saveData();
-    notifyListeners();
   }
 
   Future<void> cancelCheckIn(String habitId) async {
-    final today = _todayString();
-    _checkIns.removeWhere((c) => c.habitId == habitId && c.date == today);
-    _invalidateCache(habitId);
-    await _saveData();
-    notifyListeners();
+    try {
+      final today = _todayString();
+      _checkIns.removeWhere((c) => c.habitId == habitId && c.date == today);
+      _invalidateCache(habitId);
+      await _saveData();
+      notifyListeners();
+    } catch (e) {
+      notifyListeners();
+    }
   }
 
   Future<void> addHabit(Habit habit) async {
-    final newHabit = habit.copyWith(
-      id: '${DateTime.now().millisecondsSinceEpoch}',
-      createdAt: DateTime.now(),
-      order: _habits.length,
-    );
-    _habits.add(newHabit);
-    await _saveData();
-    notifyListeners();
+    try {
+      final newHabit = habit.copyWith(
+        id: '${DateTime.now().millisecondsSinceEpoch}',
+        createdAt: DateTime.now(),
+        order: _habits.length,
+      );
+      _habits.add(newHabit);
+      await _saveData();
+      notifyListeners();
+    } catch (e) {
+      notifyListeners();
+    }
   }
 
   Future<void> updateHabit(Habit habit) async {
-    final index = _habits.indexWhere((h) => h.id == habit.id);
-    if (index != -1) {
-      _habits[index] = habit;
-      await _saveData();
+    try {
+      final index = _habits.indexWhere((h) => h.id == habit.id);
+      if (index != -1) {
+        _habits[index] = habit;
+        await _saveData();
+        notifyListeners();
+      }
+    } catch (e) {
       notifyListeners();
     }
   }
 
   Future<void> deleteHabit(String habitId) async {
-    _habits.removeWhere((h) => h.id == habitId);
-    _checkIns.removeWhere((c) => c.habitId == habitId);
-    _invalidateCache(habitId);
-    await _saveData();
-    notifyListeners();
+    try {
+      _habits.removeWhere((h) => h.id == habitId);
+      _checkIns.removeWhere((c) => c.habitId == habitId);
+      _invalidateCache(habitId);
+      await _saveData();
+      notifyListeners();
+    } catch (e) {
+      notifyListeners();
+    }
   }
 
   Future<void> toggleArchive(String habitId) async {
-    final index = _habits.indexWhere((h) => h.id == habitId);
-    if (index != -1) {
-      _habits[index] = _habits[index].copyWith(archived: !_habits[index].archived);
-      await _saveData();
+    try {
+      final index = _habits.indexWhere((h) => h.id == habitId);
+      if (index != -1) {
+        _habits[index] = _habits[index].copyWith(archived: !_habits[index].archived);
+        await _saveData();
+        notifyListeners();
+      }
+    } catch (e) {
       notifyListeners();
     }
   }

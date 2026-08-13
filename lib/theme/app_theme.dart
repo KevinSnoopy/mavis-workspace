@@ -250,4 +250,14 @@ class AppColors {
     '🏃', '📚', '💧', '🧘', '🌙', '📝', '💪', '🗣️', '✍️', '🎯',
     '💼', '🍎', '🧠', '⭐', '🔥', '🌟', '💡', '🎨', '🎵', '🏋️',
   ];
+
+  /// 彩屑动画颜色
+  static const List<Color> confettiColors = [
+    Color(0xFFFF6B6B),
+    Color(0xFFFFD93D),
+    Color(0xFF6BCB77),
+    Color(0xFF4D96FF),
+    Color(0xFFFF6B35),
+    Color(0xFFE85D4C),
+  ];
 }

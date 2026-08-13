@@ -120,159 +120,17 @@ class _HomeScreenState extends State<HomeScreen> {
               slivers: [
                 // ─── 问候语 ───
                 SliverToBoxAdapter(
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Text(
-                              _getGreeting(),
-                              style: TextStyle(
-                                fontSize: 14,
-                                color: AppTheme.textSecondary,
-                              ),
-                            ),
-                            Row(
-                              children: [
-                                // 通知铃铛
-                                Consumer<NotificationProvider>(
-                                  builder: (ctx, notif, _) {
-                                    return IconButton(
-                                      icon: Stack(
-                                        clipBehavior: Clip.none,
-                                        children: [
-                                          Icon(
-                                            notif.hasUnread
-                                                ? Icons.notifications
-                                                : Icons.notifications_outlined,
-                                            color: AppTheme.textSecondary,
-                                          ),
-                                          if (notif.hasUnread)
-                                            Positioned(
-                                              right: -2,
-                                              top: -2,
-                                              child: Container(
-                                                width: 8,
-                                                height: 8,
-                                                decoration: const BoxDecoration(
-                                                  color: AppTheme.primary,
-                                                  shape: BoxShape.circle,
-                                                ),
-                                              ),
-                                            ),
-                                        ],
-                                      ),
-                                      onPressed: () {
-                                        notif.clearAll();
-                                        ScaffoldMessenger.of(context).showSnackBar(
-                                          const SnackBar(
-                                            content: Text('通知已清空'),
-                                            duration: Duration(seconds: 1),
-                                          ),
-                                        );
-                                      },
-                                    );
-                                  },
-                                ),
-                                // 设置
-                                IconButton(
-                                  icon: const Icon(Icons.settings_outlined,
-                                      color: AppTheme.textSecondary),
-                                  onPressed: () => Navigator.push(
-                                    context,
-                                    MaterialPageRoute(
-                                        builder: (_) => const SettingsScreen()),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          isAllDone
-                              ? '太棒了！今天全部完成 🎉'
-                              : isPartiallyDone
-                                  ? '继续加油 💪'
-                                  : '开始今天的行动吧',
-                          style: const TextStyle(
-                            fontSize: 24,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ],
-                    ),
+                  child: _HomeHeader(
+                    greeting: _getGreeting(),
+                    isAllDone: isAllDone,
+                    isPartiallyDone: isPartiallyDone,
                   ),
                 ),
 
                 // ─── 连胜卡片 ───
                 if (globalStreak > 0)
                   SliverToBoxAdapter(
-                    child: Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                      child: Container(
-                        padding: const EdgeInsets.all(20),
-                        decoration: BoxDecoration(
-                          gradient: LinearGradient(
-                            colors: [
-                              Colors.white.withOpacity(0.08),
-                              Colors.white.withOpacity(0.03),
-                            ],
-                          ),
-                          borderRadius: BorderRadius.circular(AppTheme.radiusLg),
-                          border: Border.all(color: Colors.white.withOpacity(0.1)),
-                        ),
-                        child: Row(
-                          children: [
-                            const Text('🔥', style: TextStyle(fontSize: 48)),
-                            const SizedBox(width: 16),
-                            Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  '当前连胜',
-                                  style: TextStyle(
-                                    fontSize: 14,
-                                    color: AppTheme.textSecondary,
-                                  ),
-                                ),
-                                Row(
-                                  crossAxisAlignment: CrossAxisAlignment.end,
-                                  children: [
-                                    ShaderMask(
-                                      shaderCallback: (bounds) => const LinearGradient(
-                                        colors: [Color(0xFFFF6B35), Color(0xFFFF4500)],
-                                      ).createShader(bounds),
-                                      child: Text(
-                                        '$globalStreak',
-                                        style: const TextStyle(
-                                          fontSize: 40,
-                                          fontWeight: FontWeight.bold,
-                                          color: Colors.white,
-                                        ),
-                                      ),
-                                    ),
-                                    Padding(
-                                      padding: const EdgeInsets.only(bottom: 8, left: 4),
-                                      child: Text(
-                                        '天',
-                                        style: TextStyle(
-                                          fontSize: 16,
-                                          color: AppTheme.textSecondary,
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ],
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
+                    child: _StreakCard(streak: globalStreak),
                   ),
 
                 // ─── 今日进度卡片 ───
@@ -510,14 +368,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 emissionFrequency: 0.05,
                 numberOfParticles: 30,
                 gravity: 0.1,
-                colors: const [
-                  Color(0xFFFF6B6B),
-                  Color(0xFFFFD93D),
-                  Color(0xFF6BCB77),
-                  Color(0xFF4D96FF),
-                  Color(0xFFFF6B35),
-                  Color(0xFFE85D4C),
-                ],
+                colors: AppColors.confettiColors,
               ),
             ),
           ],
@@ -632,6 +483,182 @@ class _HabitCheckInTile extends StatelessWidget {
                 color: isDone ? Colors.white : Color(habit.colorValue),
                 size: 20,
               ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 首页头部：问候语 + 通知铃铛 + 设置按钮
+class _HomeHeader extends StatelessWidget {
+  final String greeting;
+  final bool isAllDone;
+  final bool isPartiallyDone;
+
+  const _HomeHeader({
+    required this.greeting,
+    required this.isAllDone,
+    required this.isPartiallyDone,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                greeting,
+                style: TextStyle(
+                  fontSize: 14,
+                  color: AppTheme.textSecondary,
+                ),
+              ),
+              Row(
+                children: [
+                  // 通知铃铛
+                  Consumer<NotificationProvider>(
+                    builder: (ctx, notif, _) {
+                      return IconButton(
+                        icon: Stack(
+                          clipBehavior: Clip.none,
+                          children: [
+                            Icon(
+                              notif.hasUnread
+                                  ? Icons.notifications
+                                  : Icons.notifications_outlined,
+                              color: AppTheme.textSecondary,
+                            ),
+                            if (notif.hasUnread)
+                              Positioned(
+                                right: -2,
+                                top: -2,
+                                child: Container(
+                                  width: 8,
+                                  height: 8,
+                                  decoration: const BoxDecoration(
+                                    color: AppTheme.primary,
+                                    shape: BoxShape.circle,
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                        onPressed: () {
+                          notif.clearAll();
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('通知已清空'),
+                              duration: Duration(seconds: 1),
+                            ),
+                          );
+                        },
+                      );
+                    },
+                  ),
+                  // 设置
+                  IconButton(
+                    icon: const Icon(Icons.settings_outlined,
+                        color: AppTheme.textSecondary),
+                    onPressed: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                          builder: (_) => const SettingsScreen()),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            isAllDone
+                ? '太棒了！今天全部完成 🎉'
+                : isPartiallyDone
+                    ? '继续加油 💪'
+                    : '开始今天的行动吧',
+            style: const TextStyle(
+              fontSize: 24,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 连胜卡片
+class _StreakCard extends StatelessWidget {
+  final int streak;
+
+  const _StreakCard({required this.streak});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+      child: Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: [
+              Colors.white.withOpacity(0.08),
+              Colors.white.withOpacity(0.03),
+            ],
+          ),
+          borderRadius: BorderRadius.circular(AppTheme.radiusLg),
+          border: Border.all(color: Colors.white.withOpacity(0.1)),
+        ),
+        child: Row(
+          children: [
+            const Text('🔥', style: TextStyle(fontSize: 48)),
+            const SizedBox(width: 16),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '当前连胜',
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: AppTheme.textSecondary,
+                  ),
+                ),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    ShaderMask(
+                      shaderCallback: (bounds) => const LinearGradient(
+                        colors: [Color(0xFFE85D4C), Color(0xFFC94A3A)],
+                      ).createShader(bounds),
+                      child: Text(
+                        '$streak',
+                        style: const TextStyle(
+                          fontSize: 40,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8, left: 4),
+                      child: Text(
+                        '天',
+                        style: TextStyle(
+                          fontSize: 16,
+                          color: AppTheme.textSecondary,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
             ),
           ],
         ),
