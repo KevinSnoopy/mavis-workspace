@@ -104,26 +104,26 @@ maodun_app/
 - [x] **F11.2** 各页面 FadeUpwardsTransition
 
 ### F12. 启动页
-- [ ] **F12.1** 带 Logo + 品牌色的正式闪屏页（2秒）
-- [ ] **F12.2** 闪屏期间初始化数据
-- [ ] **F12.3** 闪屏后根据首次使用状态跳转
+- [x] **F12.1** 带 Logo + 品牌色的正式闪屏页（弹性缩放动画）
+- [x] **F12.2** 闪屏期间初始化数据
+- [x] **F12.3** 闪屏后根据首次使用状态跳转
 
 ### F13. 测试覆盖
-- [ ] **F13.1** HabitProvider 单元测试（打卡、添加、删除、成就）
-- [ ] **F13.2** ThemeProvider 单元测试（主题切换）
-- [ ] **F13.3** Widget 测试（打卡流程、添加习惯）
+- [x] **F13.1** HabitProvider 单元测试（打卡、添加、删除、成就）
+- [x] **F13.2** ThemeProvider 单元测试（主题切换）
+- [x] **F13.3** Widget 测试（打卡流程、添加习惯）
 
 ### F14. App 图标 & 资源
-- [ ] **F14.1** 多尺寸应用图标（web/icon_*.png）
-- [ ] **F14.2** manifest.json 中声明图标路径
+- [x] **F14.1** 多尺寸应用图标（web/icons/icon.svg + icon-192/512.png）
+- [x] **F14.2** manifest.json 中声明图标路径
 
 ### F15. Deep Link
-- [ ] **F15.1** URL Scheme 配置（maodun://）
-- [ ] **F15.2** Web URL 直接打开（/habit/:id）
+- [x] **F15.1** GoRouter 路由配置（/、/habit/:id、/settings）
+- [x] **F15.2** GitHub Pages 404 重定向（web/404.html）
 
 ### F16. 隐私政策 & CI/CD
-- [ ] **F16.1** 隐私政策页面（web/privacy.html）
-- [ ] **F16.2** GitHub Actions 自动构建（flutter.yml）
+- [x] **F16.1** 隐私政策页面（web/privacy.html）
+- [x] **F16.2** GitHub Actions 自动构建（.github/workflows/flutter.yml）
 
 ---
 
@@ -152,3 +152,4 @@ maodun_app/
 | 版本 | 日期 | 说明 |
 |------|------|------|
 | v1.6 | 2026-08-13 | 初版规格建立 |
+| v1.6 | 2026-08-13 | 补充 F12-F16：闪屏页、测试、图标、Deep Link、隐私政策、CI/CD |
