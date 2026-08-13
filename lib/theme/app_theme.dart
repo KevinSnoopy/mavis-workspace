@@ -17,9 +17,18 @@ class AppTheme {
   static const Color bgCard = Color(0xFF1A1A2E);
   static const Color bgElevated = Color(0xFF252542);
   
-  // 文字色
+  // 文字色（深色主题默认）
   static const Color textPrimary = Color(0xFFFFFFFF);
   static const Color textSecondary = Color(0xFFA0A0B0);
+
+  // 浅色主题文字色
+  static const Color textPrimaryLight = Color(0xFF1A1A2E);
+  static const Color textSecondaryLight = Color(0xFF6B6B7B);
+
+  // 浅色主题背景色
+  static const Color bgLight = Color(0xFFF5F5F7);
+  static const Color bgCardLight = Color(0xFFFFFFFF);
+  static const Color bgElevatedLight = Color(0xFFF0F0F2);
   
   // 圆角
   static const double radiusSm = 12;
@@ -105,31 +114,44 @@ class AppTheme {
       useMaterial3: true,
       brightness: Brightness.light,
       primaryColor: primary,
-      scaffoldBackgroundColor: const Color(0xFFF5F5F7),
+      scaffoldBackgroundColor: bgLight,
+      pageTransitionsTheme: const PageTransitionsTheme(
+        builders: {
+          TargetPlatform.android: FadeUpwardsPageTransitionsBuilder(),
+          TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
+          TargetPlatform.linux: FadeUpwardsPageTransitionsBuilder(),
+          TargetPlatform.macOS: CupertinoPageTransitionsBuilder(),
+          TargetPlatform.windows: FadeUpwardsPageTransitionsBuilder(),
+        },
+      ),
       colorScheme: const ColorScheme.light(
         primary: primary,
         secondary: accent,
-        surface: Colors.white,
+        surface: bgCardLight,
         error: Color(0xFFEF4444),
       ),
       appBarTheme: const AppBarTheme(
-        backgroundColor: Color(0xFFF5F5F7),
+        backgroundColor: bgLight,
         elevation: 0,
         centerTitle: true,
         titleTextStyle: TextStyle(
-          color: Color(0xFF1A1A2E),
+          color: textPrimaryLight,
           fontSize: 18,
           fontWeight: FontWeight.w600,
         ),
-        iconTheme: IconThemeData(color: Color(0xFF1A1A2E)),
+        iconTheme: IconThemeData(color: textPrimaryLight),
       ),
       cardTheme: CardTheme(
-        color: Colors.white,
+        color: bgCardLight,
         elevation: 0,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(radiusMd),
           side: BorderSide(color: Colors.black.withOpacity(0.08)),
         ),
+      ),
+      dividerTheme: DividerThemeData(
+        color: Colors.black.withOpacity(0.06),
+        thickness: 1,
       ),
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: ElevatedButton.styleFrom(
@@ -144,7 +166,7 @@ class AppTheme {
       ),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
-        fillColor: const Color(0xFFF0F0F2),
+        fillColor: bgElevatedLight,
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(radiusMd),
           borderSide: BorderSide.none,
@@ -152,13 +174,58 @@ class AppTheme {
         contentPadding: const EdgeInsets.all(16),
       ),
       bottomNavigationBarTheme: const BottomNavigationBarThemeData(
-        backgroundColor: Colors.white,
+        backgroundColor: bgCardLight,
         selectedItemColor: primary,
-        unselectedItemColor: Color(0xFF6B6B7B),
+        unselectedItemColor: textSecondaryLight,
         type: BottomNavigationBarType.fixed,
         elevation: 0,
       ),
+      tabBarTheme: TabBarTheme(
+        labelColor: primary,
+        unselectedLabelColor: textSecondaryLight,
+        indicatorColor: primary,
+        indicatorSize: TabBarIndicatorSize.label,
+        dividerColor: Colors.transparent,
+      ),
     );
+  }
+}
+
+// 主题感知颜色辅助
+class AppThemeColors {
+  /// 根据当前主题返回卡片背景色
+  static Color card(BuildContext context) {
+    return Theme.of(context).brightness == Brightness.dark
+        ? AppTheme.bgCard
+        : AppTheme.bgCardLight;
+  }
+
+  /// 根据当前主题返回提升层背景色
+  static Color elevated(BuildContext context) {
+    return Theme.of(context).brightness == Brightness.dark
+        ? AppTheme.bgElevated
+        : AppTheme.bgElevatedLight;
+  }
+
+  /// 根据当前主题返回主文字色
+  static Color textPrimary(BuildContext context) {
+    return Theme.of(context).brightness == Brightness.dark
+        ? AppTheme.textPrimary
+        : AppTheme.textPrimaryLight;
+  }
+
+  /// 根据当前主题返回次要文字色
+  static Color textSecondary(BuildContext context) {
+    return Theme.of(context).brightness == Brightness.dark
+        ? AppTheme.textSecondary
+        : AppTheme.textSecondaryLight;
+  }
+
+  /// 根据当前主题返回脚手架背景色
+  static Color scaffoldBg(BuildContext context) {
+    return Theme.of(context).brightness == Brightness.dark
+        ? AppTheme.bgDark
+        : AppTheme.bgLight;
   }
 }
 

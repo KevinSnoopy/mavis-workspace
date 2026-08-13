@@ -5,8 +5,30 @@ import '../providers/habit_provider.dart';
 import '../models/habit.dart';
 import '../theme/app_theme.dart';
 
-class HabitsScreen extends StatelessWidget {
+class HabitsScreen extends StatefulWidget {
   const HabitsScreen({super.key});
+
+  @override
+  State<HabitsScreen> createState() => _HabitsScreenState();
+}
+
+class _HabitsScreenState extends State<HabitsScreen> {
+  final _searchController = TextEditingController();
+  String _query = '';
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  List<Habit> _filter(List<Habit> habits) {
+    if (_query.isEmpty) return habits;
+    return habits.where((h) =>
+      h.name.toLowerCase().contains(_query.toLowerCase()) ||
+      (h.description?.toLowerCase().contains(_query.toLowerCase()) ?? false)
+    ).toList();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -16,22 +38,62 @@ class HabitsScreen extends StatelessWidget {
           ..sort((a, b) => a.order.compareTo(b.order));
         final archivedHabits = provider.habits.where((h) => h.archived).toList();
 
+        final filteredActive = _filter(activeHabits);
+        final filteredArchived = _filter(archivedHabits);
+
         return DefaultTabController(
           length: 2,
           child: Scaffold(
             appBar: AppBar(
               title: const Text('✨ 习惯管理'),
-              bottom: TabBar(
-                tabs: [
-                  Tab(text: '进行中 (${activeHabits.length})'),
-                  Tab(text: '已暂停 (${archivedHabits.length})'),
-                ],
+              bottom: PreferredSize(
+                preferredSize: const Size.fromHeight(96),
+                child: Column(
+                  children: [
+                    // 搜索框
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+                      child: TextField(
+                        controller: _searchController,
+                        onChanged: (v) => setState(() => _query = v),
+                        decoration: InputDecoration(
+                          hintText: '搜索习惯...',
+                          hintStyle: TextStyle(color: AppTheme.textSecondary.withOpacity(0.5)),
+                          prefixIcon: const Icon(Icons.search, size: 20),
+                          suffixIcon: _query.isNotEmpty
+                              ? IconButton(
+                                  icon: const Icon(Icons.clear, size: 18),
+                                  onPressed: () {
+                                    _searchController.clear();
+                                    setState(() => _query = '');
+                                  },
+                                )
+                              : null,
+                          filled: true,
+                          fillColor: AppTheme.bgElevated,
+                          contentPadding: const EdgeInsets.symmetric(vertical: 0, horizontal: 12),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                            borderSide: BorderSide.none,
+                          ),
+                        ),
+                        style: const TextStyle(fontSize: 14),
+                      ),
+                    ),
+                    TabBar(
+                      tabs: [
+                        Tab(text: '进行中 (${filteredActive.length})'),
+                        Tab(text: '已暂停 (${filteredArchived.length})'),
+                      ],
+                    ),
+                  ],
+                ),
               ),
             ),
             body: TabBarView(
               children: [
-                _HabitList(habits: activeHabits, isArchived: false),
-                _HabitList(habits: archivedHabits, isArchived: true),
+                _HabitList(habits: filteredActive, isArchived: false),
+                _HabitList(habits: filteredArchived, isArchived: true),
               ],
             ),
             floatingActionButton: FloatingActionButton.extended(

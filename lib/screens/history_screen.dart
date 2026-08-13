@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/habit_provider.dart';
+import '../models/habit.dart';
 import '../theme/app_theme.dart';
 import 'settings_screen.dart';
 import 'habit_detail_screen.dart';
@@ -29,6 +30,7 @@ class HistoryScreen extends StatelessWidget {
               Tab(text: '概览'),
               Tab(text: '成就'),
               Tab(text: '分析'),
+              Tab(text: '日历'),
             ],
           ),
         ),
@@ -37,6 +39,7 @@ class HistoryScreen extends StatelessWidget {
             _OverviewTab(),
             _AchievementsTab(),
             _InsightsTab(),
+            _CalendarTab(),
           ],
         ),
       ),
@@ -602,6 +605,279 @@ class _StatCard extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// 全局日历热力图 Tab
+class _CalendarTab extends StatefulWidget {
+  const _CalendarTab();
+
+  @override
+  State<_CalendarTab> createState() => _CalendarTabState();
+}
+
+class _CalendarTabState extends State<_CalendarTab> {
+  late DateTime _currentMonth;
+
+  @override
+  void initState() {
+    super.initState();
+    _currentMonth = DateTime(DateTime.now().year, DateTime.now().month);
+  }
+
+  void _prevMonth() {
+    setState(() {
+      _currentMonth = DateTime(_currentMonth.year, _currentMonth.month - 1);
+    });
+  }
+
+  void _nextMonth() {
+    setState(() {
+      _currentMonth = DateTime(_currentMonth.year, _currentMonth.month + 1);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Consumer<HabitProvider>(
+      builder: (context, provider, _) {
+        final allDates = provider.checkIns
+            .map((c) => c.date)
+            .toSet();
+
+        return ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            // 月份导航
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                IconButton(
+                  icon: const Icon(Icons.chevron_left),
+                  onPressed: _prevMonth,
+                ),
+                Text(
+                  '${_currentMonth.year}年${_currentMonth.month}月',
+                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.chevron_right),
+                  onPressed: _nextMonth,
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+
+            // 星期标题
+            Row(
+              children: ['一', '二', '三', '四', '五', '六', '日']
+                  .map((d) => Expanded(
+                        child: Center(
+                          child: Text(
+                            d,
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: AppTheme.textSecondary,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ),
+                      ))
+                  .toList(),
+            ),
+            const SizedBox(height: 8),
+
+            // 日历网格
+            _buildCalendarGrid(_currentMonth, allDates),
+            const SizedBox(height: 20),
+
+            // 图例
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                _legendItem(AppTheme.bgElevated, '未打卡'),
+                const SizedBox(width: 16),
+                _legendItem(AppTheme.primary.withOpacity(0.3), '有打卡'),
+                const SizedBox(width: 16),
+                _legendItem(AppTheme.primary, '全部完成'),
+              ],
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildCalendarGrid(DateTime month, Set<String> checkInDates) {
+    final firstDay = DateTime(month.year, month.month, 1);
+    // 周一=1，周日=7
+    int startWeekday = firstDay.weekday; // 1=Mon, 7=Sun
+    final daysInMonth = DateTime(month.year, month.month + 1, 0).day;
+    final today = DateTime.now();
+    final todayStr = '${today.year}-${today.month.toString().padLeft(2, '0')}-${today.day.toString().padLeft(2, '0')}';
+
+    // 计算网格行数
+    final totalCells = startWeekday - 1 + daysInMonth;
+    final rows = (totalCells / 7).ceil();
+
+    return Column(
+      children: List.generate(rows, (row) {
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 4),
+          child: Row(
+            children: List.generate(7, (col) {
+              final cellIndex = row * 7 + col;
+              final dayNum = cellIndex - (startWeekday - 1) + 1;
+
+              if (dayNum < 1 || dayNum > daysInMonth) {
+                return const Expanded(child: SizedBox(height: 40));
+              }
+
+              final dateStr = '${month.year}-${month.month.toString().padLeft(2, '0')}-${dayNum.toString().padLeft(2, '0')}';
+              final hasCheckIn = checkInDates.contains(dateStr);
+              final isToday = dateStr == todayStr;
+              final isFuture = dateStr.compareTo(todayStr) > 0;
+
+              // 计算该天有几个习惯
+              final habitsOnDay = _getHabitsForDay(dateStr, context);
+
+              return Expanded(
+                child: GestureDetector(
+                  onTap: isFuture ? null : () => _showDayDetail(dateStr, habitsOnDay),
+                  child: Container(
+                    height: 40,
+                    margin: const EdgeInsets.all(1),
+                    decoration: BoxDecoration(
+                      color: isFuture
+                          ? AppTheme.bgElevated.withOpacity(0.3)
+                          : hasCheckIn
+                              ? AppTheme.primary.withOpacity(0.25)
+                              : AppTheme.bgElevated,
+                      borderRadius: BorderRadius.circular(6),
+                      border: isToday
+                          ? Border.all(color: AppTheme.primary, width: 1.5)
+                          : null,
+                    ),
+                    child: Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text(
+                            '$dayNum',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: isFuture
+                                  ? AppTheme.textSecondary.withOpacity(0.4)
+                                  : isToday
+                                      ? AppTheme.primary
+                                      : AppTheme.textSecondary,
+                              fontWeight: isToday ? FontWeight.bold : FontWeight.normal,
+                            ),
+                          ),
+                          if (hasCheckIn && !isFuture)
+                            Container(
+                              width: 4,
+                              height: 4,
+                              decoration: BoxDecoration(
+                                color: AppTheme.primary,
+                                shape: BoxShape.circle,
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            }),
+          ),
+        );
+      }),
+    );
+  }
+
+  List<Habit> _getHabitsForDay(String dateStr, BuildContext context) {
+    final provider = context.read<HabitProvider>();
+    return provider.habits.where((h) {
+      return provider.checkIns.any((c) => c.habitId == h.id && c.date == dateStr);
+    }).toList();
+  }
+
+  void _showDayDetail(String dateStr, List<Habit> habits) {
+    final provider = context.read<HabitProvider>();
+    final allHabits = provider.habits;
+    final checkedIds = habits.map((h) => h.id).toSet();
+    final notDone = allHabits.where((h) => !checkedIds.contains(h.id)).toList();
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: AppTheme.bgCard,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              dateStr,
+              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 16),
+            if (habits.isNotEmpty) ...[
+              const Text('✅ 已完成', style: TextStyle(fontWeight: FontWeight.w600)),
+              const SizedBox(height: 8),
+              ...habits.map((h) => Padding(
+                    padding: const EdgeInsets.only(bottom: 4),
+                    child: Row(children: [
+                      Text(h.icon, style: const TextStyle(fontSize: 16)),
+                      const SizedBox(width: 8),
+                      Text(h.name),
+                    ]),
+                  )),
+              const SizedBox(height: 12),
+            ],
+            if (notDone.isNotEmpty) ...[
+              const Text('❌ 未完成', style: TextStyle(fontWeight: FontWeight.w600)),
+              const SizedBox(height: 8),
+              ...notDone.map((h) => Padding(
+                    padding: const EdgeInsets.only(bottom: 4),
+                    child: Row(children: [
+                      Text(h.icon, style: const TextStyle(fontSize: 16)),
+                      const SizedBox(width: 8),
+                      Text(h.name, style: TextStyle(color: AppTheme.textSecondary)),
+                    ]),
+                  )),
+            ],
+            if (habits.isEmpty && notDone.isEmpty)
+              const Text('暂无数据', style: TextStyle(color: Colors.grey)),
+            const SizedBox(height: 16),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _legendItem(Color color, String label) {
+    return Row(
+      children: [
+        Container(
+          width: 12,
+          height: 12,
+          decoration: BoxDecoration(
+            color: color,
+            borderRadius: BorderRadius.circular(3),
+          ),
+        ),
+        const SizedBox(width: 4),
+        Text(
+          label,
+          style: TextStyle(fontSize: 11, color: AppTheme.textSecondary),
+        ),
+      ],
     );
   }
 }

@@ -110,8 +110,13 @@ class _HomeScreenState extends State<HomeScreen> {
 
         return Stack(
           children: [
-            CustomScrollView(
-              physics: const BouncingScrollPhysics(),
+            RefreshIndicator(
+              onRefresh: () {
+                provider.refresh();
+                return Future.delayed(const Duration(milliseconds: 500));
+              },
+              child: CustomScrollView(
+                physics: const BouncingScrollPhysics(),
               slivers: [
                 // ─── 问候语 ───
                 SliverToBoxAdapter(
@@ -493,6 +498,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 const SliverToBoxAdapter(child: SizedBox(height: 80)),
               ],
             ),
+          ),
 
             // 彩屑动画
             Align(

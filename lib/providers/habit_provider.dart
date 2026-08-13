@@ -147,6 +147,11 @@ class HabitProvider extends ChangeNotifier {
     return _checkIns.where((c) => c.habitId == habitId && c.date == today).firstOrNull;
   }
 
+  /// 触发 UI 刷新（下拉刷新时调用）
+  void refresh() {
+    notifyListeners();
+  }
+
   // ──────────────────────── 打卡操作 ────────────────────────
 
   Future<void> checkIn(String habitId, {int count = 1, String? note}) async {
