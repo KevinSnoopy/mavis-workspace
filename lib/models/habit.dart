@@ -1,4 +1,6 @@
 // 习惯模型
+import 'package:flutter/foundation.dart';
+
 class Habit {
   final String id;
   final String name;
@@ -81,16 +83,19 @@ class Habit {
   }
 
   factory Habit.fromJson(Map<String, dynamic> json) {
+    final freqStr = json['frequency'] as String?;
+    final knownFreq = HabitFrequency.values.where((e) => e.name == freqStr).firstOrNull;
+    if (knownFreq == null && freqStr != null) {
+      // ignore: avoid_print
+      debugPrint('[Habit.fromJson] 未知 frequency "$freqStr"，回退为 daily');
+    }
     return Habit(
       id: json['id'],
       name: json['name'],
       description: json['description'],
       icon: json['icon'],
       colorValue: json['colorValue'],
-      frequency: HabitFrequency.values.firstWhere(
-        (e) => e.name == json['frequency'],
-        orElse: () => HabitFrequency.daily,
-      ),
+      frequency: knownFreq ?? HabitFrequency.daily,
       weekDays:
           json['weekDays'] != null ? List<int>.from(json['weekDays']) : null,
       monthDays:

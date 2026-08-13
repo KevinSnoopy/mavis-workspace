@@ -275,7 +275,7 @@ class _HabitList extends StatelessWidget {
     currentStreak: 0,
     longestStreak: 0,
     totalCount: 0,
-    completionRate: 0,
+    completionRate: 0.0,
     checkInDates: [],
   );
 

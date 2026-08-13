@@ -11,10 +11,20 @@ class HabitProvider extends ChangeNotifier {
   List<Achievement> _achievements = [];
   List<AnalysisInsight> _analysisInsights = [];
   bool _isLoading = true;
+  bool _saveFailed = false; // 上次保存是否失败
 
   // 统计缓存，避免每次 rebuild 都重算
   final Map<String, HabitStats> _statsCache = {};
   int? _cachedGlobalStreak;
+
+  /// 是否有未解决的保存失败（用于 UI 显示警告）
+  bool get hasSaveFailure => _saveFailed;
+
+  /// 清除保存失败标志（用户确认后调用）
+  void clearSaveFailure() {
+    _saveFailed = false;
+    notifyListeners();
+  }
 
   List<Habit> get habits => _habits;
   List<CheckIn> get checkIns => _checkIns;
@@ -135,8 +145,9 @@ class HabitProvider extends ChangeNotifier {
         prefs.setString('analysisInsights',
             jsonEncode(_analysisInsights.map((e) => e.toJson()).toList())),
       ]);
+      _saveFailed = false;
     } catch (e) {
-      // 数据保存失败，静默忽略，下次写入会重试
+      _saveFailed = true;
     }
   }
 
@@ -306,7 +317,7 @@ class HabitProvider extends ChangeNotifier {
         currentStreak: 0,
         longestStreak: 0,
         totalCount: 0,
-        completionRate: 0,
+        completionRate: 0.0,
         checkInDates: [],
       );
     }
@@ -396,7 +407,7 @@ class HabitProvider extends ChangeNotifier {
       currentStreak: 0,
       longestStreak: 0,
       totalCount: 0,
-      completionRate: 0,
+      completionRate: 0.0,
       checkInDates: [],
     );
 

@@ -1,3 +1,4 @@
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -23,6 +24,21 @@ void main() {
       statusBarIconBrightness: Brightness.light,
     ),
   );
+
+  // 全局 Widget 树异常捕获
+  FlutterError.onError = (FlutterErrorDetails details) {
+    // 记录异常（生产环境可上报至 Sentry）
+    debugPrint('[FlutterError] ${details.exceptionAsString()}');
+    FlutterError.presentError(details);
+  };
+
+  // 平台级异常捕获（isolate、native bridge 等）
+  // ignore: invalid_use_of_visible_for_testing_member
+  PlatformDispatcher.instance.onError = (Object error, StackTrace? stack) {
+    debugPrint('[PlatformError] $error\n$stack');
+    return true; // 已处理，不崩溃
+  };
+
   runApp(const MaoDunApp());
 }
 

@@ -24,7 +24,7 @@ class _HomeScreenState extends State<HomeScreen> {
     currentStreak: 0,
     longestStreak: 0,
     totalCount: 0,
-    completionRate: 0,
+    completionRate: 0.0,
     checkInDates: [],
   );
 
