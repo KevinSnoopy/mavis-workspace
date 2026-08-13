@@ -334,7 +334,7 @@ class _AchievementsTab extends StatelessWidget {
 
         // 按时间分组（每个分组 = header + N 个成就卡片）
         final groups = <_AchievementGroup>[];
-        final grouped = <String, List<dynamic>>{};
+        final grouped = <String, List<Achievement>>{};
         for (final a in achievements) {
           final key = _formatDateGroup(a.unlockedAt);
           grouped.putIfAbsent(key, () => []).add(a);
@@ -424,7 +424,7 @@ class _AchievementsTab extends StatelessWidget {
 /// 成就分组（用于 ListView.builder 懒加载）
 class _AchievementGroup {
   final String dateLabel;
-  final List<dynamic> items;
+  final List<Achievement> items;
   _AchievementGroup({required this.dateLabel, required this.items});
 }
 
