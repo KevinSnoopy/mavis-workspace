@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import '../models/habit.dart';
+import '../services/notification_service.dart';
 import '../services/storage_service.dart';
 
 /// 习惯状态管理
@@ -147,10 +148,11 @@ class HabitProvider extends ChangeNotifier {
     } catch (e) {
       // 数据加载失败，使用空状态
     } finally {
-      // 启动时对所有已有习惯检查成就（防止应用关闭期间已满足条件的习惯漏解锁）
       for (final habit in _habits) {
         await _checkAchievements(habit.id);
       }
+      _checkMultiHabitAchievements();
+      _syncHabitReminders();
       _isLoading = false;
       notifyListeners();
     }
@@ -283,6 +285,8 @@ class HabitProvider extends ChangeNotifier {
       );
       _habits.add(newHabit);
       await _saveData();
+      _syncHabitReminders();
+      _checkMultiHabitAchievements();
       notifyListeners();
     } catch (e) {
       notifyListeners();
@@ -295,6 +299,7 @@ class HabitProvider extends ChangeNotifier {
       if (index != -1) {
         _habits[index] = habit;
         await _saveData();
+        _syncHabitReminders();
         notifyListeners();
       }
     } catch (e) {
@@ -308,6 +313,7 @@ class HabitProvider extends ChangeNotifier {
       _checkIns.removeWhere((c) => c.habitId == habitId);
       _invalidateCache(habitId);
       await _saveData();
+      _syncHabitReminders();
       notifyListeners();
     } catch (e) {
       notifyListeners();
@@ -320,9 +326,9 @@ class HabitProvider extends ChangeNotifier {
       if (index != -1) {
         _habits[index] =
             _habits[index].copyWith(archived: !_habits[index].archived);
-        // 归档改变会影响 globalStreak（排除归档习惯），必须失效缓存
         _invalidateCache(habitId);
         await _saveData();
+        _syncHabitReminders();
         notifyListeners();
       }
     } catch (e) {
@@ -499,6 +505,52 @@ class HabitProvider extends ChangeNotifier {
           unlockedAt: DateTime.now(),
         ));
       }
+    }
+  }
+
+  /// 同步所有习惯提醒到 NotificationService
+  void _syncHabitReminders() {
+    if (!kIsWeb) return; // 仅 Web 端使用定时器，原生端由 flutter_local_notifications 处理
+    final reminders = <String, String>{};
+    for (final h in _habits) {
+      if (!h.archived && h.reminderTime != null) {
+        reminders[h.id] = h.reminderTime!;
+      }
+    }
+    NotificationService().updateHabitReminders(reminders);
+  }
+
+  /// 检查多习惯维度成就（在习惯增删/打卡时调用）
+  void _checkMultiHabitAchievements() {
+    final activeHabits = _habits.where((h) => !h.archived).toList();
+    final totalCheckIns = _checkIns.length;
+
+    // ── 五湖四海：同时保持 5 个活跃习惯 ──
+    final hasFiveHabits = _achievements.any((a) => a.name == '五湖四海');
+    if (!hasFiveHabits && activeHabits.length >= 5) {
+      _achievements.add(Achievement(
+        id: '${DateTime.now().millisecondsSinceEpoch}',
+        habitId: activeHabits.last.id,
+        name: '五湖四海',
+        description: '同时保持 5 个活跃习惯',
+        icon: '🌈',
+        unlockedAt: DateTime.now(),
+      ));
+      notifyListeners();
+    }
+
+    // ── 百次达人：全 app 累计打卡 100 次 ──
+    final hasHundred = _achievements.any((a) => a.name == '百次打卡');
+    if (!hasHundred && totalCheckIns >= 100) {
+      _achievements.add(Achievement(
+        id: '${DateTime.now().millisecondsSinceEpoch}',
+        habitId: _habits.isNotEmpty ? _habits.last.id : '',
+        name: '百次打卡',
+        description: '全 app 累计打卡 100 次',
+        icon: '💯',
+        unlockedAt: DateTime.now(),
+      ));
+      notifyListeners();
     }
   }
 

@@ -2,7 +2,8 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'web_notification.dart';
+import 'web_notification_stub.dart'
+    if (dart.library.js_interop) 'web_notification.dart';
 
 /// 通知服务
 /// Web 端：浏览器 Notification API + SharedPreferences 定时器
@@ -19,8 +20,15 @@ class NotificationService {
   int _reminderMinute = 0;
   String _permissionStatus = 'default';
 
+  /// 习惯提醒：habitId → "HH:mm"
+  final Map<String, String> _habitReminders = {};
+  /// 每分钟检查一次，触发对应的 per-habit 通知
+  Timer? _habitReminderTimer;
+
   // 提醒触发回调（通知 UI 显示）
   void Function()? onReminderDue;
+  /// Per-habit 提醒回调：habitId → void
+  void Function(String habitId)? onHabitReminderDue;
 
   String get permissionStatus => _permissionStatus;
 
@@ -36,9 +44,9 @@ class NotificationService {
   /// 初始化通知服务
   Future<void> init() async {
     if (_initialized) {
-      // 已初始化时仍然重新加载设置并调度，以防应用从后台唤醒
       await _loadReminderSettings();
       _scheduleReminder();
+      _startHabitReminderTimer();
       return;
     }
     _initialized = true;
@@ -51,11 +59,11 @@ class NotificationService {
 
     await _loadReminderSettings();
     _scheduleReminder();
+    _startHabitReminderTimer();
   }
 
   Future<void> _initWeb() async {
     try {
-      // 优先从 SharedPreferences 恢复已保存的权限状态，避免重复弹窗
       final prefs = await SharedPreferences.getInstance();
       final saved = prefs.getString('notification_permission');
       if (saved == 'granted' || saved == 'denied') {
@@ -69,13 +77,11 @@ class NotificationService {
     }
   }
 
-  Future<void> _initNative() async {
-    // flutter_local_notifications 在 main.dart 中单独初始化
-  }
+  Future<void> _initNative() async {}
 
-  // ---- 提醒调度 ----
+  // ──────────────────── 全局每日提醒 ────────────────────
 
-  /// 安排每日打卡提醒
+  /// 安排全局每日打卡提醒
   Future<void> scheduleDailyReminder({
     required int hour,
     required int minute,
@@ -93,7 +99,7 @@ class NotificationService {
     _scheduleReminder();
   }
 
-  /// 取消每日提醒
+  /// 取消全局每日提醒
   void cancelDailyReminder() {
     _cancelTimers();
     SharedPreferences.getInstance().then((prefs) {
@@ -102,7 +108,7 @@ class NotificationService {
     }).catchError((_) {});
   }
 
-  /// 获取已保存的提醒时间（null 表示未设置）
+  /// 获取已保存的全局提醒时间（null 表示未设置）
   Future<(int, int)?> getReminderTime() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -135,11 +141,9 @@ class NotificationService {
 
     final delay = next.difference(now);
 
-    // 一次性定时器：到点触发
     _reminderTimer?.cancel();
     _reminderTimer = Timer(delay, _onReminderFired);
 
-    // 每分钟检查一次（防止应用常驻时错过提醒）
     _periodicCheck?.cancel();
     _periodicCheck = Timer.periodic(const Duration(minutes: 1), (_) => _checkReminder());
   }
@@ -149,13 +153,13 @@ class NotificationService {
     if (now.hour == _reminderHour && now.minute == _reminderMinute) {
       _onReminderFired();
     }
+    // 同时检查 per-habit 提醒
+    _checkHabitReminders();
   }
 
   void _onReminderFired() {
-    // 重新调度明天的提醒
     _scheduleReminder();
 
-    // Web 浏览器通知
     if (kIsWeb && _permissionStatus == 'granted') {
       showWebNotification(
         title: '矛盾 · 每日打卡',
@@ -163,8 +167,49 @@ class NotificationService {
       );
     }
 
-    // 通知 UI
     onReminderDue?.call();
+  }
+
+  // ──────────────────── Per-habit 提醒 ────────────────────
+
+  /// 更新所有习惯提醒（HabitProvider 在数据加载/变更时调用）
+  /// habitReminders: { habitId: "HH:mm", ... }
+  void updateHabitReminders(Map<String, String> habitReminders) {
+    _habitReminders.clear();
+    _habitReminders.addAll(habitReminders);
+    _startHabitReminderTimer();
+  }
+
+  /// 启动每分钟检查，触发所有到点的 per-habit 通知
+  void _startHabitReminderTimer() {
+    _habitReminderTimer?.cancel();
+    _habitReminderTimer = Timer.periodic(const Duration(minutes: 1), (_) {
+      _checkHabitReminders();
+    });
+    // 立即检查一次（处理刚添加的情况）
+    _checkHabitReminders();
+  }
+
+  void _checkHabitReminders() {
+    if (_habitReminders.isEmpty) return;
+    final now = DateTime.now();
+    final nowStr = '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
+
+    for (final entry in _habitReminders.entries) {
+      if (entry.value == nowStr) {
+        _fireHabitReminder(entry.key);
+      }
+    }
+  }
+
+  void _fireHabitReminder(String habitId) {
+    if (kIsWeb && _permissionStatus == 'granted') {
+      showWebNotification(
+        title: '📌 该打卡了',
+        body: '来「矛盾」完成今日打卡，保持连胜！',
+      );
+    }
+    onHabitReminderDue?.call(habitId);
   }
 
   void _cancelTimers() {
@@ -176,5 +221,7 @@ class NotificationService {
 
   void dispose() {
     _cancelTimers();
+    _habitReminderTimer?.cancel();
+    _habitReminderTimer = null;
   }
 }

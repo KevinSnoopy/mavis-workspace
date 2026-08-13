@@ -1,6 +1,6 @@
 # 矛盾 App 功能规格文档
 
-> 版本：v1.8 | 更新：2026-08-13
+> 版本：v1.16 | 更新：2026-08-13
 
 ---
 
@@ -75,10 +75,11 @@ maodun_app/
 
 ### F6. 通知系统
 - [x] **F6.1** 每日提醒调度（SharedPreferences + Timer，App 启动时自动恢复）
-- [x] **F6.2** Web 浏览器通知（dart:js_interop + package:web，权限申请）
+- [x] **F6.2** Web 浏览器通知（dart:js_interop + package:web，权限申请；条件导入 web_notification_stub.dart 隔离非 Web 平台）
 - [x] **F6.3** 原生端推送通知（flutter_local_notifications，权限已配置）
 - [x] **F6.4** 应用内横幅通知（NotificationProvider，5秒自动消失）
 - [x] **F6.5** 铃铛图标 + 红点标记 + 清空功能
+- [x] **F6.6** Per-habit 提醒（每分钟检查，触发后浏览器通知 + onHabitReminderDue）
 
 ### F7. 主题系统
 - [x] **F7.1** 深色主题（默认）
@@ -114,7 +115,7 @@ maodun_app/
 - [x] **F13.1** HabitProvider 单元测试（打卡、添加、删除、成就、多习惯、频率过滤）
 - [x] **F13.2** ThemeProvider 单元测试（主题切换、持久化）
 - [x] **F13.3** Widget 测试（打卡流程、添加习惯、主题切换）
-- [x] **F13.4** 覆盖率：28 个测试（18 habit + 7 theme + 3 widget + toggleArchive 缓存测试）
+- [x] **F13.4** 覆盖率：30 个测试（20 habit + 7 theme + 3 widget + 新成就测试）
 
 ### F14. App 图标 & 资源
 - [x] **F14.1** 多尺寸应用图标（web/icons/icon.svg + icon-192/512.png）
@@ -131,6 +132,24 @@ maodun_app/
 ### F16. 隐私政策 & CI/CD
 - [x] **F16.1** 隐私政策页面（web/privacy.html）
 - [x] **F16.2** GitHub Actions 自动构建（.github/workflows/flutter.yml）
+
+### F17. Per-habit 提醒
+- [x] **F17.1** 每个习惯独立设置提醒时间（"HH:mm" 格式存储于 Habit.reminderTime）
+- [x] **F17.2** 创建/编辑习惯对话框中时间选择器（showTimePicker）
+- [x] **F17.3** NotificationService.updateHabitReminders(Map) 统一调度，同一时间只运行一个 Timer
+- [x] **F17.4** 每分钟检查一次，到点触发 Web 浏览器通知 + onHabitReminderDue 回调
+- [x] **F17.5** 习惯增删/归档时自动同步提醒调度
+
+### F18. 成就扩充
+- [x] **F18.1** 五湖四海：同时保持 5 个活跃习惯
+- [x] **F18.2** 百次打卡：全 app 累计打卡 100 条记录
+- [x] **F18.3** _checkMultiHabitAchievements() 在 addHabit / 数据加载时触发
+
+### F19. 习惯模板库
+- [x] **F19.1** lib/data/habit_templates.dart：18 个预设模板（健康/学习/效率/生活方式）
+- [x] **F19.2** 创建习惯对话框中"从模板选择"按钮（OutlinedButton.auto_awesome）
+- [x] **F19.3** _TemplatePickerSheet 底部面板网格展示模板，点击后自动填充名称/描述/图标/颜色/频率/提醒时间
+- [x] **F19.4** 模板支持预设置提醒时间
 
 ---
 

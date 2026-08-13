@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../providers/habit_provider.dart';
 import '../models/habit.dart';
 import '../theme/app_theme.dart';
+import '../data/habit_templates.dart';
 
 class HabitsScreen extends StatefulWidget {
   const HabitsScreen({super.key});
@@ -119,8 +120,9 @@ class _HabitsScreenState extends State<HabitsScreen> {
     String selectedIcon = '🎯';
     int selectedColor = AppColors.habitColors[0];
     HabitFrequency selectedFrequency = HabitFrequency.daily;
-    List<int> selectedWeekDays = [DateTime.now().weekday % 7]; // 默认今天
-    List<int> selectedMonthDays = [DateTime.now().day];        // 默认今天
+    List<int> selectedWeekDays = [DateTime.now().weekday % 7];
+    List<int> selectedMonthDays = [DateTime.now().day];
+    TimeOfDay? selectedReminder; // null = 不提醒
 
     showModalBottomSheet(
       context: context,
@@ -155,6 +157,47 @@ class _HabitsScreenState extends State<HabitsScreen> {
                           onPressed: () => Navigator.pop(ctx),
                         ),
                       ],
+                    ),
+                    const SizedBox(height: 12),
+                    // 模板快捷按钮
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        onPressed: () {
+                          showModalBottomSheet(
+                            context: ctx,
+                            backgroundColor: AppTheme.bgCard,
+                            shape: const RoundedRectangleBorder(
+                              borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+                            ),
+                            builder: (_) => _TemplatePickerSheet(
+                              onSelect: (t) => setState(() {
+                                nameController.text = t.name;
+                                descController.text = t.description ?? '';
+                                selectedIcon = t.icon;
+                                selectedColor = t.colorValue;
+                                selectedFrequency = t.frequency;
+                                selectedWeekDays = t.weekDays ?? [DateTime.now().weekday % 7];
+                                selectedMonthDays = t.monthDays ?? [DateTime.now().day];
+                                if (t.reminderTime != null) {
+                                  final parts = t.reminderTime!.split(':');
+                                  selectedReminder = TimeOfDay(
+                                    hour: int.parse(parts[0]),
+                                    minute: int.parse(parts[1]),
+                                  );
+                                }
+                              }),
+                            ),
+                          );
+                        },
+                        icon: const Icon(Icons.auto_awesome, size: 18),
+                        label: const Text('从模板选择'),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: AppTheme.accent,
+                          side: BorderSide(color: AppTheme.accent.withOpacity(0.4)),
+                          padding: const EdgeInsets.symmetric(vertical: 10),
+                        ),
+                      ),
                     ),
                     const SizedBox(height: 16),
                     TextField(
@@ -250,6 +293,11 @@ class _HabitsScreenState extends State<HabitsScreen> {
                             setState(() => selectedMonthDays = days),
                       ),
                     ],
+                    const SizedBox(height: 16),
+                    _ReminderRow(
+                      reminder: selectedReminder,
+                      onChanged: (t) => setState(() => selectedReminder = t),
+                    ),
                     const SizedBox(height: 24),
                     SizedBox(
                       width: double.infinity,
@@ -257,6 +305,9 @@ class _HabitsScreenState extends State<HabitsScreen> {
                         onPressed: () async {
                           if (nameController.text.trim().isEmpty) return;
                           HapticFeedback.lightImpact();
+                          final reminderStr = selectedReminder != null
+                              ? '${selectedReminder!.hour.toString().padLeft(2, '0')}:${selectedReminder!.minute.toString().padLeft(2, '0')}'
+                              : null;
                           await context.read<HabitProvider>().addHabit(Habit(
                                 id: '',
                                 name: nameController.text.trim(),
@@ -272,6 +323,7 @@ class _HabitsScreenState extends State<HabitsScreen> {
                                 monthDays: selectedFrequency == HabitFrequency.monthly
                                     ? selectedMonthDays
                                     : null,
+                                reminderTime: reminderStr,
                                 createdAt: DateTime.now(),
                               ));
                           if (ctx.mounted) Navigator.pop(ctx);
@@ -472,6 +524,14 @@ class _HabitTile extends StatelessWidget {
     HabitFrequency selectedFrequency = habit.frequency;
     List<int> selectedWeekDays = habit.weekDays ?? [DateTime.now().weekday % 7];
     List<int> selectedMonthDays = habit.monthDays ?? [DateTime.now().day];
+    TimeOfDay? selectedReminder;
+    if (habit.reminderTime != null) {
+      final parts = habit.reminderTime!.split(':');
+      selectedReminder = TimeOfDay(
+        hour: int.parse(parts[0]),
+        minute: int.parse(parts[1]),
+      );
+    }
 
     showModalBottomSheet(
       context: context,
@@ -598,6 +658,11 @@ class _HabitTile extends StatelessWidget {
                             setState(() => selectedMonthDays = days),
                       ),
                     ],
+                    const SizedBox(height: 16),
+                    _ReminderRow(
+                      reminder: selectedReminder,
+                      onChanged: (t) => setState(() => selectedReminder = t),
+                    ),
                     const SizedBox(height: 24),
                     Row(
                       children: [
@@ -626,6 +691,9 @@ class _HabitTile extends StatelessWidget {
                             onPressed: () async {
                               if (nameController.text.trim().isEmpty) return;
                               HapticFeedback.lightImpact();
+                              final reminderStr = selectedReminder != null
+                                  ? '${selectedReminder!.hour.toString().padLeft(2, '0')}:${selectedReminder!.minute.toString().padLeft(2, '0')}'
+                                  : null;
                               await context.read<HabitProvider>().updateHabit(
                                     habit.copyWith(
                                       name: nameController.text.trim(),
@@ -642,6 +710,7 @@ class _HabitTile extends StatelessWidget {
                                       monthDays: selectedFrequency == HabitFrequency.monthly
                                           ? selectedMonthDays
                                           : null,
+                                      reminderTime: reminderStr,
                                     ),
                                   );
                               if (ctx.mounted) Navigator.pop(ctx);
@@ -825,3 +894,222 @@ class _MonthDayPicker extends StatelessWidget {
     );
   }
 }
+
+/// 提醒时间选择行
+class _ReminderRow extends StatelessWidget {
+  final TimeOfDay? reminder;
+  final void Function(TimeOfDay?) onChanged;
+
+  const _ReminderRow({required this.reminder, required this.onChanged});
+
+  String _formatTime(TimeOfDay t) =>
+      '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Icon(Icons.notifications_outlined,
+            size: 20, color: AppTheme.textSecondary),
+        const SizedBox(width: 8),
+        Text('提醒',
+            style: TextStyle(
+                fontSize: 14, color: AppTheme.textSecondary)),
+        const Spacer(),
+        if (reminder != null) ...[
+          GestureDetector(
+            onTap: () async {
+              final t = await showTimePicker(
+                context: context,
+                initialTime: reminder!,
+                builder: (context, child) => Theme(
+                  data: Theme.of(context).copyWith(
+                    colorScheme: Theme.of(context).colorScheme.copyWith(
+                          primary: AppTheme.primary,
+                        ),
+                  ),
+                  child: child!,
+                ),
+              );
+              if (t != null) onChanged(t);
+            },
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(
+                color: AppTheme.primary.withOpacity(0.15),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: AppTheme.primary.withOpacity(0.4)),
+              ),
+              child: Text(
+                _formatTime(reminder!),
+                style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: AppTheme.primary),
+              ),
+            ),
+          ),
+          IconButton(
+            icon: Icon(Icons.close, size: 18, color: AppTheme.textSecondary),
+            onPressed: () => onChanged(null),
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(),
+          ),
+        ],
+        if (reminder == null)
+          GestureDetector(
+            onTap: () async {
+              final t = await showTimePicker(
+                context: context,
+                initialTime: const TimeOfDay(hour: 9, minute: 0),
+                builder: (context, child) => Theme(
+                  data: Theme.of(context).copyWith(
+                    colorScheme: Theme.of(context).colorScheme.copyWith(
+                          primary: AppTheme.primary,
+                        ),
+                  ),
+                  child: child!,
+                ),
+              );
+              if (t != null) onChanged(t);
+            },
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(
+                color: AppTheme.bgElevated,
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Text(
+                '设置时间',
+                style: TextStyle(fontSize: 14, color: AppTheme.textSecondary),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+/// 模板选择底部面板
+class _TemplatePickerSheet extends StatelessWidget {
+  final void Function(HabitTemplate) onSelect;
+
+  const _TemplatePickerSheet({required this.onSelect});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      constraints: BoxConstraints(
+        maxHeight: MediaQuery.of(context).size.height * 0.75,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Center(
+            child: Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: AppTheme.textSecondary.withOpacity(0.3),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+          const Text('选择模板',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 4),
+          Text('选择一个习惯模板，快速开始',
+              style: TextStyle(fontSize: 13, color: AppTheme.textSecondary)),
+          const SizedBox(height: 16),
+          Expanded(
+            child: GridView.builder(
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 2,
+                mainAxisSpacing: 10,
+                crossAxisSpacing: 10,
+                childAspectRatio: 1.6,
+              ),
+              itemCount: habitTemplates.length,
+              itemBuilder: (context, i) {
+                final t = habitTemplates[i];
+                return GestureDetector(
+                  onTap: () {
+                    onSelect(t);
+                    Navigator.pop(context);
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Color(t.colorValue).withOpacity(0.12),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: Color(t.colorValue).withOpacity(0.3),
+                      ),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Text(t.icon, style: const TextStyle(fontSize: 20)),
+                            const SizedBox(width: 6),
+                            Expanded(
+                              child: Text(
+                                t.name,
+                                style: const TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
+                        ),
+                        if (t.description != null) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            t.description!,
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: AppTheme.textSecondary,
+                            ),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
+                        const Spacer(),
+                        Text(
+                          _freqLabel(t.frequency),
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: Color(t.colorValue),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _freqLabel(HabitFrequency f) {
+    switch (f) {
+      case HabitFrequency.daily:
+        return '每日';
+      case HabitFrequency.weekly:
+        return '每周';
+      case HabitFrequency.monthly:
+        return '每月';
+    }
+  }
+}
+
