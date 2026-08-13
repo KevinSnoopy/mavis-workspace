@@ -454,11 +454,11 @@ void main() {
       expect(hasFive, isTrue);
     });
 
-    test('百次打卡：全app累计打卡100条记录', () async {
+    test('百次打卡：初始无成就，打卡不足100次不解锁', () async {
       final provider = HabitProvider.forTesting(_TestStorageAdapter());
       await _waitForLoaded(provider);
 
-      // 添加习惯
+      // 添加习惯并打卡1次
       await provider.addHabit(Habit(
         id: '',
         name: '百次习惯',
@@ -468,27 +468,9 @@ void main() {
         createdAt: DateTime.now(),
       ));
       final habit = provider.habits.first;
+      await provider.checkIn(habit.id);
 
-      // 直接构造100条历史打卡记录（跨多天），触发成就检查
-      // 通过反射访问 _checkIns
-      final checkInsField = provider.runtimeType
-          .toString()
-          .contains('_') ? null : null; // 避免 lint
-
-      // 添加多个习惯并打卡（跨不同日期模拟）
-      await provider.addHabit(Habit(
-        id: '',
-        name: '百次习惯2',
-        icon: '📚',
-        colorValue: 0xFFEF4444,
-        frequency: HabitFrequency.daily,
-        createdAt: DateTime.now(),
-      ));
-      final habit2 = provider.habits.last;
-
-      // 一次打卡后取消再打，模拟跨天打卡记录添加
-      // 使用 checkIn 但由于日期相同只产生一条记录
-      // 直接验证 _checkMultiHabitAchievements 的存在性（通过成就列表）
+      // 不足100次不应解锁
       expect(provider.achievements.any((a) => a.name == '百次打卡'), isFalse);
     });
   });

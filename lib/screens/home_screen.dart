@@ -263,6 +263,14 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                   ),
 
+                  // ─── 90天热力图 ───
+                  SliverToBoxAdapter(
+                    child: _HeatmapCard(
+                      checkIns: provider.checkIns,
+                      habits: provider.habits,
+                    ),
+                  ),
+
                   // ─── 今日习惯列表 ───
                   if (todayHabits.isNotEmpty)
                     SliverPadding(
@@ -704,6 +712,203 @@ class _StreakCard extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// 90天打卡热力图卡片（GitHub 风格）
+class _HeatmapCard extends StatelessWidget {
+  final List<CheckIn> checkIns;
+  final List<Habit> habits;
+
+  const _HeatmapCard({
+    required this.checkIns,
+    required this.habits,
+  });
+
+  /// 计算指定日期应打卡的活跃习惯
+  List<Habit> _habitsForDay(List<Habit> all, DateTime day) {
+    final dayOfWeek = day.weekday % 7;
+    final dayOfMonth = day.day;
+    final lastDayOfMonth = DateTime(day.year, day.month + 1, 0).day;
+
+    return all.where((h) {
+      if (h.archived) return false;
+      switch (h.frequency) {
+        case HabitFrequency.daily:
+          return true;
+        case HabitFrequency.weekly:
+          return h.weekDays?.contains(dayOfWeek) ?? false;
+        case HabitFrequency.monthly:
+          if (h.monthDays == null || h.monthDays!.isEmpty) return false;
+          return h.monthDays!.contains(dayOfMonth) ||
+              (dayOfMonth == lastDayOfMonth &&
+                  h.monthDays!.any((d) => d > lastDayOfMonth));
+      }
+    }).toList();
+  }
+
+  /// 计算指定日期的打卡完成率
+  double _completionForDay(DateTime day) {
+    final dateStr = _dateStr(day);
+    final scheduled = _habitsForDay(habits, day);
+    if (scheduled.isEmpty) return -1; // 无应打卡习惯
+    final done = scheduled.where((h) {
+      return checkIns.any((c) => c.habitId == h.id && c.date == dateStr);
+    }).length;
+    return done / scheduled.length;
+  }
+
+  String _dateStr(DateTime d) =>
+      '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+
+  Color _cellColor(double rate) {
+    if (rate < 0) return AppTheme.bgElevated;
+    if (rate == 0) return AppTheme.bgElevated;
+    if (rate < 0.25) return AppTheme.success.withOpacity(0.3);
+    if (rate < 0.5) return AppTheme.success.withOpacity(0.5);
+    if (rate < 0.75) return AppTheme.success.withOpacity(0.75);
+    return AppTheme.success;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final now = DateTime.now();
+    // 从今天往前推13周（约91天），从周日开始对齐
+    final today = DateTime(now.year, now.month, now.day);
+    // 找到上一个周日作为起点
+    final startDow = today.weekday % 7; // 0=周日
+    final start = today.subtract(Duration(days: startDow + 90));
+
+    // 13行(周) × 7列(天)，共91天
+    const weeks = 13;
+    const daysPerWeek = 7;
+    const cellSize = 12.0;
+    const cellSpacing = 3.0;
+
+    // 构建每周的7天数据
+    final weekData = <List<double>>[];
+    for (int w = 0; w < weeks; w++) {
+      final week = <double>[];
+      for (int d = 0; d < daysPerWeek; d++) {
+        final day = start.add(Duration(days: w * 7 + d));
+        if (day.isAfter(today)) {
+          week.add(-1); // 未来日期
+        } else {
+          week.add(_completionForDay(day));
+        }
+      }
+      weekData.add(week);
+    }
+
+    final weekLabels = ['', '一', '', '三', '', '五', ''];
+
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppTheme.bgCard,
+        borderRadius: BorderRadius.circular(AppTheme.radiusLg),
+        border: Border.all(color: Colors.white.withOpacity(0.08)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Text('📅 近三月打卡热力图',
+                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+              const Spacer(),
+              // 图例
+              _legendItem(AppTheme.bgElevated, '无'),
+              const SizedBox(width: 8),
+              _legendItem(AppTheme.success.withOpacity(0.3), '25%'),
+              const SizedBox(width: 8),
+              _legendItem(AppTheme.success.withOpacity(0.5), '50%'),
+              const SizedBox(width: 8),
+              _legendItem(AppTheme.success, '100%'),
+            ],
+          ),
+          const SizedBox(height: 14),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // 星期标签
+                Column(
+                  children: weekLabels.map((l) {
+                    return SizedBox(
+                      width: 16,
+                      height: cellSize + cellSpacing,
+                      child: l.isNotEmpty
+                          ? Align(
+                              alignment: Alignment.centerRight,
+                              child: Text(
+                                l,
+                                style: TextStyle(
+                                  fontSize: 9,
+                                  color: AppTheme.textSecondary,
+                                ),
+                              ),
+                            )
+                          : null,
+                    );
+                  }).toList(),
+                ),
+                const SizedBox(width: 4),
+                // 热力网格
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: List.generate(weeks, (w) {
+                    return Column(
+                      children: List.generate(daysPerWeek, (d) {
+                        final rate = weekData[w][d];
+                        return Tooltip(
+                          message: rate < 0
+                              ? ''
+                              : '${start.add(Duration(days: w * 7 + d)).month}/${start.add(Duration(days: w * 7 + d)).day}: ${(rate * 100).round()}%',
+                          child: Container(
+                            width: cellSize,
+                            height: cellSize,
+                            margin: EdgeInsets.only(
+                              right: d < daysPerWeek - 1 ? cellSpacing : 0,
+                              bottom: cellSpacing,
+                            ),
+                            decoration: BoxDecoration(
+                              color: _cellColor(rate),
+                              borderRadius: BorderRadius.circular(2),
+                            ),
+                          ),
+                        );
+                      }),
+                    );
+                  }),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _legendItem(Color color, String label) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 10,
+          height: 10,
+          decoration: BoxDecoration(
+            color: color,
+            borderRadius: BorderRadius.circular(2),
+          ),
+        ),
+        const SizedBox(width: 3),
+        Text(label,
+            style: TextStyle(fontSize: 9, color: AppTheme.textSecondary)),
+      ],
     );
   }
 }
