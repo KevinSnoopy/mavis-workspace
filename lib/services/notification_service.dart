@@ -24,9 +24,23 @@ class NotificationService {
 
   String get permissionStatus => _permissionStatus;
 
+  /// 更新 Web 通知权限状态（运行时用户操作后调用，同时持久化）
+  Future<void> setPermissionStatus(String status) async {
+    _permissionStatus = status;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('notification_permission', status);
+    } catch (_) {}
+  }
+
   /// 初始化通知服务
   Future<void> init() async {
-    if (_initialized) return;
+    if (_initialized) {
+      // 已初始化时仍然重新加载设置并调度，以防应用从后台唤醒
+      await _loadReminderSettings();
+      _scheduleReminder();
+      return;
+    }
     _initialized = true;
 
     if (kIsWeb) {
@@ -41,7 +55,15 @@ class NotificationService {
 
   Future<void> _initWeb() async {
     try {
+      // 优先从 SharedPreferences 恢复已保存的权限状态，避免重复弹窗
+      final prefs = await SharedPreferences.getInstance();
+      final saved = prefs.getString('notification_permission');
+      if (saved == 'granted' || saved == 'denied') {
+        _permissionStatus = saved as String;
+        return;
+      }
       _permissionStatus = await requestWebPermission();
+      await prefs.setString('notification_permission', _permissionStatus);
     } catch (_) {
       _permissionStatus = 'denied';
     }

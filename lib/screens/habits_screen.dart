@@ -118,6 +118,9 @@ class _HabitsScreenState extends State<HabitsScreen> {
     final descController = TextEditingController();
     String selectedIcon = '🎯';
     int selectedColor = AppColors.habitColors[0];
+    HabitFrequency selectedFrequency = HabitFrequency.daily;
+    List<int> selectedWeekDays = [DateTime.now().weekday % 7]; // 默认今天
+    List<int> selectedMonthDays = [DateTime.now().day];        // 默认今天
 
     showModalBottomSheet(
       context: context,
@@ -228,9 +231,25 @@ class _HabitsScreenState extends State<HabitsScreen> {
                     const Text('频率', style: TextStyle(fontSize: 14)),
                     const SizedBox(height: 8),
                     _FrequencySelector(
-                      frequency: HabitFrequency.daily,
-                      onChanged: (_, __) {},
+                      frequency: selectedFrequency,
+                      onChanged: (f, _) => setState(() => selectedFrequency = f),
                     ),
+                    if (selectedFrequency == HabitFrequency.weekly) ...[
+                      const SizedBox(height: 12),
+                      _WeekDayPicker(
+                        selectedDays: selectedWeekDays,
+                        onChanged: (days) =>
+                            setState(() => selectedWeekDays = days),
+                      ),
+                    ],
+                    if (selectedFrequency == HabitFrequency.monthly) ...[
+                      const SizedBox(height: 12),
+                      _MonthDayPicker(
+                        selectedDays: selectedMonthDays,
+                        onChanged: (days) =>
+                            setState(() => selectedMonthDays = days),
+                      ),
+                    ],
                     const SizedBox(height: 24),
                     SizedBox(
                       width: double.infinity,
@@ -246,7 +265,13 @@ class _HabitsScreenState extends State<HabitsScreen> {
                                     : descController.text.trim(),
                                 icon: selectedIcon,
                                 colorValue: selectedColor,
-                                frequency: HabitFrequency.daily,
+                                frequency: selectedFrequency,
+                                weekDays: selectedFrequency == HabitFrequency.weekly
+                                    ? selectedWeekDays
+                                    : null,
+                                monthDays: selectedFrequency == HabitFrequency.monthly
+                                    ? selectedMonthDays
+                                    : null,
                                 createdAt: DateTime.now(),
                               ));
                           if (ctx.mounted) Navigator.pop(ctx);
@@ -663,6 +688,107 @@ class _FrequencySelector extends StatelessWidget {
           ),
         );
       }).toList(),
+    );
+  }
+}
+
+/// 星期选择器：周一~周日（0=周日，6=周六，与 DateTime.weekday%7 一致）
+class _WeekDayPicker extends StatelessWidget {
+  final List<int> selectedDays;
+  final void Function(List<int>) onChanged;
+
+  const _WeekDayPicker({required this.selectedDays, required this.onChanged});
+
+  static const _dayLabels = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+
+  @override
+  Widget build(BuildContext context) {
+    return Wrap(
+      spacing: 6,
+      runSpacing: 6,
+      children: List.generate(7, (i) {
+        final selected = selectedDays.contains(i);
+        return GestureDetector(
+          onTap: () {
+            final next = List<int>.from(selectedDays);
+            if (selected) {
+              next.remove(i);
+            } else {
+              next.add(i);
+            }
+            if (next.isNotEmpty) onChanged(next);
+          },
+          child: Container(
+            width: 44,
+            height: 36,
+            decoration: BoxDecoration(
+              color: selected ? AppTheme.accent.withOpacity(0.2) : AppTheme.bgElevated,
+              borderRadius: BorderRadius.circular(8),
+              border: selected ? Border.all(color: AppTheme.accent) : null,
+            ),
+            child: Center(
+              child: Text(
+                _dayLabels[i],
+                style: TextStyle(
+                  fontSize: 12,
+                  color: selected ? AppTheme.accent : AppTheme.textSecondary,
+                  fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
+                ),
+              ),
+            ),
+          ),
+        );
+      }),
+    );
+  }
+}
+
+/// 月份日期选择器：1~31 日
+class _MonthDayPicker extends StatelessWidget {
+  final List<int> selectedDays;
+  final void Function(List<int>) onChanged;
+
+  const _MonthDayPicker({required this.selectedDays, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    return Wrap(
+      spacing: 6,
+      runSpacing: 6,
+      children: List.generate(31, (i) {
+        final day = i + 1;
+        final selected = selectedDays.contains(day);
+        return GestureDetector(
+          onTap: () {
+            final next = List<int>.from(selectedDays);
+            if (selected) {
+              next.remove(day);
+            } else {
+              next.add(day);
+            }
+            if (next.isNotEmpty) onChanged(next);
+          },
+          child: Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              color: selected ? AppTheme.accent.withOpacity(0.2) : AppTheme.bgElevated,
+              borderRadius: BorderRadius.circular(8),
+              border: selected ? Border.all(color: AppTheme.accent) : null,
+            ),
+            child: Center(
+              child: Text(
+                '$day',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: selected ? AppTheme.accent : AppTheme.textSecondary,
+                  fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
+                ),
+              ),
+            ),
+          ),
+        );
+      }),
     );
   }
 }

@@ -137,6 +137,10 @@ class HabitProvider extends ChangeNotifier {
     } catch (e) {
       // 数据加载失败，使用空状态
     } finally {
+      // 启动时对所有已有习惯检查成就（防止应用关闭期间已满足条件的习惯漏解锁）
+      for (final habit in _habits) {
+        await _checkAchievements(habit.id);
+      }
       _isLoading = false;
       notifyListeners();
     }
@@ -183,6 +187,8 @@ class HabitProvider extends ChangeNotifier {
     final now = DateTime.now();
     final dayOfWeek = now.weekday % 7;
     final dayOfMonth = now.day;
+    // 月末回退：当月天数不足时，设置的日期视为该月最后一天
+    final lastDayOfMonth = DateTime(now.year, now.month + 1, 0).day;
 
     return _habits.where((h) {
       if (h.archived) return false;
@@ -192,7 +198,11 @@ class HabitProvider extends ChangeNotifier {
         case HabitFrequency.weekly:
           return h.weekDays?.contains(dayOfWeek) ?? false;
         case HabitFrequency.monthly:
-          return h.monthDays?.contains(dayOfMonth) ?? false;
+          if (h.monthDays == null || h.monthDays!.isEmpty) return false;
+          // 如果用户设置了 31 日但本月不足 31 天，视为最后一天
+          return h.monthDays!.contains(dayOfMonth) ||
+              (dayOfMonth == lastDayOfMonth &&
+                  h.monthDays!.any((d) => d > lastDayOfMonth));
       }
     }).toList();
   }
@@ -379,10 +389,37 @@ class HabitProvider extends ChangeNotifier {
       }
     }
 
-    final daysSinceCreated =
-        DateTime.now().difference(habit.createdAt).inDays + 1;
+    if (dates.isEmpty) {
+      return HabitStats(
+        currentStreak: 0,
+        longestStreak: 0,
+        totalCount: 0,
+        completionRate: 0.0,
+        checkInDates: [],
+      );
+    }
+
+    // 基准日期取首次打卡（而非习惯创建日期），避免创建后未打卡期间拉低完成率
+    final firstCheckIn = DateTime.parse(dates.first);
+    int totalExpected;
+    switch (habit.frequency) {
+      case HabitFrequency.daily:
+        totalExpected = DateTime.now().difference(firstCheckIn).inDays + 1;
+        break;
+      case HabitFrequency.weekly:
+        totalExpected =
+            ((DateTime.now().difference(firstCheckIn).inDays) / 7).ceil() + 1;
+        break;
+      case HabitFrequency.monthly:
+        int months = (DateTime.now().year - firstCheckIn.year) * 12 +
+            DateTime.now().month -
+            firstCheckIn.month;
+        if (DateTime.now().day >= firstCheckIn.day) months++;
+        totalExpected = months.clamp(1, 9999);
+        break;
+    }
     final completionRate =
-        (dates.length / daysSinceCreated * 100).clamp(0.0, 100.0);
+        (dates.length / totalExpected * 100).clamp(0.0, 100.0);
 
     return HabitStats(
       currentStreak: currentStreak,

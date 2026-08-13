@@ -43,8 +43,8 @@ class _AnalyzerScreenState extends State<AnalyzerScreen> {
 
     final result = _analyzeText(_controller.text);
 
-    // 保存分析记录
-    if (mounted) {
+    // 保存分析记录（仅当有建议习惯时）
+    if (mounted && result.suggestedHabits.isNotEmpty) {
       await context.read<HabitProvider>().addAnalysisInsight(AnalysisInsight(
             id: '${DateTime.now().millisecondsSinceEpoch}',
             mainConflict: result.mainConflict,
@@ -89,8 +89,10 @@ class _AnalyzerScreenState extends State<AnalyzerScreen> {
         suggestedHabits: [
           _SuggestedHabit(
               '技能学习30分钟', '📚', '每天学习专业技能', AppColors.habitColors[0]),
-          _SuggestedHabit('简历更新', '💼', '每周更新简历', AppColors.habitColors[4]),
-          _SuggestedHabit('人脉拓展', '🤝', '每周认识一位同行', AppColors.habitColors[6]),
+          _SuggestedHabit('简历更新', '💼', '每周更新简历', AppColors.habitColors[4],
+              frequency: HabitFrequency.weekly, weekDays: [1]), // 每周一
+          _SuggestedHabit('人脉拓展', '🤝', '每周认识一位同行', AppColors.habitColors[6],
+              frequency: HabitFrequency.weekly, weekDays: [3]), // 每周三
         ],
       ),
       'study': AnalysisResult(
@@ -101,7 +103,8 @@ class _AnalyzerScreenState extends State<AnalyzerScreen> {
         suggestedHabits: [
           _SuggestedHabit('晨间学习1小时', '🌅', '早起专注学习', AppColors.habitColors[2]),
           _SuggestedHabit('单词背诵30个', '📝', '每日词汇积累', AppColors.habitColors[8]),
-          _SuggestedHabit('真题练习', '✍️', '每周完成一套真题', AppColors.habitColors[5]),
+          _SuggestedHabit('真题练习', '✍️', '每周完成一套真题', AppColors.habitColors[5],
+              frequency: HabitFrequency.weekly, weekDays: [6]), // 每周六
         ],
       ),
       'health': AnalysisResult(
@@ -122,7 +125,8 @@ class _AnalyzerScreenState extends State<AnalyzerScreen> {
         suggestion: '记账一周看钱流向。决定：①砍一项非必要支出 ②每月储蓄10%收入。',
         suggestedHabits: [
           _SuggestedHabit('每日记账', '📊', '清楚每一笔支出', AppColors.habitColors[1]),
-          _SuggestedHabit('强制储蓄', '💰', '每月储蓄20%', AppColors.habitColors[3]),
+          _SuggestedHabit('强制储蓄', '💰', '每月储蓄20%', AppColors.habitColors[3],
+              frequency: HabitFrequency.monthly, monthDays: [1]), // 每月1日
           _SuggestedHabit('理财学习', '📈', '每天学点理财', AppColors.habitColors[5]),
         ],
       ),
@@ -133,7 +137,8 @@ class _AnalyzerScreenState extends State<AnalyzerScreen> {
         suggestion: '沟通前先问自己："我最想让他理解的一件事是什么？"直接说出来。',
         suggestedHabits: [
           _SuggestedHabit('主动问候', '📱', '每天联系重要的人', AppColors.habitColors[9]),
-          _SuggestedHabit('深度对话', '💬', '每周一次深度交流', AppColors.habitColors[6]),
+          _SuggestedHabit('深度对话', '💬', '每周一次深度交流', AppColors.habitColors[6],
+              frequency: HabitFrequency.weekly, weekDays: [5]), // 每周五
           _SuggestedHabit('表达感谢', '🙏', '每天感谢一个人', AppColors.habitColors[2]),
         ],
       ),
@@ -555,7 +560,9 @@ class _HabitCardState extends State<_HabitCard> {
           description: widget.habit.description,
           icon: widget.habit.icon,
           colorValue: widget.habit.color,
-          frequency: HabitFrequency.daily,
+          frequency: widget.habit.frequency,
+          weekDays: widget.habit.weekDays,
+          monthDays: widget.habit.monthDays,
           createdAt: DateTime.now(),
         ));
 
@@ -653,6 +660,10 @@ class _SuggestedHabit {
   final String icon;
   final String description;
   final int color;
+  final HabitFrequency frequency;
+  final List<int>? weekDays;
+  final List<int>? monthDays;
 
-  _SuggestedHabit(this.name, this.icon, this.description, this.color);
+  _SuggestedHabit(this.name, this.icon, this.description, this.color,
+      {this.frequency = HabitFrequency.daily, this.weekDays, this.monthDays});
 }
