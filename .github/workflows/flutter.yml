@@ -24,18 +24,14 @@ jobs:
           flutter-version: 3.24.0
 
       - run: flutter pub get
-        working-directory: maodun_app
 
       - run: flutter analyze --no-fatal-infos
-        working-directory: maodun_app
 
       - run: flutter test
-        working-directory: maodun_app
         env:
           CI: true
 
       - run: flutter build web --release
-        working-directory: maodun_app
         env:
           CI: true
           BOT: true
@@ -45,12 +41,12 @@ jobs:
         uses: peaceiris/actions-gh-pages@v3
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: maodun_app/build/web
+          publish_dir: build/web
           publish_branch: gh-pages
           user_name: github-actions[bot]
           user_email: github-actions[bot]@users.noreply.github.com
 
-  # ─── Android 构建（Linux 即可） ───
+  # ─── Android 构建 ───
   build-android:
     name: Build Android APK
     runs-on: ubuntu-latest
@@ -65,13 +61,10 @@ jobs:
           flutter-version: 3.24.0
 
       - run: flutter pub get
-        working-directory: maodun_app
 
       - run: flutter analyze --no-fatal-infos
-        working-directory: maodun_app
 
       - run: flutter test
-        working-directory: maodun_app
         env:
           CI: true
 
@@ -82,7 +75,6 @@ jobs:
           java-version: '17'
 
       - run: flutter build apk --debug
-        working-directory: maodun_app
         env:
           CI: true
 
@@ -90,7 +82,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: maodun-android-debug-apk
-          path: maodun_app/build/app/outputs/flutter-apk/app-debug.apk
+          path: build/app/outputs/flutter-apk/app-debug.apk
           retention-days: 7
 
   # ─── Windows 构建 ───
@@ -108,22 +100,18 @@ jobs:
           flutter-version: 3.24.0
 
       - run: flutter pub get
-        working-directory: maodun_app
 
       - run: flutter analyze --no-fatal-infos
-        working-directory: maodun_app
 
       - run: flutter test
-        working-directory: maodun_app
         env:
           CI: true
 
       - run: flutter build windows --release
-        working-directory: maodun_app
         env:
           CI: true
 
-  # ─── macOS 构建（需要 macOS runner，公开 repo 免费额度有限） ───
+  # ─── macOS 构建 ───
   # build-macos:
   #   name: Build macOS
   #   runs-on: macos-latest
@@ -136,14 +124,12 @@ jobs:
   #         channel: stable
   #         flutter-version: 3.24.0
   #     - run: flutter pub get
-  #       working-directory: maodun_app
   #     - run: flutter build macos --release
-  #       working-directory: maodun_app
   #       env:
   #         CI: true
-  #   # 需要 Apple 开发者账号进行代码签名（正式发布时启用）
+  #   # 需要 macOS runner；代码签名需 Apple 开发者账号（正式发布时启用）
   #
-  # ─── iOS 构建（需要 macOS runner，公开 repo 免费额度有限） ───
+  # ─── iOS 构建 ───
   # build-ios:
   #   name: Build iOS
   #   runs-on: macos-latest
@@ -156,9 +142,7 @@ jobs:
   #         channel: stable
   #         flutter-version: 3.24.0
   #     - run: flutter pub get
-  #       working-directory: maodun_app
   #     - run: flutter build ios --release --no-codesign
-  #       working-directory: maodun_app
   #       env:
   #         CI: true
-  #   # 需要 Apple 开发者账号进行代码签名（正式发布时启用）
+  #   # 需要 macOS runner；正式签名需 Apple 开发者账号（正式发布时启用）
