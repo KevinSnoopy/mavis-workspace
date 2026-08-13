@@ -11,12 +11,12 @@
     "categories": ["productivity", "lifestyle"],
     "icons": [
         {
-            "src": "icons/Icon-192.png",
+            "src": "icons/icon-192.png",
             "sizes": "192x192",
             "type": "image/png"
         },
         {
-            "src": "icons/Icon-512.png",
+            "src": "icons/icon-512.png",
             "sizes": "512x512",
             "type": "image/png"
         },
@@ -39,14 +39,14 @@
             "short_name": "打卡",
             "description": "快速打开今日打卡",
             "url": "/?action=checkin",
-            "icons": [{ "src": "icons/Icon-192.png", "sizes": "192x192" }]
+            "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }]
         },
         {
             "name": "矛盾分析",
             "short_name": "分析",
             "description": "分析当前核心矛盾",
             "url": "/?action=analyze",
-            "icons": [{ "src": "icons/Icon-192.png", "sizes": "192x192" }]
+            "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }]
         }
     ]
 }
