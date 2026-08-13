@@ -12,6 +12,7 @@ dependencies:
   cupertino_icons: ^1.0.8
   provider: ^6.1.2
   shared_preferences: ^2.3.2
+  flutter_secure_storage: ^9.2.2
   fl_chart: ^0.68.0
   confetti: ^0.7.0
   share_plus: ^10.0.0

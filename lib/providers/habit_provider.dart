@@ -5,13 +5,19 @@ import '../models/habit.dart';
 
 /// 习惯状态管理
 /// 使用缓存避免重复计算统计数据
+///
+/// 存储说明：
+/// - Web 端：SharedPreferences（浏览器 localStorage）
+/// - 原生端（iOS/Android/macOS/Windows）：SharedPreferences
+///   （加密存储层已规划，可通过 StorageService 切换，
+///     详见 lib/services/storage_service*.dart）
 class HabitProvider extends ChangeNotifier {
   List<Habit> _habits = [];
   List<CheckIn> _checkIns = [];
   List<Achievement> _achievements = [];
   List<AnalysisInsight> _analysisInsights = [];
   bool _isLoading = true;
-  bool _saveFailed = false; // 上次保存是否失败
+  bool _saveFailed = false;
 
   // 统计缓存，避免每次 rebuild 都重算
   final Map<String, HabitStats> _statsCache = {};
@@ -135,16 +141,15 @@ class HabitProvider extends ChangeNotifier {
   Future<void> _saveData() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      await Future.wait([
-        prefs.setString(
-            'habits', jsonEncode(_habits.map((e) => e.toJson()).toList())),
-        prefs.setString(
-            'checkIns', jsonEncode(_checkIns.map((e) => e.toJson()).toList())),
-        prefs.setString('achievements',
-            jsonEncode(_achievements.map((e) => e.toJson()).toList())),
-        prefs.setString('analysisInsights',
-            jsonEncode(_analysisInsights.map((e) => e.toJson()).toList())),
-      ]);
+      // 串行写入以避免竞态
+      await prefs.setString(
+          'habits', jsonEncode(_habits.map((e) => e.toJson()).toList()));
+      await prefs.setString(
+          'checkIns', jsonEncode(_checkIns.map((e) => e.toJson()).toList()));
+      await prefs.setString('achievements',
+          jsonEncode(_achievements.map((e) => e.toJson()).toList()));
+      await prefs.setString('analysisInsights',
+          jsonEncode(_analysisInsights.map((e) => e.toJson()).toList()));
       _saveFailed = false;
     } catch (e) {
       _saveFailed = true;

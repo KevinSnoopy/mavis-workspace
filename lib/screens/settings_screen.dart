@@ -328,9 +328,14 @@ class SettingsScreen extends StatelessWidget {
                 }
               } catch (e) {
                 if (ctx.mounted) {
+                  Navigator.pop(ctx);
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
-                      content: Text('导入失败：${e.toString()}'),
+                      content: Text(
+                        e.toString().startsWith('导入数据格式错误')
+                            ? '导入失败：数据格式不正确，请检查 JSON 是否完整'
+                            : '导入失败，请重试',
+                      ),
                       backgroundColor: Colors.red,
                     ),
                   );
