@@ -91,12 +91,10 @@ class Habit {
         (e) => e.name == json['frequency'],
         orElse: () => HabitFrequency.daily,
       ),
-      weekDays: json['weekDays'] != null 
-        ? List<int>.from(json['weekDays']) 
-        : null,
-      monthDays: json['monthDays'] != null 
-        ? List<int>.from(json['monthDays']) 
-        : null,
+      weekDays:
+          json['weekDays'] != null ? List<int>.from(json['weekDays']) : null,
+      monthDays:
+          json['monthDays'] != null ? List<int>.from(json['monthDays']) : null,
       targetPerDay: json['targetPerDay'] ?? 1,
       reminderTime: json['reminderTime'],
       createdAt: DateTime.parse(json['createdAt']),

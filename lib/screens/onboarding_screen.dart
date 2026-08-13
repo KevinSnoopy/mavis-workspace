@@ -23,22 +23,19 @@ class _OnboardingScreenState extends State<OnboardingScreen>
       emoji: '⚖️',
       title: '认识「矛盾」',
       subtitle: '基于毛泽东《矛盾论》与《实践论》',
-      description:
-          '在复杂的人生问题中，找到主要矛盾，\n通过建立微小习惯，在实践中不断前进。',
+      description: '在复杂的人生问题中，找到主要矛盾，\n通过建立微小习惯，在实践中不断前进。',
     ),
     _OnboardPage(
       emoji: '🔥',
       title: '习惯追踪',
       subtitle: '从小事开始，持续行动',
-      description:
-          '建立每日习惯，打卡追踪进度。\n连胜记录激励你坚持不懈。',
+      description: '建立每日习惯，打卡追踪进度。\n连胜记录激励你坚持不懈。',
     ),
     _OnboardPage(
       emoji: '💡',
       title: '分析转化',
       subtitle: '困惑 → 行动',
-      description:
-          '用矛盾分析器，把抽象的困惑\n转化为具体的、可执行的习惯。',
+      description: '用矛盾分析器，把抽象的困惑\n转化为具体的、可执行的习惯。',
     ),
   ];
 

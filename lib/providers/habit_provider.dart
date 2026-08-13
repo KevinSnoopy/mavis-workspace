@@ -87,25 +87,32 @@ class HabitProvider extends ChangeNotifier {
       final habitsJson = prefs.getString('habits');
       if (habitsJson != null) {
         final List<dynamic> list = jsonDecode(habitsJson);
-        _habits = list.map((e) => Habit.fromJson(e as Map<String, dynamic>)).toList();
+        _habits =
+            list.map((e) => Habit.fromJson(e as Map<String, dynamic>)).toList();
       }
 
       final checkInsJson = prefs.getString('checkIns');
       if (checkInsJson != null) {
         final List<dynamic> list = jsonDecode(checkInsJson);
-        _checkIns = list.map((e) => CheckIn.fromJson(e as Map<String, dynamic>)).toList();
+        _checkIns = list
+            .map((e) => CheckIn.fromJson(e as Map<String, dynamic>))
+            .toList();
       }
 
       final achievementsJson = prefs.getString('achievements');
       if (achievementsJson != null) {
         final List<dynamic> list = jsonDecode(achievementsJson);
-        _achievements = list.map((e) => Achievement.fromJson(e as Map<String, dynamic>)).toList();
+        _achievements = list
+            .map((e) => Achievement.fromJson(e as Map<String, dynamic>))
+            .toList();
       }
 
       final insightsJson = prefs.getString('analysisInsights');
       if (insightsJson != null) {
         final List<dynamic> list = jsonDecode(insightsJson);
-        _analysisInsights = list.map((e) => AnalysisInsight.fromJson(e as Map<String, dynamic>)).toList();
+        _analysisInsights = list
+            .map((e) => AnalysisInsight.fromJson(e as Map<String, dynamic>))
+            .toList();
       }
     } catch (e) {
       // 数据加载失败，使用空状态
@@ -119,10 +126,14 @@ class HabitProvider extends ChangeNotifier {
     try {
       final prefs = await SharedPreferences.getInstance();
       await Future.wait([
-        prefs.setString('habits', jsonEncode(_habits.map((e) => e.toJson()).toList())),
-        prefs.setString('checkIns', jsonEncode(_checkIns.map((e) => e.toJson()).toList())),
-        prefs.setString('achievements', jsonEncode(_achievements.map((e) => e.toJson()).toList())),
-        prefs.setString('analysisInsights', jsonEncode(_analysisInsights.map((e) => e.toJson()).toList())),
+        prefs.setString(
+            'habits', jsonEncode(_habits.map((e) => e.toJson()).toList())),
+        prefs.setString(
+            'checkIns', jsonEncode(_checkIns.map((e) => e.toJson()).toList())),
+        prefs.setString('achievements',
+            jsonEncode(_achievements.map((e) => e.toJson()).toList())),
+        prefs.setString('analysisInsights',
+            jsonEncode(_analysisInsights.map((e) => e.toJson()).toList())),
       ]);
     } catch (e) {
       // 数据保存失败，静默忽略，下次写入会重试
@@ -162,7 +173,9 @@ class HabitProvider extends ChangeNotifier {
 
   CheckIn? getTodayCheckIn(String habitId) {
     final today = _todayString();
-    return _checkIns.where((c) => c.habitId == habitId && c.date == today).firstOrNull;
+    return _checkIns
+        .where((c) => c.habitId == habitId && c.date == today)
+        .firstOrNull;
   }
 
   /// 触发 UI 刷新（下拉刷新时调用）
@@ -175,7 +188,8 @@ class HabitProvider extends ChangeNotifier {
   Future<void> checkIn(String habitId, {int count = 1, String? note}) async {
     try {
       final today = _todayString();
-      final existingIndex = _checkIns.indexWhere((c) => c.habitId == habitId && c.date == today);
+      final existingIndex =
+          _checkIns.indexWhere((c) => c.habitId == habitId && c.date == today);
 
       if (existingIndex != -1) {
         final existing = _checkIns[existingIndex];
@@ -264,7 +278,8 @@ class HabitProvider extends ChangeNotifier {
     try {
       final index = _habits.indexWhere((h) => h.id == habitId);
       if (index != -1) {
-        _habits[index] = _habits[index].copyWith(archived: !_habits[index].archived);
+        _habits[index] =
+            _habits[index].copyWith(archived: !_habits[index].archived);
         await _saveData();
         notifyListeners();
       }
@@ -275,15 +290,15 @@ class HabitProvider extends ChangeNotifier {
 
   // ──────────────────────── 统计数据 ────────────────────────
 
-  HabitStats getHabitStats(String habitId) {
+  HabitStats? getHabitStats(String habitId) {
+    // 先检查习惯是否存在，不存在则直接返回 null
+    if (!_habits.any((h) => h.id == habitId)) return null;
     return _statsCache.putIfAbsent(habitId, () => _computeStats(habitId));
   }
 
   HabitStats _computeStats(String habitId) {
-    final habit = _habits.firstWhere(
-      (h) => h.id == habitId,
-      orElse: () => throw StateError('Habit not found: $habitId'),
-    );
+    // 此处习惯必然存在（由 getHabitStats 保证）
+    final habit = _habits.firstWhere((h) => h.id == habitId);
 
     final habitCheckIns = _checkIns.where((c) => c.habitId == habitId).toList();
     if (habitCheckIns.isEmpty) {
@@ -336,8 +351,10 @@ class HabitProvider extends ChangeNotifier {
       }
     }
 
-    final daysSinceCreated = DateTime.now().difference(habit.createdAt).inDays + 1;
-    final completionRate = (dates.length / daysSinceCreated * 100).clamp(0.0, 100.0);
+    final daysSinceCreated =
+        DateTime.now().difference(habit.createdAt).inDays + 1;
+    final completionRate =
+        (dates.length / daysSinceCreated * 100).clamp(0.0, 100.0);
 
     return HabitStats(
       currentStreak: currentStreak,
@@ -355,7 +372,7 @@ class HabitProvider extends ChangeNotifier {
     int maxStreak = 0;
     for (final habit in _habits.where((h) => !h.archived)) {
       final stats = getHabitStats(habit.id);
-      if (stats.currentStreak > maxStreak) {
+      if (stats != null && stats.currentStreak > maxStreak) {
         maxStreak = stats.currentStreak;
       }
     }
@@ -374,11 +391,18 @@ class HabitProvider extends ChangeNotifier {
   // ──────────────────────── 成就检查 ────────────────────────
 
   Future<void> _checkAchievements(String habitId) async {
-    final stats = getHabitStats(habitId);
+    // checkIn 调用时 habitId 必然有效
+    final stats = getHabitStats(habitId) ?? HabitStats(
+      currentStreak: 0,
+      longestStreak: 0,
+      totalCount: 0,
+      completionRate: 0,
+      checkInDates: [],
+    );
 
     // F5.1 首次打卡成就
-    final hasFirst = _achievements.any(
-        (a) => a.habitId == habitId && a.name == '首次打卡');
+    final hasFirst =
+        _achievements.any((a) => a.habitId == habitId && a.name == '首次打卡');
     if (!hasFirst && stats.totalCount >= 1) {
       _achievements.add(Achievement(
         id: '${DateTime.now().millisecondsSinceEpoch}',
@@ -397,7 +421,8 @@ class HabitProvider extends ChangeNotifier {
     ];
 
     for (final m in milestones) {
-      final alreadyHas = _achievements.any((a) => a.habitId == habitId && a.name == m.name);
+      final alreadyHas =
+          _achievements.any((a) => a.habitId == habitId && a.name == m.name);
       if (alreadyHas) continue;
 
       bool unlocked = false;

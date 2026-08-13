@@ -46,11 +46,11 @@ class _AnalyzerScreenState extends State<AnalyzerScreen> {
     // 保存分析记录
     if (mounted) {
       await context.read<HabitProvider>().addAnalysisInsight(AnalysisInsight(
-        id: '${DateTime.now().millisecondsSinceEpoch}',
-        mainConflict: result.mainConflict,
-        suggestedHabits: result.suggestedHabits.map((h) => h.name).toList(),
-        createdAt: DateTime.now(),
-      ));
+            id: '${DateTime.now().millisecondsSinceEpoch}',
+            mainConflict: result.mainConflict,
+            suggestedHabits: result.suggestedHabits.map((h) => h.name).toList(),
+            createdAt: DateTime.now(),
+          ));
     }
 
     setState(() {
@@ -87,7 +87,8 @@ class _AnalyzerScreenState extends State<AnalyzerScreen> {
         rootCause: '你担心的不是选择本身，而是选择后能否胜任。在能力不足时，任何方向都充满风险。',
         suggestion: '先花2-3个月专注培养一项可迁移的底层能力（写作、数据分析、沟通表达），技能到手后方向自然清晰。',
         suggestedHabits: [
-          _SuggestedHabit('技能学习30分钟', '📚', '每天学习专业技能', AppColors.habitColors[0]),
+          _SuggestedHabit(
+              '技能学习30分钟', '📚', '每天学习专业技能', AppColors.habitColors[0]),
           _SuggestedHabit('简历更新', '💼', '每周更新简历', AppColors.habitColors[4]),
           _SuggestedHabit('人脉拓展', '🤝', '每周认识一位同行', AppColors.habitColors[6]),
         ],
@@ -183,7 +184,8 @@ class _AnalyzerScreenState extends State<AnalyzerScreen> {
                   shape: BoxShape.circle,
                 ),
                 child: const Center(
-                  child: Text('1', style: TextStyle(fontWeight: FontWeight.bold)),
+                  child:
+                      Text('1', style: TextStyle(fontWeight: FontWeight.bold)),
                 ),
               ),
               const SizedBox(width: 8),
@@ -242,7 +244,8 @@ class _AnalyzerScreenState extends State<AnalyzerScreen> {
                   onSubmitted: (_) => _analyze(),
                   decoration: InputDecoration(
                     hintText: '比如：想转行做程序员，但不知道学什么，怕学完还是找不到工作...',
-                    hintStyle: TextStyle(color: AppTheme.textSecondary.withOpacity(0.5)),
+                    hintStyle: TextStyle(
+                        color: AppTheme.textSecondary.withOpacity(0.5)),
                     filled: true,
                     fillColor: AppTheme.bgElevated,
                     border: OutlineInputBorder(
@@ -306,7 +309,8 @@ class _AnalyzerScreenState extends State<AnalyzerScreen> {
                           padding: const EdgeInsets.all(12),
                           decoration: BoxDecoration(
                             color: AppTheme.bgElevated,
-                            borderRadius: BorderRadius.circular(AppTheme.radiusSm),
+                            borderRadius:
+                                BorderRadius.circular(AppTheme.radiusSm),
                           ),
                           child: Text(q),
                         ),
@@ -543,7 +547,7 @@ class _HabitCardState extends State<_HabitCard> {
     return GestureDetector(
       onTap: () async {
         if (_added) return;
-        
+
         final provider = context.read<HabitProvider>();
         await provider.addHabit(Habit(
           id: '',
@@ -554,9 +558,9 @@ class _HabitCardState extends State<_HabitCard> {
           frequency: HabitFrequency.daily,
           createdAt: DateTime.now(),
         ));
-        
+
         setState(() => _added = true);
-        
+
         if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
@@ -569,14 +573,12 @@ class _HabitCardState extends State<_HabitCard> {
       child: Container(
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          color: _added
-              ? AppTheme.success.withOpacity(0.1)
-              : AppTheme.bgElevated,
+          color:
+              _added ? AppTheme.success.withOpacity(0.1) : AppTheme.bgElevated,
           borderRadius: BorderRadius.circular(AppTheme.radiusMd),
           border: Border.all(
-            color: _added
-                ? AppTheme.success.withOpacity(0.3)
-                : Colors.transparent,
+            color:
+                _added ? AppTheme.success.withOpacity(0.3) : Colors.transparent,
           ),
         ),
         child: Row(
@@ -589,7 +591,8 @@ class _HabitCardState extends State<_HabitCard> {
                 borderRadius: BorderRadius.circular(12),
               ),
               child: Center(
-                child: Text(widget.habit.icon, style: const TextStyle(fontSize: 24)),
+                child: Text(widget.habit.icon,
+                    style: const TextStyle(fontSize: 24)),
               ),
             ),
             const SizedBox(width: 12),

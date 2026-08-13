@@ -3,15 +3,22 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:maodun_app/models/habit.dart';
 import 'package:maodun_app/providers/habit_provider.dart';
 
+/// 等待 provider 数据加载完成（轮询替代硬编码 delay，避免 Flaky）
+Future<void> _waitForLoaded(HabitProvider provider) async {
+  for (int i = 0; i < 50; i++) {
+    if (!provider.isLoading) return;
+    await Future.delayed(const Duration(milliseconds: 10));
+  }
+  // 超时保护（500ms），确保测试不会永久卡住
+}
+
 void main() {
   late HabitProvider provider;
 
   setUp(() async {
-    // 每次测试前重置 Mock SharedPreferences
     SharedPreferences.setMockInitialValues({});
     provider = HabitProvider();
-    // 等待首次数据加载完成
-    await Future.delayed(const Duration(milliseconds: 100));
+    await _waitForLoaded(provider);
   });
 
   group('HabitProvider - 习惯 CRUD', () {
@@ -153,7 +160,7 @@ void main() {
       final stats = provider.getHabitStats(added.id);
 
       expect(stats, isNotNull);
-      expect(stats.currentStreak, equals(0));
+      expect(stats!.currentStreak, equals(0));
       expect(stats.totalCount, equals(0));
       expect(stats.completionRate, equals(0.0));
     });
@@ -174,7 +181,7 @@ void main() {
       await provider.checkIn(added.id);
       final stats = provider.getHabitStats(added.id);
 
-      expect(stats.currentStreak, equals(1));
+      expect(stats?.currentStreak ?? 0, equals(1));
     });
   });
 

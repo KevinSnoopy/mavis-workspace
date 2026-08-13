@@ -5,9 +5,11 @@ class ThemeProvider extends ChangeNotifier {
   static const _key = 'theme_mode';
 
   ThemeMode _mode = ThemeMode.dark;
+  bool _isLoaded = false;
 
   ThemeMode get mode => _mode;
   bool get isDark => _mode == ThemeMode.dark;
+  bool get isLoaded => _isLoaded;
 
   ThemeProvider() {
     _load();
@@ -23,6 +25,7 @@ class ThemeProvider extends ChangeNotifier {
     } else {
       _mode = ThemeMode.dark; // 默认深色
     }
+    _isLoaded = true;
     notifyListeners();
   }
 

@@ -3,14 +3,21 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:maodun_app/providers/theme_provider.dart';
 
+/// 等待 ThemeProvider 异步加载完成（轮询 isLoaded 标志）
+Future<void> _waitForLoaded(ThemeProvider provider) async {
+  for (int i = 0; i < 100; i++) {
+    if (provider.isLoaded) return;
+    await Future.delayed(const Duration(milliseconds: 5));
+  }
+}
+
 void main() {
   late ThemeProvider provider;
 
   setUp(() async {
     SharedPreferences.setMockInitialValues({});
     provider = ThemeProvider();
-    // 等待异步加载完成
-    await Future.delayed(const Duration(milliseconds: 50));
+    await _waitForLoaded(provider);
   });
 
   group('ThemeProvider - 主题状态', () {
@@ -50,7 +57,7 @@ void main() {
 
       // 模拟重启：重新创建 provider
       final newProvider = ThemeProvider();
-      await Future.delayed(const Duration(milliseconds: 50));
+      await _waitForLoaded(newProvider);
 
       expect(newProvider.mode, equals(ThemeMode.light));
     });

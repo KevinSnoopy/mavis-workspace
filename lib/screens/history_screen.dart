@@ -53,6 +53,14 @@ class HistoryScreen extends StatelessWidget {
 class _OverviewTab extends StatelessWidget {
   const _OverviewTab();
 
+  static final _emptyStats = HabitStats(
+    currentStreak: 0,
+    longestStreak: 0,
+    totalCount: 0,
+    completionRate: 0,
+    checkInDates: [],
+  );
+
   @override
   Widget build(BuildContext context) {
     return Consumer<HabitProvider>(
@@ -212,19 +220,21 @@ class _OverviewTab extends StatelessWidget {
                   ),
                   child: Column(
                     children: activeHabits.take(5).map((habit) {
-                      final stats = provider.getHabitStats(habit.id);
+                      final stats = provider.getHabitStats(habit.id) ?? _emptyStats;
                       return Padding(
                         padding: const EdgeInsets.only(bottom: 12),
                         child: GestureDetector(
                           onTap: () => Navigator.push(
                             context,
                             MaterialPageRoute(
-                              builder: (_) => HabitDetailScreen(habitId: habit.id),
+                              builder: (_) =>
+                                  HabitDetailScreen(habitId: habit.id),
                             ),
                           ),
                           child: Row(
                             children: [
-                              Text(habit.icon, style: const TextStyle(fontSize: 18)),
+                              Text(habit.icon,
+                                  style: const TextStyle(fontSize: 18)),
                               const SizedBox(width: 8),
                               Expanded(
                                 child: Column(
@@ -354,8 +364,7 @@ class _AchievementsTab extends StatelessWidget {
                         color: Theme.of(context).brightness == Brightness.dark
                             ? AppTheme.bgCard
                             : Colors.white,
-                        borderRadius:
-                            BorderRadius.circular(AppTheme.radiusMd),
+                        borderRadius: BorderRadius.circular(AppTheme.radiusMd),
                         border: Border.all(
                           color: AppTheme.accent.withOpacity(0.2),
                         ),
@@ -642,9 +651,7 @@ class _CalendarTabState extends State<_CalendarTab> {
   Widget build(BuildContext context) {
     return Consumer<HabitProvider>(
       builder: (context, provider, _) {
-        final allDates = provider.checkIns
-            .map((c) => c.date)
-            .toSet();
+        final allDates = provider.checkIns.map((c) => c.date).toSet();
 
         return ListView(
           padding: const EdgeInsets.all(16),
@@ -659,7 +666,8 @@ class _CalendarTabState extends State<_CalendarTab> {
                 ),
                 Text(
                   '${_currentMonth.year}年${_currentMonth.month}月',
-                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                  style: const TextStyle(
+                      fontSize: 16, fontWeight: FontWeight.w600),
                 ),
                 IconButton(
                   icon: const Icon(Icons.chevron_right),
@@ -715,7 +723,8 @@ class _CalendarTabState extends State<_CalendarTab> {
     int startWeekday = firstDay.weekday; // 1=Mon, 7=Sun
     final daysInMonth = DateTime(month.year, month.month + 1, 0).day;
     final today = DateTime.now();
-    final todayStr = '${today.year}-${today.month.toString().padLeft(2, '0')}-${today.day.toString().padLeft(2, '0')}';
+    final todayStr =
+        '${today.year}-${today.month.toString().padLeft(2, '0')}-${today.day.toString().padLeft(2, '0')}';
 
     // 计算网格行数
     final totalCells = startWeekday - 1 + daysInMonth;
@@ -734,7 +743,8 @@ class _CalendarTabState extends State<_CalendarTab> {
                 return const Expanded(child: SizedBox(height: 40));
               }
 
-              final dateStr = '${month.year}-${month.month.toString().padLeft(2, '0')}-${dayNum.toString().padLeft(2, '0')}';
+              final dateStr =
+                  '${month.year}-${month.month.toString().padLeft(2, '0')}-${dayNum.toString().padLeft(2, '0')}';
               final hasCheckIn = checkInDates.contains(dateStr);
               final isToday = dateStr == todayStr;
               final isFuture = dateStr.compareTo(todayStr) > 0;
@@ -744,7 +754,9 @@ class _CalendarTabState extends State<_CalendarTab> {
 
               return Expanded(
                 child: GestureDetector(
-                  onTap: isFuture ? null : () => _showDayDetail(dateStr, habitsOnDay),
+                  onTap: isFuture
+                      ? null
+                      : () => _showDayDetail(dateStr, habitsOnDay),
                   child: Container(
                     height: 40,
                     margin: const EdgeInsets.all(1),
@@ -772,7 +784,8 @@ class _CalendarTabState extends State<_CalendarTab> {
                                   : isToday
                                       ? AppTheme.primary
                                       : AppTheme.textSecondary,
-                              fontWeight: isToday ? FontWeight.bold : FontWeight.normal,
+                              fontWeight:
+                                  isToday ? FontWeight.bold : FontWeight.normal,
                             ),
                           ),
                           if (hasCheckIn && !isFuture)
@@ -800,7 +813,8 @@ class _CalendarTabState extends State<_CalendarTab> {
   List<Habit> _getHabitsForDay(String dateStr, BuildContext context) {
     final provider = context.read<HabitProvider>();
     return provider.habits.where((h) {
-      return provider.checkIns.any((c) => c.habitId == h.id && c.date == dateStr);
+      return provider.checkIns
+          .any((c) => c.habitId == h.id && c.date == dateStr);
     }).toList();
   }
 
@@ -828,7 +842,8 @@ class _CalendarTabState extends State<_CalendarTab> {
             ),
             const SizedBox(height: 16),
             if (habits.isNotEmpty) ...[
-              const Text('✅ 已完成', style: TextStyle(fontWeight: FontWeight.w600)),
+              const Text('✅ 已完成',
+                  style: TextStyle(fontWeight: FontWeight.w600)),
               const SizedBox(height: 8),
               ...habits.map((h) => Padding(
                     padding: const EdgeInsets.only(bottom: 4),
@@ -841,14 +856,16 @@ class _CalendarTabState extends State<_CalendarTab> {
               const SizedBox(height: 12),
             ],
             if (notDone.isNotEmpty) ...[
-              const Text('❌ 未完成', style: TextStyle(fontWeight: FontWeight.w600)),
+              const Text('❌ 未完成',
+                  style: TextStyle(fontWeight: FontWeight.w600)),
               const SizedBox(height: 8),
               ...notDone.map((h) => Padding(
                     padding: const EdgeInsets.only(bottom: 4),
                     child: Row(children: [
                       Text(h.icon, style: const TextStyle(fontSize: 16)),
                       const SizedBox(width: 8),
-                      Text(h.name, style: TextStyle(color: AppTheme.textSecondary)),
+                      Text(h.name,
+                          style: TextStyle(color: AppTheme.textSecondary)),
                     ]),
                   )),
             ],

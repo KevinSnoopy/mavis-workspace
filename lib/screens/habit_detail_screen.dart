@@ -25,8 +25,15 @@ class HabitDetailScreen extends StatelessWidget {
           );
         }
 
-        final stats = provider.getHabitStats(habitId);
-        final habitCheckIns = provider.checkIns.where((c) => c.habitId == habitId).toList();
+        final stats = provider.getHabitStats(habitId) ?? HabitStats(
+          currentStreak: 0,
+          longestStreak: 0,
+          totalCount: 0,
+          completionRate: 0,
+          checkInDates: [],
+        );
+        final habitCheckIns =
+            provider.checkIns.where((c) => c.habitId == habitId).toList();
         final checkInSet = stats.checkInDates.toSet();
 
         // 最近7天的打卡数据（用于柱状图）
@@ -115,7 +122,8 @@ class HabitDetailScreen extends StatelessWidget {
                           getTooltipItem: (group, groupIndex, rod, rodIndex) {
                             return BarTooltipItem(
                               rod.toY.round() > 0 ? '已打卡' : '未打卡',
-                              const TextStyle(color: Colors.white, fontSize: 12),
+                              const TextStyle(
+                                  color: Colors.white, fontSize: 12),
                             );
                           },
                         ),
@@ -210,11 +218,8 @@ class HabitDetailScreen extends StatelessWidget {
                       borderRadius: BorderRadius.circular(AppTheme.radiusMd),
                     ),
                     child: Column(
-                      children: habitCheckIns
-                          .toList()
-                          .reversed
-                          .take(10)
-                          .map((c) {
+                      children:
+                          habitCheckIns.toList().reversed.take(10).map((c) {
                         final date = DateTime.parse(c.date);
                         return ListTile(
                           leading: Icon(

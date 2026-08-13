@@ -146,6 +146,12 @@ class SettingsScreen extends StatelessWidget {
                   );
                 },
               ),
+              _Tile(
+                icon: Icons.privacy_tip,
+                title: '隐私政策',
+                subtitle: '查看数据处理方式',
+                onTap: () => _openPrivacyPolicy(context),
+              ),
             ],
           ),
 
@@ -197,7 +203,9 @@ class SettingsScreen extends StatelessWidget {
     );
     if (time != null && context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('已设置为 ${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}')),
+        SnackBar(
+            content: Text(
+                '已设置为 ${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}')),
       );
     }
   }
@@ -211,7 +219,8 @@ class SettingsScreen extends StatelessWidget {
       'habits': provider.habits.map((h) => h.toJson()).toList(),
       'checkIns': provider.checkIns.map((c) => c.toJson()).toList(),
       'achievements': provider.achievements.map((a) => a.toJson()).toList(),
-      'analysisInsights': provider.analysisInsights.map((i) => i.toJson()).toList(),
+      'analysisInsights':
+          provider.analysisInsights.map((i) => i.toJson()).toList(),
     };
 
     final jsonStr = const JsonEncoder.withIndent('  ').convert(data);
@@ -335,6 +344,15 @@ class SettingsScreen extends StatelessWidget {
     );
   }
 
+  void _openPrivacyPolicy(BuildContext context) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('请访问 /privacy.html 查看隐私政策'),
+        duration: Duration(seconds: 3),
+      ),
+    );
+  }
+
   void _showAboutDialog(BuildContext context) {
     showDialog(
       context: context,
@@ -447,17 +465,24 @@ class _Tile extends StatelessWidget {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     return ListTile(
       leading: Icon(icon, size: 20),
-      title: Text(title, style: textColor != null ? TextStyle(color: textColor) : null),
+      title: Text(title,
+          style: textColor != null ? TextStyle(color: textColor) : null),
       subtitle: subtitle != null
           ? Text(
               subtitle!,
               style: TextStyle(
                 fontSize: 12,
-                color: textColor ?? (isDark ? AppTheme.textSecondary : Colors.grey),
+                color: textColor ??
+                    (isDark ? AppTheme.textSecondary : Colors.grey),
               ),
             )
           : null,
-      trailing: trailing ?? (onTap != null ? Icon(Icons.chevron_right, size: 20, color: isDark ? AppTheme.textSecondary : Colors.grey) : null),
+      trailing: trailing ??
+          (onTap != null
+              ? Icon(Icons.chevron_right,
+                  size: 20,
+                  color: isDark ? AppTheme.textSecondary : Colors.grey)
+              : null),
       onTap: onTap,
     );
   }

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:confetti/confetti.dart';
+import '../models/habit.dart';
 import '../providers/habit_provider.dart';
 import '../providers/notification_provider.dart';
 import '../theme/app_theme.dart';
@@ -19,10 +20,19 @@ class _HomeScreenState extends State<HomeScreen> {
   late final ConfettiController _confettiController;
   bool _hasShownConfettiToday = false;
 
+  static final _emptyStats = HabitStats(
+    currentStreak: 0,
+    longestStreak: 0,
+    totalCount: 0,
+    completionRate: 0,
+    checkInDates: [],
+  );
+
   @override
   void initState() {
     super.initState();
-    _confettiController = ConfettiController(duration: const Duration(seconds: 2));
+    _confettiController =
+        ConfettiController(duration: const Duration(seconds: 2));
     _checkDailyReminder();
   }
 
@@ -31,7 +41,9 @@ class _HomeScreenState extends State<HomeScreen> {
       final provider = context.read<HabitProvider>();
       final notifProvider = context.read<NotificationProvider>();
       final todayHabits = provider.getTodayHabits();
-      final notDone = todayHabits.where((h) => provider.getTodayCheckIn(h.id) == null).toList();
+      final notDone = todayHabits
+          .where((h) => provider.getTodayCheckIn(h.id) == null)
+          .toList();
       if (notDone.isNotEmpty && todayHabits.isNotEmpty) {
         notifProvider.add(
           title: '📅 今日打卡提醒',
@@ -67,17 +79,20 @@ class _HomeScreenState extends State<HomeScreen> {
     } else {
       provider.checkIn(habitId);
       context.read<NotificationProvider>().add(
-        title: '✅ 打卡成功',
-        body: '继续保持！🔥',
-        emoji: '🎉',
-      );
+            title: '✅ 打卡成功',
+            body: '继续保持！🔥',
+            emoji: '🎉',
+          );
     }
     final todayHabits = provider.getTodayHabits();
     final nowDone = todayHabits.where((h) {
       if (h.id == habitId) return true;
       return provider.getTodayCheckIn(h.id) != null;
     }).length;
-    if (!wasAlreadyDone && nowDone == todayHabits.length && todayHabits.isNotEmpty && !_hasShownConfettiToday) {
+    if (!wasAlreadyDone &&
+        nowDone == todayHabits.length &&
+        todayHabits.isNotEmpty &&
+        !_hasShownConfettiToday) {
       _confettiController.play();
       _hasShownConfettiToday = true;
     }
@@ -97,8 +112,10 @@ class _HomeScreenState extends State<HomeScreen> {
           return check != null && check.count >= h.targetPerDay;
         }).length;
 
-        final isAllDone = completedCount == todayHabits.length && todayHabits.isNotEmpty;
-        final isPartiallyDone = completedCount > 0 && completedCount < todayHabits.length;
+        final isAllDone =
+            completedCount == todayHabits.length && todayHabits.isNotEmpty;
+        final isPartiallyDone =
+            completedCount > 0 && completedCount < todayHabits.length;
         final globalStreak = provider.globalStreak;
 
         // 重置彩屑标记（新的一天）
@@ -117,246 +134,258 @@ class _HomeScreenState extends State<HomeScreen> {
               },
               child: CustomScrollView(
                 physics: const BouncingScrollPhysics(),
-              slivers: [
-                // ─── 问候语 ───
-                SliverToBoxAdapter(
-                  child: _HomeHeader(
-                    greeting: _getGreeting(),
-                    isAllDone: isAllDone,
-                    isPartiallyDone: isPartiallyDone,
-                  ),
-                ),
-
-                // ─── 连胜卡片 ───
-                if (globalStreak > 0)
+                slivers: [
+                  // ─── 问候语 ───
                   SliverToBoxAdapter(
-                    child: _StreakCard(streak: globalStreak),
-                  ),
-
-                // ─── 今日进度卡片 ───
-                SliverToBoxAdapter(
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-                    child: Container(
-                      padding: const EdgeInsets.all(20),
-                      decoration: BoxDecoration(
-                        color: AppTheme.bgCard,
-                        borderRadius: BorderRadius.circular(AppTheme.radiusLg),
-                        border: Border.all(color: Colors.white.withOpacity(0.08)),
-                      ),
-                      child: Column(
-                        children: [
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              const Text(
-                                '今日行动',
-                                style: TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                              Text(
-                                '$completedCount/${todayHabits.length}',
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  color: AppTheme.textSecondary,
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 16),
-                          SizedBox(
-                            height: 120,
-                            child: Center(
-                              child: Stack(
-                                alignment: Alignment.center,
-                                children: [
-                                  SizedBox(
-                                    width: 120,
-                                    height: 120,
-                                    child: CircularProgressIndicator(
-                                      value: todayHabits.isEmpty
-                                          ? 0
-                                          : completedCount / todayHabits.length,
-                                      strokeWidth: 8,
-                                      backgroundColor: AppTheme.bgElevated,
-                                      valueColor: AlwaysStoppedAnimation(
-                                        isAllDone ? AppTheme.success : AppTheme.primary,
-                                      ),
-                                    ),
-                                  ),
-                                  if (isAllDone)
-                                    const Text('🎉', style: TextStyle(fontSize: 36))
-                                  else
-                                    Column(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        Text(
-                                          todayHabits.isEmpty
-                                              ? '0%'
-                                              : '${((completedCount / todayHabits.length) * 100).round()}%',
-                                          style: const TextStyle(
-                                            fontSize: 28,
-                                            fontWeight: FontWeight.bold,
-                                          ),
-                                        ),
-                                        Text(
-                                          '完成',
-                                          style: TextStyle(
-                                            fontSize: 12,
-                                            color: AppTheme.textSecondary,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
+                    child: _HomeHeader(
+                      greeting: _getGreeting(),
+                      isAllDone: isAllDone,
+                      isPartiallyDone: isPartiallyDone,
                     ),
                   ),
-                ),
 
-                // ─── 今日习惯列表 ───
-                if (todayHabits.isNotEmpty)
-                  SliverPadding(
-                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-                    sliver: SliverList(
-                      delegate: SliverChildBuilderDelegate(
-                        (context, index) {
-                          final habit = todayHabits[index];
-                          final check = provider.getTodayCheckIn(habit.id);
-                          final isDone = check != null && check.count >= habit.targetPerDay;
-                          final stats = provider.getHabitStats(habit.id);
-
-                          return Padding(
-                            padding: const EdgeInsets.only(bottom: 10),
-                            child: _HabitCheckInTile(
-                              habit: habit,
-                              isDone: isDone,
-                              stats: stats,
-                              onTap: () => _onCheckIn(habit.id, isDone),
-                            ),
-                          );
-                        },
-                        childCount: todayHabits.length,
-                      ),
+                  // ─── 连胜卡片 ───
+                  if (globalStreak > 0)
+                    SliverToBoxAdapter(
+                      child: _StreakCard(streak: globalStreak),
                     ),
-                  )
-                else
+
+                  // ─── 今日进度卡片 ───
                   SliverToBoxAdapter(
                     child: Padding(
-                      padding: const EdgeInsets.all(32),
-                      child: Column(
-                        children: [
-                          const Text('🌱', style: TextStyle(fontSize: 48)),
-                          const SizedBox(height: 16),
-                          Text(
-                            '还没有习惯',
-                            style: TextStyle(
-                              fontSize: 16,
-                              color: AppTheme.textSecondary,
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            '通过矛盾分析，帮你把困惑转化为行动',
-                            style: TextStyle(
-                              fontSize: 13,
-                              color: AppTheme.textSecondary.withOpacity(0.7),
-                            ),
-                            textAlign: TextAlign.center,
-                          ),
-                          const SizedBox(height: 20),
-                          ElevatedButton.icon(
-                            onPressed: () => Navigator.push(
-                              context,
-                              MaterialPageRoute(builder: (_) => const AnalyzerScreen()),
-                            ),
-                            icon: const Icon(Icons.psychology, size: 18),
-                            label: const Text('开始分析'),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-
-                // ─── 矛盾分析入口 ───
-                SliverToBoxAdapter(
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-                    child: GestureDetector(
-                      onTap: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(builder: (_) => const AnalyzerScreen()),
-                      ),
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
                       child: Container(
                         padding: const EdgeInsets.all(20),
                         decoration: BoxDecoration(
-                          gradient: const LinearGradient(
-                            colors: [AppTheme.primary, AppTheme.primaryDark],
-                          ),
-                          borderRadius: BorderRadius.circular(AppTheme.radiusLg),
-                          boxShadow: [
-                            BoxShadow(
-                              color: AppTheme.primary.withOpacity(0.3),
-                              blurRadius: 20,
-                              offset: const Offset(0, 8),
-                            ),
-                          ],
+                          color: AppTheme.bgCard,
+                          borderRadius:
+                              BorderRadius.circular(AppTheme.radiusLg),
+                          border:
+                              Border.all(color: Colors.white.withOpacity(0.08)),
                         ),
-                        child: Row(
+                        child: Column(
                           children: [
-                            Container(
-                              width: 56,
-                              height: 56,
-                              decoration: BoxDecoration(
-                                color: Colors.white.withOpacity(0.2),
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              child: const Center(
-                                child: Text('⚖️', style: TextStyle(fontSize: 28)),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                const Text(
+                                  '今日行动',
+                                  style: TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                                Text(
+                                  '$completedCount/${todayHabits.length}',
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    color: AppTheme.textSecondary,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 16),
+                            SizedBox(
+                              height: 120,
+                              child: Center(
+                                child: Stack(
+                                  alignment: Alignment.center,
+                                  children: [
+                                    SizedBox(
+                                      width: 120,
+                                      height: 120,
+                                      child: CircularProgressIndicator(
+                                        value: todayHabits.isEmpty
+                                            ? 0
+                                            : completedCount /
+                                                todayHabits.length,
+                                        strokeWidth: 8,
+                                        backgroundColor: AppTheme.bgElevated,
+                                        valueColor: AlwaysStoppedAnimation(
+                                          isAllDone
+                                              ? AppTheme.success
+                                              : AppTheme.primary,
+                                        ),
+                                      ),
+                                    ),
+                                    if (isAllDone)
+                                      const Text('🎉',
+                                          style: TextStyle(fontSize: 36))
+                                    else
+                                      Column(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Text(
+                                            todayHabits.isEmpty
+                                                ? '0%'
+                                                : '${((completedCount / todayHabits.length) * 100).round()}%',
+                                            style: const TextStyle(
+                                              fontSize: 28,
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                          ),
+                                          Text(
+                                            '完成',
+                                            style: TextStyle(
+                                              fontSize: 12,
+                                              color: AppTheme.textSecondary,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                  ],
+                                ),
                               ),
                             ),
-                            const SizedBox(width: 16),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  const Text(
-                                    '矛盾分析器',
-                                    style: TextStyle(
-                                      fontSize: 18,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    '找到核心问题，转化为行动',
-                                    style: TextStyle(
-                                      fontSize: 14,
-                                      color: Colors.white.withOpacity(0.8),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            const Icon(Icons.arrow_forward_ios, color: Colors.white, size: 20),
                           ],
                         ),
                       ),
                     ),
                   ),
-                ),
 
-                // 底部安全间距
-                const SliverToBoxAdapter(child: SizedBox(height: 80)),
-              ],
+                  // ─── 今日习惯列表 ───
+                  if (todayHabits.isNotEmpty)
+                    SliverPadding(
+                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+                      sliver: SliverList(
+                        delegate: SliverChildBuilderDelegate(
+                          (context, index) {
+                            final habit = todayHabits[index];
+                            final check = provider.getTodayCheckIn(habit.id);
+                            final isDone = check != null &&
+                                check.count >= habit.targetPerDay;
+                            final stats = provider.getHabitStats(habit.id) ?? _emptyStats;
+
+                            return Padding(
+                              padding: const EdgeInsets.only(bottom: 10),
+                              child: _HabitCheckInTile(
+                                habit: habit,
+                                isDone: isDone,
+                                stats: stats,
+                                onTap: () => _onCheckIn(habit.id, isDone),
+                              ),
+                            );
+                          },
+                          childCount: todayHabits.length,
+                        ),
+                      ),
+                    )
+                  else
+                    SliverToBoxAdapter(
+                      child: Padding(
+                        padding: const EdgeInsets.all(32),
+                        child: Column(
+                          children: [
+                            const Text('🌱', style: TextStyle(fontSize: 48)),
+                            const SizedBox(height: 16),
+                            Text(
+                              '还没有习惯',
+                              style: TextStyle(
+                                fontSize: 16,
+                                color: AppTheme.textSecondary,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              '通过矛盾分析，帮你把困惑转化为行动',
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: AppTheme.textSecondary.withOpacity(0.7),
+                              ),
+                              textAlign: TextAlign.center,
+                            ),
+                            const SizedBox(height: 20),
+                            ElevatedButton.icon(
+                              onPressed: () => Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                    builder: (_) => const AnalyzerScreen()),
+                              ),
+                              icon: const Icon(Icons.psychology, size: 18),
+                              label: const Text('开始分析'),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+
+                  // ─── 矛盾分析入口 ───
+                  SliverToBoxAdapter(
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+                      child: GestureDetector(
+                        onTap: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                              builder: (_) => const AnalyzerScreen()),
+                        ),
+                        child: Container(
+                          padding: const EdgeInsets.all(20),
+                          decoration: BoxDecoration(
+                            gradient: const LinearGradient(
+                              colors: [AppTheme.primary, AppTheme.primaryDark],
+                            ),
+                            borderRadius:
+                                BorderRadius.circular(AppTheme.radiusLg),
+                            boxShadow: [
+                              BoxShadow(
+                                color: AppTheme.primary.withOpacity(0.3),
+                                blurRadius: 20,
+                                offset: const Offset(0, 8),
+                              ),
+                            ],
+                          ),
+                          child: Row(
+                            children: [
+                              Container(
+                                width: 56,
+                                height: 56,
+                                decoration: BoxDecoration(
+                                  color: Colors.white.withOpacity(0.2),
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: const Center(
+                                  child: Text('⚖️',
+                                      style: TextStyle(fontSize: 28)),
+                                ),
+                              ),
+                              const SizedBox(width: 16),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    const Text(
+                                      '矛盾分析器',
+                                      style: TextStyle(
+                                        fontSize: 18,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      '找到核心问题，转化为行动',
+                                      style: TextStyle(
+                                        fontSize: 14,
+                                        color: Colors.white.withOpacity(0.8),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const Icon(Icons.arrow_forward_ios,
+                                  color: Colors.white, size: 20),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+
+                  // 底部安全间距
+                  const SliverToBoxAdapter(child: SizedBox(height: 80)),
+                ],
+              ),
             ),
-          ),
 
             // 彩屑动画
             Align(
@@ -413,14 +442,12 @@ class _HabitCheckInTile extends StatelessWidget {
         curve: Curves.easeInOut,
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          color: isDone
-              ? AppTheme.success.withOpacity(0.1)
-              : AppTheme.bgElevated,
+          color:
+              isDone ? AppTheme.success.withOpacity(0.1) : AppTheme.bgElevated,
           borderRadius: BorderRadius.circular(AppTheme.radiusMd),
           border: Border.all(
-            color: isDone
-                ? AppTheme.success.withOpacity(0.3)
-                : Colors.transparent,
+            color:
+                isDone ? AppTheme.success.withOpacity(0.3) : Colors.transparent,
           ),
         ),
         child: Row(
@@ -568,8 +595,7 @@ class _HomeHeader extends StatelessWidget {
                         color: AppTheme.textSecondary),
                     onPressed: () => Navigator.push(
                       context,
-                      MaterialPageRoute(
-                          builder: (_) => const SettingsScreen()),
+                      MaterialPageRoute(builder: (_) => const SettingsScreen()),
                     ),
                   ),
                 ],

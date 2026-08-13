@@ -5,18 +5,18 @@ class AppTheme {
   static const Color primary = Color(0xFFE85D4C);
   static const Color primaryDark = Color(0xFFC94A3A);
   static const Color primaryLight = Color(0xFFFF7B6B);
-  
+
   // 强调色 - 琥珀金
   static const Color accent = Color(0xFFF5A623);
-  
+
   // 成功色
   static const Color success = Color(0xFF4ADE80);
-  
+
   // 背景色
   static const Color bgDark = Color(0xFF0F0F1A);
   static const Color bgCard = Color(0xFF1A1A2E);
   static const Color bgElevated = Color(0xFF252542);
-  
+
   // 文字色（深色主题默认）
   static const Color textPrimary = Color(0xFFFFFFFF);
   static const Color textSecondary = Color(0xFFA0A0B0);
@@ -29,7 +29,7 @@ class AppTheme {
   static const Color bgLight = Color(0xFFF5F5F7);
   static const Color bgCardLight = Color(0xFFFFFFFF);
   static const Color bgElevatedLight = Color(0xFFF0F0F2);
-  
+
   // 圆角
   static const double radiusSm = 12;
   static const double radiusMd = 16;
@@ -247,8 +247,26 @@ class AppColors {
   ];
 
   static const List<String> habitIcons = [
-    '🏃', '📚', '💧', '🧘', '🌙', '📝', '💪', '🗣️', '✍️', '🎯',
-    '💼', '🍎', '🧠', '⭐', '🔥', '🌟', '💡', '🎨', '🎵', '🏋️',
+    '🏃',
+    '📚',
+    '💧',
+    '🧘',
+    '🌙',
+    '📝',
+    '💪',
+    '🗣️',
+    '✍️',
+    '🎯',
+    '💼',
+    '🍎',
+    '🧠',
+    '⭐',
+    '🔥',
+    '🌟',
+    '💡',
+    '🎨',
+    '🎵',
+    '🏋️',
   ];
 
   /// 彩屑动画颜色

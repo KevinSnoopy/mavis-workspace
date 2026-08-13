@@ -381,7 +381,8 @@ class _NavItem extends StatelessWidget {
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     const selectedColor = AppTheme.primary;
-    final unselectedColor = isDark ? AppTheme.textSecondary : const Color(0xFF6B6B7B);
+    final unselectedColor =
+        isDark ? AppTheme.textSecondary : const Color(0xFF6B6B7B);
 
     return GestureDetector(
       onTap: onTap,
@@ -391,7 +392,9 @@ class _NavItem extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         decoration: BoxDecoration(
           color: isSelected
-              ? (isDark ? selectedColor.withOpacity(0.15) : selectedColor.withOpacity(0.1))
+              ? (isDark
+                  ? selectedColor.withOpacity(0.15)
+                  : selectedColor.withOpacity(0.1))
               : Colors.transparent,
           borderRadius: BorderRadius.circular(AppTheme.radiusFull),
         ),

@@ -24,14 +24,16 @@ class NotificationProvider extends ChangeNotifier {
     String? emoji,
     VoidCallback? onTap,
   }) {
-    _items.insert(0, _NotificationItem(
-      id: DateTime.now().millisecondsSinceEpoch.toString(),
-      title: title,
-      body: body,
-      emoji: emoji,
-      onTap: onTap,
-      createdAt: DateTime.now(),
-    ));
+    _items.insert(
+        0,
+        _NotificationItem(
+          id: DateTime.now().millisecondsSinceEpoch.toString(),
+          title: title,
+          body: body,
+          emoji: emoji,
+          onTap: onTap,
+          createdAt: DateTime.now(),
+        ));
     notifyListeners();
 
     // 5 秒后自动消失（如果是提示类通知）

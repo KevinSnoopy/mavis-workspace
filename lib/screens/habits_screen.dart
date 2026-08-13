@@ -24,10 +24,12 @@ class _HabitsScreenState extends State<HabitsScreen> {
 
   List<Habit> _filter(List<Habit> habits) {
     if (_query.isEmpty) return habits;
-    return habits.where((h) =>
-      h.name.toLowerCase().contains(_query.toLowerCase()) ||
-      (h.description?.toLowerCase().contains(_query.toLowerCase()) ?? false)
-    ).toList();
+    return habits
+        .where((h) =>
+            h.name.toLowerCase().contains(_query.toLowerCase()) ||
+            (h.description?.toLowerCase().contains(_query.toLowerCase()) ??
+                false))
+        .toList();
   }
 
   @override
@@ -36,7 +38,8 @@ class _HabitsScreenState extends State<HabitsScreen> {
       builder: (context, provider, _) {
         final activeHabits = provider.habits.where((h) => !h.archived).toList()
           ..sort((a, b) => a.order.compareTo(b.order));
-        final archivedHabits = provider.habits.where((h) => h.archived).toList();
+        final archivedHabits =
+            provider.habits.where((h) => h.archived).toList();
 
         final filteredActive = _filter(activeHabits);
         final filteredArchived = _filter(archivedHabits);
@@ -58,7 +61,8 @@ class _HabitsScreenState extends State<HabitsScreen> {
                         onChanged: (v) => setState(() => _query = v),
                         decoration: InputDecoration(
                           hintText: '搜索习惯...',
-                          hintStyle: TextStyle(color: AppTheme.textSecondary.withOpacity(0.5)),
+                          hintStyle: TextStyle(
+                              color: AppTheme.textSecondary.withOpacity(0.5)),
                           prefixIcon: const Icon(Icons.search, size: 20),
                           suffixIcon: _query.isNotEmpty
                               ? IconButton(
@@ -71,7 +75,8 @@ class _HabitsScreenState extends State<HabitsScreen> {
                               : null,
                           filled: true,
                           fillColor: AppTheme.bgElevated,
-                          contentPadding: const EdgeInsets.symmetric(vertical: 0, horizontal: 12),
+                          contentPadding: const EdgeInsets.symmetric(
+                              vertical: 0, horizontal: 12),
                           border: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(12),
                             borderSide: BorderSide.none,
@@ -126,7 +131,9 @@ class _HabitsScreenState extends State<HabitsScreen> {
           builder: (ctx, setState) {
             return Padding(
               padding: EdgeInsets.only(
-                left: 20, right: 20, top: 20,
+                left: 20,
+                right: 20,
+                top: 20,
                 bottom: MediaQuery.of(ctx).viewInsets.bottom + 20,
               ),
               child: SingleChildScrollView(
@@ -138,7 +145,8 @@ class _HabitsScreenState extends State<HabitsScreen> {
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         const Text('添加习惯',
-                            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                            style: TextStyle(
+                                fontSize: 20, fontWeight: FontWeight.bold)),
                         IconButton(
                           icon: const Icon(Icons.close),
                           onPressed: () => Navigator.pop(ctx),
@@ -166,13 +174,15 @@ class _HabitsScreenState extends State<HabitsScreen> {
                     const Text('图标', style: TextStyle(fontSize: 14)),
                     const SizedBox(height: 8),
                     Wrap(
-                      spacing: 8, runSpacing: 8,
+                      spacing: 8,
+                      runSpacing: 8,
                       children: AppColors.habitIcons.map((icon) {
                         final isSelected = selectedIcon == icon;
                         return GestureDetector(
                           onTap: () => setState(() => selectedIcon = icon),
                           child: Container(
-                            width: 44, height: 44,
+                            width: 44,
+                            height: 44,
                             decoration: BoxDecoration(
                               color: isSelected
                                   ? AppTheme.primary.withOpacity(0.2)
@@ -183,7 +193,8 @@ class _HabitsScreenState extends State<HabitsScreen> {
                                   : null,
                             ),
                             child: Center(
-                              child: Text(icon, style: const TextStyle(fontSize: 20)),
+                              child: Text(icon,
+                                  style: const TextStyle(fontSize: 20)),
                             ),
                           ),
                         );
@@ -193,13 +204,15 @@ class _HabitsScreenState extends State<HabitsScreen> {
                     const Text('颜色', style: TextStyle(fontSize: 14)),
                     const SizedBox(height: 8),
                     Wrap(
-                      spacing: 8, runSpacing: 8,
+                      spacing: 8,
+                      runSpacing: 8,
                       children: AppColors.habitColors.map((color) {
                         final isSelected = selectedColor == color;
                         return GestureDetector(
                           onTap: () => setState(() => selectedColor = color),
                           child: Container(
-                            width: 36, height: 36,
+                            width: 36,
+                            height: 36,
                             decoration: BoxDecoration(
                               color: Color(color),
                               shape: BoxShape.circle,
@@ -226,16 +239,16 @@ class _HabitsScreenState extends State<HabitsScreen> {
                           if (nameController.text.trim().isEmpty) return;
                           HapticFeedback.lightImpact();
                           await context.read<HabitProvider>().addHabit(Habit(
-                            id: '',
-                            name: nameController.text.trim(),
-                            description: descController.text.trim().isEmpty
-                                ? null
-                                : descController.text.trim(),
-                            icon: selectedIcon,
-                            colorValue: selectedColor,
-                            frequency: HabitFrequency.daily,
-                            createdAt: DateTime.now(),
-                          ));
+                                id: '',
+                                name: nameController.text.trim(),
+                                description: descController.text.trim().isEmpty
+                                    ? null
+                                    : descController.text.trim(),
+                                icon: selectedIcon,
+                                colorValue: selectedColor,
+                                frequency: HabitFrequency.daily,
+                                createdAt: DateTime.now(),
+                              ));
                           if (ctx.mounted) Navigator.pop(ctx);
                         },
                         child: const Text('添加'),
@@ -258,6 +271,14 @@ class _HabitList extends StatelessWidget {
 
   const _HabitList({required this.habits, required this.isArchived});
 
+  static final _emptyStats = HabitStats(
+    currentStreak: 0,
+    longestStreak: 0,
+    totalCount: 0,
+    completionRate: 0,
+    checkInDates: [],
+  );
+
   @override
   Widget build(BuildContext context) {
     if (habits.isEmpty) {
@@ -265,7 +286,8 @@ class _HabitList extends StatelessWidget {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Text(isArchived ? '📦' : '🌱', style: const TextStyle(fontSize: 48)),
+            Text(isArchived ? '📦' : '🌱',
+                style: const TextStyle(fontSize: 48)),
             const SizedBox(height: 16),
             Text(
               isArchived ? '没有暂停的习惯' : '还没有习惯',
@@ -307,7 +329,7 @@ class _HabitTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final provider = context.watch<HabitProvider>();
-    final stats = provider.getHabitStats(habit.id);
+    final stats = provider.getHabitStats(habit.id) ?? _HabitList._emptyStats;
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
@@ -356,13 +378,15 @@ class _HabitTile extends StatelessWidget {
             child: Row(
               children: [
                 Container(
-                  width: 48, height: 48,
+                  width: 48,
+                  height: 48,
                   decoration: BoxDecoration(
                     color: Color(habit.colorValue).withOpacity(0.2),
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Center(
-                    child: Text(habit.icon, style: const TextStyle(fontSize: 24)),
+                    child:
+                        Text(habit.icon, style: const TextStyle(fontSize: 24)),
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -373,7 +397,8 @@ class _HabitTile extends StatelessWidget {
                       Text(
                         habit.name,
                         style: const TextStyle(
-                          fontSize: 16, fontWeight: FontWeight.w500,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w500,
                         ),
                       ),
                       const SizedBox(height: 4),
@@ -383,7 +408,8 @@ class _HabitTile extends StatelessWidget {
                           const SizedBox(width: 8),
                           _StatChip('📊 ${stats.totalCount}次'),
                           const SizedBox(width: 8),
-                          _StatChip('${stats.completionRate.toStringAsFixed(0)}%'),
+                          _StatChip(
+                              '${stats.completionRate.toStringAsFixed(0)}%'),
                         ],
                       ),
                     ],
@@ -391,14 +417,16 @@ class _HabitTile extends StatelessWidget {
                 ),
                 if (isArchived)
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                     decoration: BoxDecoration(
                       color: AppTheme.textSecondary.withOpacity(0.2),
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: Text(
                       '已暂停',
-                      style: TextStyle(fontSize: 10, color: AppTheme.textSecondary),
+                      style: TextStyle(
+                          fontSize: 10, color: AppTheme.textSecondary),
                     ),
                   ),
                 const SizedBox(width: 8),
@@ -429,7 +457,9 @@ class _HabitTile extends StatelessWidget {
           builder: (ctx, setState) {
             return Padding(
               padding: EdgeInsets.only(
-                left: 20, right: 20, top: 20,
+                left: 20,
+                right: 20,
+                top: 20,
                 bottom: MediaQuery.of(ctx).viewInsets.bottom + 20,
               ),
               child: SingleChildScrollView(
@@ -441,7 +471,8 @@ class _HabitTile extends StatelessWidget {
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         const Text('编辑习惯',
-                            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                            style: TextStyle(
+                                fontSize: 20, fontWeight: FontWeight.bold)),
                         IconButton(
                           icon: const Icon(Icons.close),
                           onPressed: () => Navigator.pop(ctx),
@@ -466,13 +497,15 @@ class _HabitTile extends StatelessWidget {
                     const Text('图标', style: TextStyle(fontSize: 14)),
                     const SizedBox(height: 8),
                     Wrap(
-                      spacing: 8, runSpacing: 8,
+                      spacing: 8,
+                      runSpacing: 8,
                       children: AppColors.habitIcons.map((icon) {
                         final isSelected = selectedIcon == icon;
                         return GestureDetector(
                           onTap: () => setState(() => selectedIcon = icon),
                           child: Container(
-                            width: 44, height: 44,
+                            width: 44,
+                            height: 44,
                             decoration: BoxDecoration(
                               color: isSelected
                                   ? AppTheme.primary.withOpacity(0.2)
@@ -483,7 +516,8 @@ class _HabitTile extends StatelessWidget {
                                   : null,
                             ),
                             child: Center(
-                              child: Text(icon, style: const TextStyle(fontSize: 20)),
+                              child: Text(icon,
+                                  style: const TextStyle(fontSize: 20)),
                             ),
                           ),
                         );
@@ -493,13 +527,15 @@ class _HabitTile extends StatelessWidget {
                     const Text('颜色', style: TextStyle(fontSize: 14)),
                     const SizedBox(height: 8),
                     Wrap(
-                      spacing: 8, runSpacing: 8,
+                      spacing: 8,
+                      runSpacing: 8,
                       children: AppColors.habitColors.map((color) {
                         final isSelected = selectedColor == color;
                         return GestureDetector(
                           onTap: () => setState(() => selectedColor = color),
                           child: Container(
-                            width: 36, height: 36,
+                            width: 36,
+                            height: 36,
                             decoration: BoxDecoration(
                               color: Color(color),
                               shape: BoxShape.circle,
@@ -517,11 +553,15 @@ class _HabitTile extends StatelessWidget {
                         Expanded(
                           child: OutlinedButton(
                             onPressed: () async {
-                              await context.read<HabitProvider>().toggleArchive(habit.id);
+                              await context
+                                  .read<HabitProvider>()
+                                  .toggleArchive(habit.id);
                               if (ctx.mounted) Navigator.pop(ctx);
                             },
                             style: OutlinedButton.styleFrom(
-                              side: BorderSide(color: AppTheme.textSecondary.withOpacity(0.3)),
+                              side: BorderSide(
+                                  color:
+                                      AppTheme.textSecondary.withOpacity(0.3)),
                             ),
                             child: Text(
                               habit.archived ? '恢复习惯' : '暂停习惯',
@@ -536,15 +576,16 @@ class _HabitTile extends StatelessWidget {
                               if (nameController.text.trim().isEmpty) return;
                               HapticFeedback.lightImpact();
                               await context.read<HabitProvider>().updateHabit(
-                                habit.copyWith(
-                                  name: nameController.text.trim(),
-                                  description: descController.text.trim().isEmpty
-                                      ? null
-                                      : descController.text.trim(),
-                                  icon: selectedIcon,
-                                  colorValue: selectedColor,
-                                ),
-                              );
+                                    habit.copyWith(
+                                      name: nameController.text.trim(),
+                                      description:
+                                          descController.text.trim().isEmpty
+                                              ? null
+                                              : descController.text.trim(),
+                                      icon: selectedIcon,
+                                      colorValue: selectedColor,
+                                    ),
+                                  );
                               if (ctx.mounted) Navigator.pop(ctx);
                             },
                             child: const Text('保存'),
