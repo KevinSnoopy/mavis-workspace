@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:confetti/confetti.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../models/habit.dart';
 import '../providers/habit_provider.dart';
 import '../providers/notification_provider.dart';
@@ -19,6 +20,7 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   late final ConfettiController _confettiController;
   bool _hasShownConfettiToday = false;
+  String _lastConfettiDate = '';
 
   static final _emptyStats = HabitStats(
     currentStreak: 0,
@@ -34,6 +36,24 @@ class _HomeScreenState extends State<HomeScreen> {
     _confettiController =
         ConfettiController(duration: const Duration(seconds: 2));
     _checkDailyReminder();
+    _loadLastConfettiDate();
+  }
+
+  Future<void> _loadLastConfettiDate() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final saved = prefs.getString('_last_confetti_date') ?? '';
+      if (mounted) {
+        setState(() => _lastConfettiDate = saved);
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _saveLastConfettiDate() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('_last_confetti_date', _todayString());
+    } catch (_) {}
   }
 
   void _checkDailyReminder() {
@@ -95,6 +115,7 @@ class _HomeScreenState extends State<HomeScreen> {
         !_hasShownConfettiToday) {
       _confettiController.play();
       _hasShownConfettiToday = true;
+      _saveLastConfettiDate();
     }
   }
 
@@ -120,8 +141,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
         // 重置彩屑标记（新的一天）
         final today = _todayString();
-        final lastShown = _lastConfettiDate();
-        if (lastShown != today) {
+        if (_lastConfettiDate != today) {
           _hasShownConfettiToday = false;
         }
 
@@ -409,11 +429,6 @@ class _HomeScreenState extends State<HomeScreen> {
   String _todayString() {
     final now = DateTime.now();
     return '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
-  }
-
-  String _lastConfettiDate() {
-    // 简单用 SharedPreferences 存一下日期（懒加载，不用改 provider）
-    return '';
   }
 }
 

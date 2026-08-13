@@ -75,16 +75,26 @@ class HabitProvider extends ChangeNotifier {
       if (data['habits'] != null) {
         final list = data['habits'] as List<dynamic>;
         for (final h in list) {
-          _habits.add(Habit.fromJson(h as Map<String, dynamic>));
-          habitsAdded++;
+          try {
+            _habits.add(Habit.fromJson(h as Map<String, dynamic>));
+            habitsAdded++;
+          } catch (e) {
+            // ignore: avoid_print
+            debugPrint('[import] 跳过无效习惯记录: $e');
+          }
         }
       }
 
       if (data['checkIns'] != null) {
         final list = data['checkIns'] as List<dynamic>;
         for (final c in list) {
-          _checkIns.add(CheckIn.fromJson(c as Map<String, dynamic>));
-          checkInsAdded++;
+          try {
+            _checkIns.add(CheckIn.fromJson(c as Map<String, dynamic>));
+            checkInsAdded++;
+          } catch (e) {
+            // ignore: avoid_print
+            debugPrint('[import] 跳过无效打卡记录: $e');
+          }
         }
       }
 

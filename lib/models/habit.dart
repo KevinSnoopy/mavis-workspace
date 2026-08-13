@@ -1,6 +1,11 @@
 // 习惯模型
 import 'package:flutter/foundation.dart';
 
+/// 解析 required 字段，缺失时抛出具体错误
+T _req<T>(Map<String, dynamic> json, String key) =>
+    json[key] as T? ??
+    (throw FormatException('缺少必填字段 "$key"'));
+
 class Habit {
   final String id;
   final String name;
@@ -90,21 +95,21 @@ class Habit {
       debugPrint('[Habit.fromJson] 未知 frequency "$freqStr"，回退为 daily');
     }
     return Habit(
-      id: json['id'],
-      name: json['name'],
+      id: _req(json, 'id'),
+      name: _req(json, 'name'),
       description: json['description'],
-      icon: json['icon'],
-      colorValue: json['colorValue'],
+      icon: json['icon'] as String? ?? '🎯',
+      colorValue: json['colorValue'] as int? ?? 0xFFE85D4C,
       frequency: knownFreq ?? HabitFrequency.daily,
       weekDays:
           json['weekDays'] != null ? List<int>.from(json['weekDays']) : null,
       monthDays:
           json['monthDays'] != null ? List<int>.from(json['monthDays']) : null,
-      targetPerDay: json['targetPerDay'] ?? 1,
+      targetPerDay: json['targetPerDay'] as int? ?? 1,
       reminderTime: json['reminderTime'],
-      createdAt: DateTime.parse(json['createdAt']),
-      archived: json['archived'] ?? false,
-      order: json['order'] ?? 0,
+      createdAt: DateTime.parse(_req(json, 'createdAt')),
+      archived: json['archived'] as bool? ?? false,
+      order: json['order'] as int? ?? 0,
     );
   }
 }
@@ -142,12 +147,12 @@ class CheckIn {
 
   factory CheckIn.fromJson(Map<String, dynamic> json) {
     return CheckIn(
-      id: json['id'],
-      habitId: json['habitId'],
-      date: json['date'],
-      count: json['count'],
+      id: _req(json, 'id'),
+      habitId: _req(json, 'habitId'),
+      date: _req(json, 'date'),
+      count: _req(json, 'count'),
       note: json['note'],
-      createdAt: DateTime.parse(json['createdAt']),
+      createdAt: DateTime.parse(_req(json, 'createdAt')),
     );
   }
 }
@@ -183,12 +188,12 @@ class Achievement {
 
   factory Achievement.fromJson(Map<String, dynamic> json) {
     return Achievement(
-      id: json['id'],
-      habitId: json['habitId'],
-      name: json['name'],
-      description: json['description'],
-      icon: json['icon'] ?? '🏆',
-      unlockedAt: DateTime.parse(json['unlockedAt']),
+      id: _req(json, 'id'),
+      habitId: _req(json, 'habitId'),
+      name: _req(json, 'name'),
+      description: json['description'] as String? ?? '',
+      icon: json['icon'] as String? ?? '🏆',
+      unlockedAt: DateTime.parse(_req(json, 'unlockedAt')),
     );
   }
 }

@@ -719,9 +719,7 @@ class _CalendarTabState extends State<_CalendarTab> {
               children: [
                 _legendItem(AppTheme.bgElevated, '未打卡'),
                 const SizedBox(width: 16),
-                _legendItem(AppTheme.primary.withOpacity(0.3), '有打卡'),
-                const SizedBox(width: 16),
-                _legendItem(AppTheme.primary, '全部完成'),
+                _legendItem(AppTheme.primary.withOpacity(0.3), '已打卡'),
               ],
             ),
           ],
@@ -823,19 +821,50 @@ class _CalendarTabState extends State<_CalendarTab> {
     );
   }
 
+  /// 检查指定日期是否为某习惯的应打卡日
+  bool _isScheduledDay(Habit h, DateTime date) {
+    final dayOfWeek = date.weekday % 7;
+    final dayOfMonth = date.day;
+    final lastDayOfMonth = DateTime(date.year, date.month + 1, 0).day;
+    switch (h.frequency) {
+      case HabitFrequency.daily:
+        return true;
+      case HabitFrequency.weekly:
+        return h.weekDays?.contains(dayOfWeek) ?? false;
+      case HabitFrequency.monthly:
+        if (h.monthDays == null || h.monthDays!.isEmpty) return false;
+        return h.monthDays!.contains(dayOfMonth) ||
+            (dayOfMonth == lastDayOfMonth &&
+                h.monthDays!.any((d) => d > lastDayOfMonth));
+    }
+  }
+
   List<Habit> _getHabitsForDay(String dateStr, BuildContext context) {
     final provider = context.read<HabitProvider>();
+    final date = DateTime.parse(dateStr);
     return provider.habits.where((h) {
+      if (!_isScheduledDay(h, date)) return false;
       return provider.checkIns
           .any((c) => c.habitId == h.id && c.date == dateStr);
     }).toList();
   }
 
-  void _showDayDetail(String dateStr, List<Habit> habits) {
+  /// 获取某日应打卡但未完成的习惯
+  List<Habit> _getUndoneHabitsForDay(String dateStr, BuildContext context) {
     final provider = context.read<HabitProvider>();
-    final allHabits = provider.habits;
-    final checkedIds = habits.map((h) => h.id).toSet();
-    final notDone = allHabits.where((h) => !checkedIds.contains(h.id)).toList();
+    final date = DateTime.parse(dateStr);
+    final doneIds = provider.checkIns
+        .where((c) => c.date == dateStr)
+        .map((c) => c.habitId)
+        .toSet();
+    return provider.habits.where((h) {
+      if (!_isScheduledDay(h, date)) return false;
+      return !doneIds.contains(h.id);
+    }).toList();
+  }
+
+  void _showDayDetail(String dateStr, List<Habit> habits) {
+    final notDone = _getUndoneHabitsForDay(dateStr, context);
 
     showModalBottomSheet(
       context: context,
