@@ -1,6 +1,6 @@
 # 矛盾 App 功能规格文档
 
-> 版本：v1.7 | 更新：2026-08-13
+> 版本：v1.8 | 更新：2026-08-13
 
 ---
 
@@ -74,10 +74,11 @@ maodun_app/
 - [x] **F5.4** 成就徽章展示（历史页成就 Tab）
 
 ### F6. 通知系统
-- [x] **F6.1** 首次打开 App 显示今日打卡提醒（应用内横幅）
-- [x] **F6.2** 打卡成功显示通知
-- [x] **F6.3** 通知铃铛图标 + 红点标记
-- [x] **F6.4** 点击铃铛清空所有通知
+- [x] **F6.1** 每日提醒调度（SharedPreferences + Timer，App 启动时自动恢复）
+- [x] **F6.2** Web 浏览器通知（dart:js_interop + package:web，权限申请）
+- [x] **F6.3** 原生端推送通知（flutter_local_notifications，权限已配置）
+- [x] **F6.4** 应用内横幅通知（NotificationProvider，5秒自动消失）
+- [x] **F6.5** 铃铛图标 + 红点标记 + 清空功能
 
 ### F7. 主题系统
 - [x] **F7.1** 深色主题（默认）
@@ -110,9 +111,10 @@ maodun_app/
 - [x] **F12.3** 闪屏后根据首次使用状态跳转
 
 ### F13. 测试覆盖
-- [x] **F13.1** HabitProvider 单元测试（打卡、添加、删除、成就）
-- [x] **F13.2** ThemeProvider 单元测试（主题切换）
-- [x] **F13.3** Widget 测试（打卡流程、添加习惯）
+- [x] **F13.1** HabitProvider 单元测试（打卡、添加、删除、成就、多习惯、频率过滤）
+- [x] **F13.2** ThemeProvider 单元测试（主题切换、持久化）
+- [x] **F13.3** Widget 测试（打卡流程、添加习惯、主题切换）
+- [x] **F13.4** 覆盖率：27 个测试（12 habit + 7 theme + 4 widget + 4 新增）
 
 ### F14. App 图标 & 资源
 - [x] **F14.1** 多尺寸应用图标（web/icons/icon.svg + icon-192/512.png）
@@ -163,11 +165,12 @@ maodun_app/
 
 ## 五、已知限制
 
-- **L1** Web 端不支持原生推送通知（浏览器 Notification API 待集成）
-- **L2** flutter_local_notifications 已声明权限，需在 main.dart 初始化
+- **L1** Web 端浏览器通知需要用户授权（首次访问时弹出）
+- **L2** flutter_local_notifications Web 端不可用（原生端专用）
 - **L3** 没有后端，数据仅本地存储
 - **L4** flutter_secure_storage 已就绪（接口已建），providers 当前仍用 SharedPreferences
-- **L5** macOS/Windows 构建需对应主机环境，CI/CD 尚未覆盖
+- **L5** macOS/iOS CI 构建需要 macOS runner（公开 repo 免费额度有限）；iOS 发布需要 Apple 开发者账号签名
+- **L6** Android release 构建需要签名配置（Debug 模式可直接安装）
 
 ---
 
