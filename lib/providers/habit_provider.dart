@@ -376,6 +376,20 @@ class HabitProvider extends ChangeNotifier {
   Future<void> _checkAchievements(String habitId) async {
     final stats = getHabitStats(habitId);
 
+    // F5.1 首次打卡成就
+    final hasFirst = _achievements.any(
+        (a) => a.habitId == habitId && a.name == '首次打卡');
+    if (!hasFirst && stats.totalCount >= 1) {
+      _achievements.add(Achievement(
+        id: '${DateTime.now().millisecondsSinceEpoch}',
+        habitId: habitId,
+        name: '首次打卡',
+        description: '完成第一次打卡！',
+        icon: '🎉',
+        unlockedAt: DateTime.now(),
+      ));
+    }
+
     final milestones = [
       _Milestone(count: 7, name: '坚持一周', description: '连续打卡7天', icon: '🏆'),
       _Milestone(count: 30, name: '坚持一月', description: '连续打卡30天', icon: '🏆'),

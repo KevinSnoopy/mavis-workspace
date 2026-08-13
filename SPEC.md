@@ -103,6 +103,28 @@ maodun_app/
 - [x] **F11.1** 底部导航流畅转场
 - [x] **F11.2** 各页面 FadeUpwardsTransition
 
+### F12. 启动页
+- [ ] **F12.1** 带 Logo + 品牌色的正式闪屏页（2秒）
+- [ ] **F12.2** 闪屏期间初始化数据
+- [ ] **F12.3** 闪屏后根据首次使用状态跳转
+
+### F13. 测试覆盖
+- [ ] **F13.1** HabitProvider 单元测试（打卡、添加、删除、成就）
+- [ ] **F13.2** ThemeProvider 单元测试（主题切换）
+- [ ] **F13.3** Widget 测试（打卡流程、添加习惯）
+
+### F14. App 图标 & 资源
+- [ ] **F14.1** 多尺寸应用图标（web/icon_*.png）
+- [ ] **F14.2** manifest.json 中声明图标路径
+
+### F15. Deep Link
+- [ ] **F15.1** URL Scheme 配置（maodun://）
+- [ ] **F15.2** Web URL 直接打开（/habit/:id）
+
+### F16. 隐私政策 & CI/CD
+- [ ] **F16.1** 隐私政策页面（web/privacy.html）
+- [ ] **F16.2** GitHub Actions 自动构建（flutter.yml）
+
 ---
 
 ## 三、非功能性需求

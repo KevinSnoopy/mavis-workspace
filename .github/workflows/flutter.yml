@@ -1,0 +1,48 @@
+name: Flutter CI/CD
+
+on:
+  push:
+    branches:
+      - flutter
+  pull_request:
+    branches:
+      - flutter
+
+jobs:
+  build-web:
+    name: Build Web
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: flutter
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.24.0
+
+      - run: flutter pub get
+        working-directory: maodun_app
+
+      - run: flutter analyze
+        working-directory: maodun_app
+
+      - run: flutter test
+        working-directory: maodun_app
+
+      - run: flutter build web --release
+        working-directory: maodun_app
+        env:
+          CI: true
+          BOT: true
+
+      - name: Deploy to GitHub Pages
+        if: github.ref == 'refs/heads/flutter'
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: maodun_app/build/web
+          publish_branch: gh-pages
+          user_name: github-actions[bot]
+          user_email: github-actions[bot]@users.noreply.github.com
