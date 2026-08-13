@@ -149,6 +149,13 @@ class HabitsScreen extends StatelessWidget {
                         );
                       }).toList(),
                     ),
+                    const SizedBox(height: 16),
+                    const Text('频率', style: TextStyle(fontSize: 14)),
+                    const SizedBox(height: 8),
+                    _FrequencySelector(
+                      frequency: HabitFrequency.daily,
+                      onChanged: (_, __) {},
+                    ),
                     const SizedBox(height: 24),
                     SizedBox(
                       width: double.infinity,
@@ -503,6 +510,56 @@ class _StatChip extends StatelessWidget {
     return Text(
       text,
       style: TextStyle(fontSize: 12, color: AppTheme.textSecondary),
+    );
+  }
+}
+
+/// 频率选择器：每日 / 每周 / 每月
+class _FrequencySelector extends StatelessWidget {
+  final HabitFrequency frequency;
+  final void Function(HabitFrequency f, List<int>? days) onChanged;
+
+  const _FrequencySelector({
+    required this.frequency,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final options = [
+      (HabitFrequency.daily, '每日'),
+      (HabitFrequency.weekly, '每周'),
+      (HabitFrequency.monthly, '每月'),
+    ];
+
+    return Wrap(
+      spacing: 8,
+      children: options.map((opt) {
+        final isSelected = frequency == opt.$1;
+        return GestureDetector(
+          onTap: () => onChanged(opt.$1, null),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            decoration: BoxDecoration(
+              color: isSelected
+                  ? AppTheme.primary.withOpacity(0.15)
+                  : AppTheme.bgElevated,
+              borderRadius: BorderRadius.circular(20),
+              border: isSelected
+                  ? Border.all(color: AppTheme.primary)
+                  : Border.all(color: Colors.transparent),
+            ),
+            child: Text(
+              opt.$2,
+              style: TextStyle(
+                fontSize: 13,
+                color: isSelected ? AppTheme.primary : AppTheme.textSecondary,
+                fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+              ),
+            ),
+          ),
+        );
+      }).toList(),
     );
   }
 }

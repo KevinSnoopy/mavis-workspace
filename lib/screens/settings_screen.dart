@@ -96,6 +96,16 @@ class SettingsScreen extends StatelessWidget {
               Consumer<HabitProvider>(
                 builder: (context, provider, _) {
                   return _Tile(
+                    icon: Icons.cloud_download,
+                    title: '导入数据',
+                    subtitle: '从 JSON 恢复',
+                    onTap: () => _showImportDialog(context, provider),
+                  );
+                },
+              ),
+              Consumer<HabitProvider>(
+                builder: (context, provider, _) {
+                  return _Tile(
                     icon: Icons.delete_forever,
                     title: '清除所有数据',
                     subtitle: '删除习惯、打卡、成就',
@@ -241,6 +251,84 @@ class SettingsScreen extends StatelessWidget {
               }
             },
             child: const Text('确认删除', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showImportDialog(BuildContext context, HabitProvider provider) {
+    final controller = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppTheme.bgCard,
+        title: const Text('导入数据'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                '将之前导出的 JSON 数据粘贴到下方：',
+                style: TextStyle(fontSize: 13),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: controller,
+                maxLines: 8,
+                style: const TextStyle(fontSize: 12, fontFamily: 'monospace'),
+                decoration: InputDecoration(
+                  hintText: '{"habits": [...], "checkIns": [...]}',
+                  hintStyle: TextStyle(
+                    fontSize: 11,
+                    color: AppTheme.textSecondary.withOpacity(0.5),
+                  ),
+                  filled: true,
+                  fillColor: AppTheme.bgElevated,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                    borderSide: BorderSide.none,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () async {
+              final jsonStr = controller.text.trim();
+              if (jsonStr.isEmpty) return;
+              try {
+                final imported = await provider.importData(jsonStr);
+                if (ctx.mounted) {
+                  Navigator.pop(ctx);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        '成功导入 ${imported.habits} 个习惯、${imported.checkIns} 条打卡',
+                      ),
+                      backgroundColor: AppTheme.success,
+                    ),
+                  );
+                }
+              } catch (e) {
+                if (ctx.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('导入失败：${e.toString()}'),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
+                }
+              }
+            },
+            child: const Text('导入'),
           ),
         ],
       ),

@@ -38,6 +38,34 @@ class HabitProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 导入数据，返回导入的记录数
+  Future<_ImportResult> importData(String jsonStr) async {
+    final data = jsonDecode(jsonStr) as Map<String, dynamic>;
+    int habitsAdded = 0;
+    int checkInsAdded = 0;
+
+    if (data['habits'] != null) {
+      final list = data['habits'] as List<dynamic>;
+      for (final h in list) {
+        _habits.add(Habit.fromJson(h as Map<String, dynamic>));
+        habitsAdded++;
+      }
+    }
+
+    if (data['checkIns'] != null) {
+      final list = data['checkIns'] as List<dynamic>;
+      for (final c in list) {
+        _checkIns.add(CheckIn.fromJson(c as Map<String, dynamic>));
+        checkInsAdded++;
+      }
+    }
+
+    _invalidateCache();
+    await _saveData();
+    notifyListeners();
+    return _ImportResult(habitsAdded, checkInsAdded);
+  }
+
   // ──────────────────────── 数据加载 ────────────────────────
 
   Future<void> _loadData() async {
@@ -346,4 +374,11 @@ class _Milestone {
     required this.description,
     required this.icon,
   });
+}
+
+class _ImportResult {
+  final int habits;
+  final int checkIns;
+
+  _ImportResult(this.habits, this.checkIns);
 }
