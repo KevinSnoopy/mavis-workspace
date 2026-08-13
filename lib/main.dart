@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'providers/habit_provider.dart';
+import 'providers/theme_provider.dart';
 import 'theme/app_theme.dart';
 import 'screens/home_screen.dart';
 import 'screens/analyzer_screen.dart';
@@ -11,15 +12,12 @@ import 'screens/settings_screen.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  
-  // 设置状态栏
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(
       statusBarColor: Colors.transparent,
       statusBarIconBrightness: Brightness.light,
     ),
   );
-
   runApp(const MaoDunApp());
 }
 
@@ -28,20 +26,24 @@ class MaoDunApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ChangeNotifierProvider(
-      create: (_) => HabitProvider(),
-      child: MaterialApp(
-        title: '矛盾',
-        debugShowCheckedModeBanner: false,
-        theme: AppTheme.lightTheme,
-        darkTheme: AppTheme.darkTheme,
-        themeMode: ThemeMode.dark,
-        home: const MainScreen(),
-        routes: {
-          '/analyzer': (_) => const AnalyzerScreen(),
-          '/habits': (_) => const HabitsScreen(),
-          '/history': (_) => const HistoryScreen(),
-          '/settings': (_) => const SettingsScreen(),
+    return MultiProvider(
+      providers: [
+        ChangeNotifierProvider(create: (_) => HabitProvider()),
+        ChangeNotifierProvider(create: (_) => ThemeProvider()),
+      ],
+      child: Consumer<ThemeProvider>(
+        builder: (context, themeProvider, _) {
+          return MaterialApp(
+            title: '矛盾',
+            debugShowCheckedModeBanner: false,
+            theme: AppTheme.lightTheme,
+            darkTheme: AppTheme.darkTheme,
+            themeMode: themeProvider.mode,
+            home: const MainScreen(),
+            routes: {
+              '/settings': (_) => const SettingsScreen(),
+            },
+          );
         },
       ),
     );
@@ -67,6 +69,8 @@ class _MainScreenState extends State<MainScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
     return Scaffold(
       body: SafeArea(
         child: IndexedStack(
@@ -76,10 +80,12 @@ class _MainScreenState extends State<MainScreen> {
       ),
       bottomNavigationBar: Container(
         decoration: BoxDecoration(
-          color: AppTheme.bgCard,
+          color: isDark ? AppTheme.bgCard : Colors.white,
           border: Border(
             top: BorderSide(
-              color: Colors.white.withOpacity(0.05),
+              color: isDark
+                  ? Colors.white.withOpacity(0.05)
+                  : Colors.black.withOpacity(0.05),
             ),
           ),
         ),
@@ -137,6 +143,10 @@ class _NavItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final selectedColor = AppTheme.primary;
+    final unselectedColor = isDark ? AppTheme.textSecondary : const Color(0xFF6B6B7B);
+
     return GestureDetector(
       onTap: onTap,
       behavior: HitTestBehavior.opaque,
@@ -144,7 +154,9 @@ class _NavItem extends StatelessWidget {
         duration: const Duration(milliseconds: 200),
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         decoration: BoxDecoration(
-          color: isSelected ? AppTheme.primary.withOpacity(0.15) : Colors.transparent,
+          color: isSelected
+              ? (isDark ? selectedColor.withOpacity(0.15) : selectedColor.withOpacity(0.1))
+              : Colors.transparent,
           borderRadius: BorderRadius.circular(AppTheme.radiusFull),
         ),
         child: Column(
@@ -153,7 +165,7 @@ class _NavItem extends StatelessWidget {
             Icon(
               icon,
               size: 24,
-              color: isSelected ? AppTheme.primary : AppTheme.textSecondary,
+              color: isSelected ? selectedColor : unselectedColor,
             ),
             const SizedBox(height: 4),
             Text(
@@ -161,7 +173,7 @@ class _NavItem extends StatelessWidget {
               style: TextStyle(
                 fontSize: 11,
                 fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
-                color: isSelected ? AppTheme.primary : AppTheme.textSecondary,
+                color: isSelected ? selectedColor : unselectedColor,
               ),
             ),
           ],

@@ -26,6 +26,18 @@ class HabitProvider extends ChangeNotifier {
     _loadData();
   }
 
+  // ──────────────────────── 清空数据 ────────────────────────
+
+  Future<void> clearAll() async {
+    _habits.clear();
+    _checkIns.clear();
+    _achievements.clear();
+    _analysisInsights.clear();
+    _invalidateCache();
+    await _saveData();
+    notifyListeners();
+  }
+
   // ──────────────────────── 数据加载 ────────────────────────
 
   Future<void> _loadData() async {

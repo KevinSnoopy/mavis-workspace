@@ -38,10 +38,21 @@ class _AnalyzerScreenState extends State<AnalyzerScreen> {
       _result = null;
     });
 
-    // 模拟分析延迟
+    // 模拟分析延迟（打字感）
     await Future.delayed(const Duration(milliseconds: 1500));
 
     final result = _analyzeText(_controller.text);
+
+    // 保存分析记录
+    if (mounted) {
+      await context.read<HabitProvider>().addAnalysisInsight(AnalysisInsight(
+        id: '${DateTime.now().millisecondsSinceEpoch}',
+        mainConflict: result.mainConflict,
+        suggestedHabits: result.suggestedHabits.map((h) => h.name).toList(),
+        createdAt: DateTime.now(),
+      ));
+    }
+
     setState(() {
       _isAnalyzing = false;
       _result = result;
