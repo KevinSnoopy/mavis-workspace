@@ -8,6 +8,7 @@ import 'providers/habit_provider.dart';
 import 'providers/theme_provider.dart';
 import 'providers/notification_provider.dart';
 import 'services/notification_service.dart';
+import 'services/native_notifications.dart';
 import 'theme/app_theme.dart';
 import 'screens/home_screen.dart';
 import 'screens/analyzer_screen.dart';
@@ -17,7 +18,7 @@ import 'screens/settings_screen.dart';
 import 'screens/onboarding_screen.dart';
 import 'screens/habit_detail_screen.dart';
 
-void main() {
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(
@@ -26,18 +27,20 @@ void main() {
     ),
   );
 
+  // 初始化原生推送通知（Android/iOS/macOS/Windows）
+  // Web 端走 stub，无影响
+  await initializeNativeNotifications();
+
   // 全局 Widget 树异常捕获
   FlutterError.onError = (FlutterErrorDetails details) {
-    // 记录异常（生产环境可上报至 Sentry）
     debugPrint('[FlutterError] ${details.exceptionAsString()}');
     FlutterError.presentError(details);
   };
 
-  // 平台级异常捕获（isolate、native bridge 等）
   // ignore: invalid_use_of_visible_for_testing_member
   PlatformDispatcher.instance.onError = (Object error, StackTrace? stack) {
     debugPrint('[PlatformError] $error\n$stack');
-    return true; // 已处理，不崩溃
+    return true;
   };
 
   runApp(const MaoDunApp());

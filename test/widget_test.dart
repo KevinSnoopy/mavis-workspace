@@ -6,17 +6,37 @@ import 'package:maodun_app/models/habit.dart';
 import 'package:maodun_app/providers/habit_provider.dart';
 import 'package:maodun_app/providers/theme_provider.dart';
 import 'package:maodun_app/providers/notification_provider.dart';
+import 'package:maodun_app/services/storage_service.dart';
 import 'package:maodun_app/theme/app_theme.dart';
+
+/// 测试用内存存储适配层（不需要 native 平台）
+class _InMemoryStorage implements StorageServiceInterface {
+  final Map<String, String> _data = {};
+
+  @override
+  Future<String?> getString(String key) async => _data[key];
+
+  @override
+  Future<void> setString(String key, String value) async => _data[key] = value;
+
+  @override
+  Future<void> remove(String key) async => _data.remove(key);
+
+  @override
+  Future<void> clear() async => _data.clear();
+}
 
 void main() {
   setUp(() {
     SharedPreferences.setMockInitialValues({});
   });
 
-  Widget buildTestApp({required Widget child}) {
+  Widget buildTestApp({required Widget child, HabitProvider? habitProvider}) {
     return MultiProvider(
       providers: [
-        ChangeNotifierProvider(create: (_) => HabitProvider()),
+        ChangeNotifierProvider<HabitProvider>(
+          create: (_) => habitProvider ?? HabitProvider.forTesting(_InMemoryStorage()),
+        ),
         ChangeNotifierProvider(create: (_) => ThemeProvider()),
         ChangeNotifierProvider(create: (_) => NotificationProvider()),
       ],

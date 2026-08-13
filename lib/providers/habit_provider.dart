@@ -1,17 +1,16 @@
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import '../models/habit.dart';
+import '../services/storage_service.dart';
 
 /// 习惯状态管理
 /// 使用缓存避免重复计算统计数据
 ///
-/// 存储说明：
+/// 存储：
 /// - Web 端：SharedPreferences（浏览器 localStorage）
-/// - 原生端（iOS/Android/macOS/Windows）：SharedPreferences
-///   （加密存储层已规划，可通过 StorageService 切换，
-///     详见 lib/services/storage_service*.dart）
+/// - 原生端：flutter_secure_storage（Keychain / EncryptedSharedPreferences）
 class HabitProvider extends ChangeNotifier {
+  final StorageServiceInterface _storage;
   List<Habit> _habits = [];
   List<CheckIn> _checkIns = [];
   List<Achievement> _achievements = [];
@@ -38,7 +37,13 @@ class HabitProvider extends ChangeNotifier {
   List<AnalysisInsight> get analysisInsights => _analysisInsights;
   bool get isLoading => _isLoading;
 
-  HabitProvider() {
+  /// 默认构造器：使用平台存储适配层（Web→SharedPreferences, Native→flutter_secure_storage）
+  HabitProvider() : _storage = createStorageService() {
+    _loadData();
+  }
+
+  /// 测试构造器：注入自定义存储适配层
+  HabitProvider.forTesting(StorageServiceInterface storage) : _storage = storage {
     _loadData();
   }
 
@@ -96,18 +101,17 @@ class HabitProvider extends ChangeNotifier {
 
   Future<void> _loadData() async {
     try {
-      final prefs = await SharedPreferences.getInstance();
       _isLoading = true;
       notifyListeners();
 
-      final habitsJson = prefs.getString('habits');
+      final habitsJson = await _storage.getString('habits');
       if (habitsJson != null) {
         final List<dynamic> list = jsonDecode(habitsJson);
         _habits =
             list.map((e) => Habit.fromJson(e as Map<String, dynamic>)).toList();
       }
 
-      final checkInsJson = prefs.getString('checkIns');
+      final checkInsJson = await _storage.getString('checkIns');
       if (checkInsJson != null) {
         final List<dynamic> list = jsonDecode(checkInsJson);
         _checkIns = list
@@ -115,7 +119,7 @@ class HabitProvider extends ChangeNotifier {
             .toList();
       }
 
-      final achievementsJson = prefs.getString('achievements');
+      final achievementsJson = await _storage.getString('achievements');
       if (achievementsJson != null) {
         final List<dynamic> list = jsonDecode(achievementsJson);
         _achievements = list
@@ -123,7 +127,7 @@ class HabitProvider extends ChangeNotifier {
             .toList();
       }
 
-      final insightsJson = prefs.getString('analysisInsights');
+      final insightsJson = await _storage.getString('analysisInsights');
       if (insightsJson != null) {
         final List<dynamic> list = jsonDecode(insightsJson);
         _analysisInsights = list
@@ -140,15 +144,14 @@ class HabitProvider extends ChangeNotifier {
 
   Future<void> _saveData() async {
     try {
-      final prefs = await SharedPreferences.getInstance();
       // 串行写入以避免竞态
-      await prefs.setString(
+      await _storage.setString(
           'habits', jsonEncode(_habits.map((e) => e.toJson()).toList()));
-      await prefs.setString(
+      await _storage.setString(
           'checkIns', jsonEncode(_checkIns.map((e) => e.toJson()).toList()));
-      await prefs.setString('achievements',
+      await _storage.setString('achievements',
           jsonEncode(_achievements.map((e) => e.toJson()).toList()));
-      await prefs.setString('analysisInsights',
+      await _storage.setString('analysisInsights',
           jsonEncode(_analysisInsights.map((e) => e.toJson()).toList()));
       _saveFailed = false;
     } catch (e) {

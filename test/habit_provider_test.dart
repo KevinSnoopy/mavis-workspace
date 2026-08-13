@@ -1,7 +1,24 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:maodun_app/models/habit.dart';
 import 'package:maodun_app/providers/habit_provider.dart';
+import 'package:maodun_app/services/storage_service.dart';
+
+/// 测试用 SharedPreferences 存储适配层
+class _TestStorageAdapter implements StorageServiceInterface {
+  final Map<String, String> _data = {};
+
+  @override
+  Future<String?> getString(String key) async => _data[key];
+
+  @override
+  Future<void> setString(String key, String value) async => _data[key] = value;
+
+  @override
+  Future<void> remove(String key) async => _data.remove(key);
+
+  @override
+  Future<void> clear() async => _data.clear();
+}
 
 /// 等待 provider 数据加载完成（轮询替代硬编码 delay，避免 Flaky）
 Future<void> _waitForLoaded(HabitProvider provider) async {
@@ -16,8 +33,7 @@ void main() {
   late HabitProvider provider;
 
   setUp(() async {
-    SharedPreferences.setMockInitialValues({});
-    provider = HabitProvider();
+    provider = HabitProvider.forTesting(_TestStorageAdapter());
     await _waitForLoaded(provider);
   });
 
