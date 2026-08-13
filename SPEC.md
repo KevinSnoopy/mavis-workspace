@@ -1,6 +1,6 @@
 # 矛盾 App 功能规格文档
 
-> 版本：v1.6 | 更新：2026-08-13
+> 版本：v1.7 | 更新：2026-08-13
 
 ---
 
@@ -8,16 +8,17 @@
 
 ```
 maodun_app/
-├── lib/
-│   ├── main.dart                         # 入口、MultiProvider、MainScreen
-│   ├── models/
-│   │   └── habit.dart                   # Habit, CheckIn, Achievement, HabitStats, HabitFrequency
-│   ├── providers/
-│   │   ├── habit_provider.dart           # 习惯状态管理（核心）
-│   │   ├── theme_provider.dart           # 主题切换
-│   │   └── notification_provider.dart    # 应用内通知
-│   ├── screens/
-│   │   ├── home_screen.dart             # 首页：今日习惯打卡
+├── lib/                                  # Flutter 源码
+├── android/                             # Android 原生项目（minSdk 23）
+├── ios/                                  # iOS 原生项目（min iOS 12.0）
+├── macos/                                # macOS 原生项目
+├── windows/                              # Windows 原生项目
+├── web/                                  # Web 静态资源
+├── test/                                 # 单元测试 + Widget 测试
+├── pubspec.yaml                          # 依赖声明
+├── SPEC.md                               # 本文档
+└── STANDARDS.md                           # 编码规范
+```
 │   │   ├── habits_screen.dart           # 习惯管理：增删改、搜索、归档
 │   │   ├── analyzer_screen.dart          # 矛盾分析器
 │   │   ├── history_screen.dart          # 历史：概览/成就/分析/日历
@@ -139,11 +140,34 @@ maodun_app/
 
 ---
 
-## 四、已知限制
+## 四、平台就绪度
+
+| 平台 | 状态 | 构建命令 | 说明 |
+|------|-------|----------|------|
+| **Web** | ✅ 就绪 | `flutter build web` | GitHub Pages 部署 |
+| **iOS** | ✅ 目录就绪 | `flutter build ios --release` | 需 macOS + Xcode 签名 |
+| **Android** | ✅ 目录就绪 | `flutter build apk --release` | minSdk 23，签名待配置 |
+| **macOS** | ✅ 目录就绪 | `flutter build macos --release` | 需 macOS + Xcode |
+| **Windows** | ✅ 目录就绪 | `flutter build windows --release` | 需 Windows + MSVC |
+| **HarmonyOS** | ⚠️ 未适配 | — | 建议华为快应用路径 |
+
+### Android 签名配置（发布前需完成）
+1. 生成 keystore：`keytool -genkey -v -keystore key.jks -alias key -keyalg RSA -keysize 2048 -validity 10000`
+2. 在 `android/app/build.gradle` 中配置 signingConfig
+3. 或使用 Android App Bundle（Google Play）
+
+### iOS 签名配置（发布前需完成）
+1. 配置 Apple Developer 证书和 Profile
+2. 在 Xcode Runner 项目中设置 Signing & Capabilities
+3. `flutter build ios --release` 生成 .ipa
+
+## 五、已知限制
 
 - **L1** Web 端不支持原生推送通知（浏览器 Notification API 待集成）
-- **L2** 尚未接入 flutter_local_notifications（原生端推送待实现）
+- **L2** flutter_local_notifications 已声明权限，需在 main.dart 初始化
 - **L3** 没有后端，数据仅本地存储
+- **L4** flutter_secure_storage 已就绪（接口已建），providers 当前仍用 SharedPreferences
+- **L5** macOS/Windows 构建需对应主机环境，CI/CD 尚未覆盖
 
 ---
 
