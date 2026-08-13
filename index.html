@@ -1,38 +1,123 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <!--
-    If you are serving your web app in a path other than the root, change the
-    href value below to reflect the base path you are serving from.
-
-    The path provided below has to start and end with a slash "/" in order for
-    it to work correctly.
-
-    For more details:
-    * https://developer.mozilla.org/en-US/docs/Web/HTML/Element/base
-
-    This is a placeholder for base href that will be replaced by the value of
-    the `--base-href` argument provided to `flutter build`.
-  -->
   <base href="/">
 
   <meta charset="UTF-8">
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
-  <meta name="description" content="A new Flutter project.">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+
+  <!-- App Meta -->
+  <meta name="description" content="矛盾 - 基于《矛盾论》与《实践论》的个人成长管理系统">
+  <meta name="keywords" content="习惯追踪,个人成长,矛盾论,实践论,毛选">
+  <meta name="author" content="矛盾">
+  <meta name="robots" content="index, follow">
+
+  <!-- Theme Color -->
+  <meta name="theme-color" content="#E85D4C" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0F0F1A" media="(prefers-color-scheme: dark)">
+  <meta name="color-scheme" content="dark light">
 
   <!-- iOS meta tags & icons -->
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black">
-  <meta name="apple-mobile-web-app-title" content="maodun_app">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="矛盾">
   <link rel="apple-touch-icon" href="icons/Icon-192.png">
+  <link rel="apple-touch-icon" sizes="192x192" href="icons/Icon-192.png">
+  <link rel="apple-touch-icon" sizes="512x512" href="icons/Icon-512.png">
+
+  <!-- Open Graph (社交分享) -->
+  <meta property="og:title" content="矛盾 - 个人成长助手">
+  <meta property="og:description" content="基于《矛盾论》与《实践论》的个人成长管理系统">
+  <meta property="og:type" content="website">
+  <meta property="og:image" content="icons/Icon-512.png">
 
   <!-- Favicon -->
   <link rel="icon" type="image/png" href="favicon.png"/>
 
-  <title>maodun_app</title>
+  <title>矛盾 - 个人成长助手</title>
   <link rel="manifest" href="manifest.json">
+
+  <!-- 防止 iOS 电话号码自动识别 -->
+  <meta name="format-detection" content="telephone=no">
+
+  <style>
+    /* 加载动画 */
+    body {
+      margin: 0;
+      background: #0F0F1A;
+    }
+    .loading {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: #0F0F1A;
+      z-index: 9999;
+      transition: opacity 0.5s;
+    }
+    .loading.hide {
+      opacity: 0;
+      pointer-events: none;
+    }
+    .loading-icon {
+      font-size: 64px;
+      margin-bottom: 16px;
+      animation: pulse 1.5s ease-in-out infinite;
+    }
+    .loading-text {
+      color: #A0A0B0;
+      font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+      font-size: 16px;
+      letter-spacing: 2px;
+    }
+    .loading-bar {
+      width: 120px;
+      height: 2px;
+      background: rgba(255,255,255,0.1);
+      border-radius: 2px;
+      margin-top: 24px;
+      overflow: hidden;
+    }
+    .loading-bar::after {
+      content: '';
+      display: block;
+      width: 40%;
+      height: 100%;
+      background: #E85D4C;
+      border-radius: 2px;
+      animation: loading-slide 1.2s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { transform: scale(1); }
+      50% { transform: scale(1.05); }
+    }
+    @keyframes loading-slide {
+      0% { transform: translateX(-100%); }
+      100% { transform: translateX(350%); }
+    }
+  </style>
 </head>
 <body>
+  <!-- 加载动画 -->
+  <div class="loading" id="loading">
+    <div class="loading-icon">⚖️</div>
+    <div class="loading-text">矛盾</div>
+    <div class="loading-bar"></div>
+  </div>
+
   <script src="flutter_bootstrap.js" async></script>
+  <script>
+    // Flutter 加载完成后隐藏 loading
+    window.addEventListener('flutter-first-frame', function() {
+      var loading = document.getElementById('loading');
+      if (loading) {
+        loading.classList.add('hide');
+        setTimeout(function() { loading.remove(); }, 500);
+      }
+    });
+  </script>
 </body>
 </html>

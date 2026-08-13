@@ -1,13 +1,14 @@
 {
-    "name": "maodun_app",
-    "short_name": "maodun_app",
+    "name": "矛盾 - 个人成长助手",
+    "short_name": "矛盾",
+    "description": "基于《矛盾论》与《实践论》的个人成长管理系统，帮助你找到核心矛盾并转化为每日习惯。",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "background_color": "#0F0F1A",
+    "theme_color": "#E85D4C",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
+    "categories": ["productivity", "lifestyle"],
     "icons": [
         {
             "src": "icons/Icon-192.png",
@@ -30,6 +31,22 @@
             "sizes": "512x512",
             "type": "image/png",
             "purpose": "maskable"
+        }
+    ],
+    "shortcuts": [
+        {
+            "name": "开始打卡",
+            "short_name": "打卡",
+            "description": "快速打开今日打卡",
+            "url": "/?action=checkin",
+            "icons": [{ "src": "icons/Icon-192.png", "sizes": "192x192" }]
+        },
+        {
+            "name": "矛盾分析",
+            "short_name": "分析",
+            "description": "分析当前核心矛盾",
+            "url": "/?action=analyze",
+            "icons": [{ "src": "icons/Icon-192.png", "sizes": "192x192" }]
         }
     ]
 }
