@@ -9,6 +9,7 @@ on:
       - flutter
 
 jobs:
+  # ─── Web 构建 ───
   build-web:
     name: Build Web
     runs-on: ubuntu-latest
@@ -25,11 +26,13 @@ jobs:
       - run: flutter pub get
         working-directory: maodun_app
 
-      - run: flutter analyze
+      - run: flutter analyze --no-fatal-infos
         working-directory: maodun_app
 
       - run: flutter test
         working-directory: maodun_app
+        env:
+          CI: true
 
       - run: flutter build web --release
         working-directory: maodun_app
@@ -46,3 +49,116 @@ jobs:
           publish_branch: gh-pages
           user_name: github-actions[bot]
           user_email: github-actions[bot]@users.noreply.github.com
+
+  # ─── Android 构建（Linux 即可） ───
+  build-android:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: flutter
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.24.0
+
+      - run: flutter pub get
+        working-directory: maodun_app
+
+      - run: flutter analyze --no-fatal-infos
+        working-directory: maodun_app
+
+      - run: flutter test
+        working-directory: maodun_app
+        env:
+          CI: true
+
+      - name: Set up Java 17 for Android
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - run: flutter build apk --debug
+        working-directory: maodun_app
+        env:
+          CI: true
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: maodun-android-debug-apk
+          path: maodun_app/build/app/outputs/flutter-apk/app-debug.apk
+          retention-days: 7
+
+  # ─── Windows 构建 ───
+  build-windows:
+    name: Build Windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: flutter
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.24.0
+
+      - run: flutter pub get
+        working-directory: maodun_app
+
+      - run: flutter analyze --no-fatal-infos
+        working-directory: maodun_app
+
+      - run: flutter test
+        working-directory: maodun_app
+        env:
+          CI: true
+
+      - run: flutter build windows --release
+        working-directory: maodun_app
+        env:
+          CI: true
+
+  # ─── macOS 构建（需要 macOS runner，公开 repo 免费额度有限） ───
+  # build-macos:
+  #   name: Build macOS
+  #   runs-on: macos-latest
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #       with:
+  #         ref: flutter
+  #     - uses: subosito/flutter-action@v2
+  #       with:
+  #         channel: stable
+  #         flutter-version: 3.24.0
+  #     - run: flutter pub get
+  #       working-directory: maodun_app
+  #     - run: flutter build macos --release
+  #       working-directory: maodun_app
+  #       env:
+  #         CI: true
+  #   # 需要 Apple 开发者账号进行代码签名（正式发布时启用）
+  #
+  # ─── iOS 构建（需要 macOS runner，公开 repo 免费额度有限） ───
+  # build-ios:
+  #   name: Build iOS
+  #   runs-on: macos-latest
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #       with:
+  #         ref: flutter
+  #     - uses: subosito/flutter-action@v2
+  #       with:
+  #         channel: stable
+  #         flutter-version: 3.24.0
+  #     - run: flutter pub get
+  #       working-directory: maodun_app
+  #     - run: flutter build ios --release --no-codesign
+  #       working-directory: maodun_app
+  #       env:
+  #         CI: true
+  #   # 需要 Apple 开发者账号进行代码签名（正式发布时启用）

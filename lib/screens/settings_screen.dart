@@ -5,10 +5,40 @@ import 'package:provider/provider.dart';
 import 'package:share_plus/share_plus.dart';
 import '../providers/habit_provider.dart';
 import '../providers/theme_provider.dart';
+import '../services/notification_service.dart';
 import '../theme/app_theme.dart';
 
-class SettingsScreen extends StatelessWidget {
+class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
+
+  @override
+  State<SettingsScreen> createState() => _SettingsScreenState();
+}
+
+class _SettingsScreenState extends State<SettingsScreen> {
+  int _reminderHour = 9;
+  int _reminderMinute = 0;
+  bool _notificationsEnabled = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadReminderSettings();
+  }
+
+  Future<void> _loadReminderSettings() async {
+    final saved = await NotificationService().getReminderTime();
+    if (saved != null && mounted) {
+      setState(() {
+        _reminderHour = saved.$1;
+        _reminderMinute = saved.$2;
+        _notificationsEnabled = true;
+      });
+    }
+  }
+
+  String get _formattedTime =>
+      '${_reminderHour.toString().padLeft(2, '0')}:${_reminderMinute.toString().padLeft(2, '0')}';
 
   @override
   Widget build(BuildContext context) {
@@ -57,23 +87,30 @@ class SettingsScreen extends StatelessWidget {
             children: [
               _Tile(
                 icon: Icons.notifications,
-                title: '推送通知',
-                subtitle: '打卡提醒',
+                title: '打卡提醒',
+                subtitle:
+                    _notificationsEnabled ? '每日 $_formattedTime' : '已关闭',
                 trailing: Switch.adaptive(
-                  value: true,
+                  value: _notificationsEnabled,
                   onChanged: (v) {
                     HapticFeedback.lightImpact();
-                    _showNotificationInfo(context);
+                    setState(() => _notificationsEnabled = v);
+                    if (v) {
+                      _showTimePicker();
+                    } else {
+                      NotificationService().cancelDailyReminder();
+                    }
                   },
                   activeColor: AppTheme.primary,
                 ),
               ),
-              _Tile(
-                icon: Icons.schedule,
-                title: '每日提醒时间',
-                subtitle: '09:00',
-                onTap: () => _showTimePicker(context),
-              ),
+              if (_notificationsEnabled)
+                _Tile(
+                  icon: Icons.schedule,
+                  title: '每日提醒时间',
+                  subtitle: _formattedTime,
+                  onTap: _showTimePicker,
+                ),
             ],
           ),
 
@@ -89,7 +126,7 @@ class SettingsScreen extends StatelessWidget {
                     icon: Icons.cloud_upload,
                     title: '导出数据',
                     subtitle: 'JSON 格式',
-                    onTap: () => _exportData(context, provider),
+                    onTap: () => _exportData(provider),
                   );
                 },
               ),
@@ -99,7 +136,7 @@ class SettingsScreen extends StatelessWidget {
                     icon: Icons.cloud_download,
                     title: '导入数据',
                     subtitle: '从 JSON 恢复',
-                    onTap: () => _showImportDialog(context, provider),
+                    onTap: () => _showImportDialog(provider),
                   );
                 },
               ),
@@ -110,7 +147,7 @@ class SettingsScreen extends StatelessWidget {
                     title: '清除所有数据',
                     subtitle: '删除习惯、打卡、成就',
                     textColor: Colors.red,
-                    onTap: () => _showClearDataDialog(context, provider),
+                    onTap: () => _showClearDataDialog(provider),
                   );
                 },
               ),
@@ -123,16 +160,16 @@ class SettingsScreen extends StatelessWidget {
           _Section(
             title: '关于',
             children: [
-              _Tile(
+              const _Tile(
                 icon: Icons.info,
                 title: '版本',
-                subtitle: 'v1.1.0',
+                subtitle: 'v1.7.0',
               ),
               _Tile(
                 icon: Icons.book,
                 title: '关于「矛盾」',
                 subtitle: '基于《矛盾论》与《实践论》',
-                onTap: () => _showAboutDialog(context),
+                onTap: () => _showAboutDialog(),
               ),
               _Tile(
                 icon: Icons.code,
@@ -150,7 +187,7 @@ class SettingsScreen extends StatelessWidget {
                 icon: Icons.privacy_tip,
                 title: '隐私政策',
                 subtitle: '查看数据处理方式',
-                onTap: () => _openPrivacyPolicy(context),
+                onTap: () => _openPrivacyPolicy(),
               ),
             ],
           ),
@@ -176,19 +213,10 @@ class SettingsScreen extends StatelessWidget {
     );
   }
 
-  void _showNotificationInfo(BuildContext context) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('通知功能需要设备权限，将在后续版本完善'),
-        duration: Duration(seconds: 2),
-      ),
-    );
-  }
-
-  void _showTimePicker(BuildContext context) async {
+  void _showTimePicker() async {
     final time = await showTimePicker(
       context: context,
-      initialTime: const TimeOfDay(hour: 9, minute: 0),
+      initialTime: TimeOfDay(hour: _reminderHour, minute: _reminderMinute),
       builder: (context, child) {
         return Theme(
           data: Theme.of(context).copyWith(
@@ -201,20 +229,23 @@ class SettingsScreen extends StatelessWidget {
         );
       },
     );
-    if (time != null && context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-            content: Text(
-                '已设置为 ${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}')),
+    if (time != null) {
+      await NotificationService().scheduleDailyReminder(
+        hour: time.hour,
+        minute: time.minute,
       );
+      setState(() {
+        _reminderHour = time.hour;
+        _reminderMinute = time.minute;
+      });
     }
   }
 
-  void _exportData(BuildContext context, HabitProvider provider) async {
+  void _exportData(HabitProvider provider) async {
     HapticFeedback.lightImpact();
 
     final data = {
-      'version': '1.1.0',
+      'version': '1.7.0',
       'exportedAt': DateTime.now().toIso8601String(),
       'habits': provider.habits.map((h) => h.toJson()).toList(),
       'checkIns': provider.checkIns.map((c) => c.toJson()).toList(),
@@ -225,13 +256,12 @@ class SettingsScreen extends StatelessWidget {
 
     final jsonStr = const JsonEncoder.withIndent('  ').convert(data);
 
-    await Share.share(
-      jsonStr,
-      subject: '矛盾 App 数据导出',
+    await SharePlus.instance.share(
+      ShareParams(text: jsonStr, subject: '矛盾 App 数据导出'),
     );
   }
 
-  void _showClearDataDialog(BuildContext context, HabitProvider provider) {
+  void _showClearDataDialog(HabitProvider provider) {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -250,7 +280,7 @@ class SettingsScreen extends StatelessWidget {
               Navigator.pop(ctx);
               HapticFeedback.heavyImpact();
               await provider.clearAll();
-              if (context.mounted) {
+              if (mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
                     content: Text('所有数据已清除'),
@@ -266,90 +296,97 @@ class SettingsScreen extends StatelessWidget {
     );
   }
 
-  void _showImportDialog(BuildContext context, HabitProvider provider) {
+  void _showImportDialog(HabitProvider provider) {
     final controller = TextEditingController();
+    final scaffoldMessenger = ScaffoldMessenger.of(context);
     showDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: AppTheme.bgCard,
-        title: const Text('导入数据'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                '将之前导出的 JSON 数据粘贴到下方：',
-                style: TextStyle(fontSize: 13),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: controller,
-                maxLines: 8,
-                style: const TextStyle(fontSize: 12, fontFamily: 'monospace'),
-                decoration: InputDecoration(
-                  hintText: '{"habits": [...], "checkIns": [...]}',
-                  hintStyle: TextStyle(
-                    fontSize: 11,
-                    color: AppTheme.textSecondary.withOpacity(0.5),
-                  ),
-                  filled: true,
-                  fillColor: AppTheme.bgElevated,
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
-                    borderSide: BorderSide.none,
+      builder: (dialogCtx) {
+        // ignore: use_build_context_synchronously
+        final dialogMounted = dialogCtx.mounted;
+        return AlertDialog(
+          backgroundColor: AppTheme.bgCard,
+          title: const Text('导入数据'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  '将之前导出的 JSON 数据粘贴到下方：',
+                  style: TextStyle(fontSize: 13),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: controller,
+                  maxLines: 8,
+                  style: const TextStyle(fontSize: 12, fontFamily: 'monospace'),
+                  decoration: InputDecoration(
+                    hintText: '{"habits": [...], "checkIns": [...]}',
+                    hintStyle: TextStyle(
+                      fontSize: 11,
+                      color: AppTheme.textSecondary.withOpacity(0.5),
+                    ),
+                    filled: true,
+                    fillColor: AppTheme.bgElevated,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                      borderSide: BorderSide.none,
+                    ),
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('取消'),
-          ),
-          TextButton(
-            onPressed: () async {
-              final jsonStr = controller.text.trim();
-              if (jsonStr.isEmpty) return;
-              try {
-                final imported = await provider.importData(jsonStr);
-                if (ctx.mounted) {
-                  Navigator.pop(ctx);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text(
-                        '成功导入 ${imported.habits} 个习惯、${imported.checkIns} 条打卡',
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogCtx),
+              child: const Text('取消'),
+            ),
+            TextButton(
+              onPressed: () async {
+                final jsonStr = controller.text.trim();
+                if (jsonStr.isEmpty) return;
+                // 提前获取 NavigatorState，避免异步 gap 后使用 BuildContext
+                final navigator = Navigator.of(dialogCtx);
+                try {
+                  final imported = await provider.importData(jsonStr);
+                  if (dialogMounted) {
+                    navigator.pop();
+                    scaffoldMessenger.showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          '成功导入 ${imported.habits} 个习惯、${imported.checkIns} 条打卡',
+                        ),
+                        backgroundColor: AppTheme.success,
                       ),
-                      backgroundColor: AppTheme.success,
-                    ),
-                  );
-                }
-              } catch (e) {
-                if (ctx.mounted) {
-                  Navigator.pop(ctx);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text(
-                        e.toString().startsWith('导入数据格式错误')
-                            ? '导入失败：数据格式不正确，请检查 JSON 是否完整'
-                            : '导入失败，请重试',
+                    );
+                  }
+                } catch (e) {
+                  if (dialogMounted) {
+                    navigator.pop();
+                    scaffoldMessenger.showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          e.toString().startsWith('导入数据格式错误')
+                              ? '导入失败：数据格式不正确，请检查 JSON 是否完整'
+                              : '导入失败，请重试',
+                        ),
+                        backgroundColor: Colors.red,
                       ),
-                      backgroundColor: Colors.red,
-                    ),
-                  );
+                    );
+                  }
                 }
-              }
-            },
-            child: const Text('导入'),
-          ),
-        ],
-      ),
+              },
+              child: const Text('导入'),
+            ),
+          ],
+        );
+      },
     );
   }
 
-  void _openPrivacyPolicy(BuildContext context) {
+  void _openPrivacyPolicy() {
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
         content: Text('请访问 /privacy.html 查看隐私政策'),
@@ -358,13 +395,13 @@ class SettingsScreen extends StatelessWidget {
     );
   }
 
-  void _showAboutDialog(BuildContext context) {
+  void _showAboutDialog() {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: AppTheme.bgCard,
-        title: Row(
-          children: const [
+        title: const Row(
+          children: [
             Text('⚖️ ', style: TextStyle(fontSize: 24)),
             Text('矛盾'),
           ],
@@ -391,7 +428,7 @@ class SettingsScreen extends StatelessWidget {
               Text('• 从实践中来，到实践中去'),
               SizedBox(height: 16),
               Text(
-                '版本：v1.1.0',
+                '版本：v1.7.0',
                 style: TextStyle(fontSize: 12),
               ),
             ],

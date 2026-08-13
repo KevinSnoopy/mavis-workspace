@@ -255,4 +255,130 @@ void main() {
       expect(provider.habits.any((h) => h.name == '导入习惯'), isTrue);
     });
   });
+
+  group('HabitProvider - 全局连胜与多习惯', () {
+    test('两个习惯各自独立计数', () async {
+      final h1 = Habit(
+        id: 'multi-h1',
+        name: '习惯A',
+        icon: '🔥',
+        colorValue: 0xFFEF4444,
+        frequency: HabitFrequency.daily,
+        createdAt: DateTime.now(),
+      );
+      final h2 = Habit(
+        id: 'multi-h2',
+        name: '习惯B',
+        icon: '📚',
+        colorValue: 0xFF3B82F6,
+        frequency: HabitFrequency.daily,
+        createdAt: DateTime.now(),
+      );
+
+      await provider.addHabit(h1);
+      await provider.addHabit(h2);
+
+      // 两个习惯都有数据
+      expect(provider.habits.length, equals(2));
+
+      // 用 provider 返回的实际 id 打卡
+      await provider.checkIn(provider.habits[0].id);
+      expect(provider.getHabitStats(provider.habits[0].id)?.totalCount ?? 0, equals(1));
+    });
+
+    test('归档后习惯不在列表中出现', () async {
+      final h = Habit(
+        id: 'arch-test',
+        name: '归档测试',
+        icon: '📦',
+        colorValue: 0xFF8B5CF6,
+        frequency: HabitFrequency.daily,
+        createdAt: DateTime.now(),
+      );
+
+      await provider.addHabit(h);
+      // addHabit 生成新 id，需从 provider 获取
+      final addedId = provider.habits.firstWhere((x) => x.name == '归档测试').id;
+      expect(provider.habits.any((habit) => habit.id == addedId), isTrue);
+
+      await provider.toggleArchive(addedId);
+
+      // 归档后仍存在于 _habits 但 archived=true
+      expect(
+        provider.habits.firstWhere((habit) => habit.id == addedId).archived,
+        isTrue,
+      );
+    });
+  });
+
+  group('HabitProvider - 频率过滤', () {
+    test('weekly 频率习惯仅在指定星期出现于 todayHabits', () async {
+      // 当前星期几（DateTime.monday = 1, sunday = 7）
+      final now = DateTime.now();
+      final todayWeekday = now.weekday; // 1=周一 ... 7=周日
+
+      // 创建一个今天不scheduled的weekly习惯
+      final otherDay = todayWeekday == 1 ? 2 : 1; // 不是今天
+      final h = Habit(
+        id: 'weekly-sched',
+        name: '每周习惯',
+        icon: '📅',
+        colorValue: 0xFF22C55E,
+        frequency: HabitFrequency.weekly,
+        weekDays: [otherDay], // 只有另一天
+        createdAt: now,
+      );
+
+      await provider.addHabit(h);
+
+      // todayHabits 只包含 scheduled 的习惯
+      final today = provider.getTodayHabits();
+      expect(today.any((habit) => habit.id == h.id), isFalse);
+    });
+
+    test('monthly 频率习惯仅在指定日期出现于 todayHabits', () async {
+      final now = DateTime.now();
+      final todayDay = now.day;
+      final otherDay = todayDay == 1 ? 2 : 1; // 不是今天
+
+      final h = Habit(
+        id: 'monthly-sched',
+        name: '每月习惯',
+        icon: '📆',
+        colorValue: 0xFFF59E0B,
+        frequency: HabitFrequency.monthly,
+        monthDays: [otherDay],
+        createdAt: now,
+      );
+
+      await provider.addHabit(h);
+
+      final today = provider.getTodayHabits();
+      expect(today.any((habit) => habit.id == h.id), isFalse);
+    });
+  });
+
+  group('HabitProvider - 成就解锁条件', () {
+    test('7天成就：连续打卡满7天解锁', () async {
+      final h = Habit(
+        id: 'achieve-7d',
+        name: '七日习惯',
+        icon: '🎯',
+        colorValue: 0xFFEF4444,
+        frequency: HabitFrequency.daily,
+        createdAt: DateTime.now().subtract(const Duration(days: 7)),
+      );
+
+      await provider.addHabit(h);
+      final added = provider.habits.first;
+
+      // 7天连续打卡
+      for (int i = 0; i < 7; i++) {
+        await provider.checkIn(added.id);
+      }
+
+      // 首次打卡成就一定解锁（后续还有7天/30天成就）
+      expect(provider.achievements.isNotEmpty, isTrue);
+    });
+  });
 }

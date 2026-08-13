@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'providers/habit_provider.dart';
 import 'providers/theme_provider.dart';
 import 'providers/notification_provider.dart';
+import 'services/notification_service.dart';
 import 'theme/app_theme.dart';
 import 'screens/home_screen.dart';
 import 'screens/analyzer_screen.dart';
@@ -108,6 +109,37 @@ class _AppRootState extends State<_AppRoot> {
   void initState() {
     super.initState();
     _checkOnboarding();
+    _initNotifications();
+  }
+
+  Future<void> _initNotifications() async {
+    // 初始化通知服务（Web 申请权限 / Native 配置）
+    await NotificationService().init();
+
+    // 设置提醒回调：提醒触发时显示应用内通知
+    NotificationService().onReminderDue = () {
+      if (!mounted) return;
+      // 获取未打卡习惯数量，构建提醒文案
+      final habitProvider = context.read<HabitProvider>();
+      final todayCheckins = habitProvider.habits.map((h) {
+        return habitProvider.getTodayCheckIn(h.id) != null;
+      }).toList();
+      final uncheckedCount = todayCheckins.where((done) => !done).length;
+
+      if (uncheckedCount > 0) {
+        context.read<NotificationProvider>().add(
+              title: '⏰ 每日打卡提醒',
+              body: '还有 $uncheckedCount 个习惯待完成，加油！',
+              emoji: '💪',
+            );
+      } else {
+        context.read<NotificationProvider>().add(
+              title: '✨ 今日完成！',
+              body: '所有习惯已打卡，继续保持连胜！',
+              emoji: '🎉',
+            );
+      }
+    };
   }
 
   Future<void> _checkOnboarding() async {
