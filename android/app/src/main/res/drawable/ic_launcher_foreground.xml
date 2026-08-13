@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- 矛盾图标前景：几何化 "矛" + 天平
+         品牌色：珊瑚红 #E85D4C，琥珀金 #F5A623 -->
+
+    <!-- 矛：竖杆 -->
+    <path
+        android:fillColor="#E85D4C"
+        android:pathData="M52,18 L56,18 L56,72 L52,72 Z" />
+
+    <!-- 矛：顶部小叉 -->
+    <path
+        android:fillColor="#E85D4C"
+        android:pathData="M48,22 L60,22 L60,26 L56,30 L56,22 L52,22 L52,30 L48,26 Z" />
+
+    <!-- 矛：横档 -->
+    <path
+        android:fillColor="#E85D4C"
+        android:pathData="M36,40 L72,40 L72,45 L36,45 Z" />
+
+    <!-- 矛：头部三角尖 -->
+    <path
+        android:fillColor="#E85D4C"
+        android:pathData="M40,72 L68,72 L54,58 Z" />
+
+    <!-- 天平横梁 -->
+    <path
+        android:fillColor="#F5A623"
+        android:pathData="M28,82 L80,82 L80,85 L28,85 Z" />
+
+    <!-- 天平支柱 -->
+    <path
+        android:fillColor="#F5A623"
+        android:pathData="M52,76 L56,76 L56,90 L52,90 Z" />
+
+    <!-- 天平底座左 -->
+    <path
+        android:fillColor="#F5A623"
+        android:pathData="M36,90 L52,90 L52,93 L36,93 Z" />
+
+    <!-- 天平底座右 -->
+    <path
+        android:fillColor="#F5A623"
+        android:pathData="M56,90 L72,90 L72,93 L56,93 Z" />
+
+    <!-- 天平左托盘绳 -->
+    <path
+        android:strokeColor="#F5A623"
+        android:strokeWidth="1.5"
+        android:pathData="M36,82 L30,76" />
+
+    <!-- 天平右托盘绳 -->
+    <path
+        android:strokeColor="#F5A623"
+        android:strokeWidth="1.5"
+        android:pathData="M72,82 L78,76" />
+
+    <!-- 天平左托盘 -->
+    <path
+        android:fillColor="#F5A623"
+        android:pathData="M24,76 L36,76 L30,72 Z" />
+
+    <!-- 天平右托盘 -->
+    <path
+        android:fillColor="#F5A623"
+        android:pathData="M72,76 L84,76 L78,72 Z" />
+
+</vector>

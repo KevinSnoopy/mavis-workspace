@@ -114,11 +114,15 @@ maodun_app/
 - [x] **F13.1** HabitProvider 单元测试（打卡、添加、删除、成就、多习惯、频率过滤）
 - [x] **F13.2** ThemeProvider 单元测试（主题切换、持久化）
 - [x] **F13.3** Widget 测试（打卡流程、添加习惯、主题切换）
-- [x] **F13.4** 覆盖率：27 个测试（12 habit + 7 theme + 4 widget + 4 新增）
+- [x] **F13.4** 覆盖率：28 个测试（18 habit + 7 theme + 3 widget + toggleArchive 缓存测试）
 
 ### F14. App 图标 & 资源
 - [x] **F14.1** 多尺寸应用图标（web/icons/icon.svg + icon-192/512.png）
 - [x] **F14.2** manifest.json 中声明图标路径
+- [x] **F14.3** Android 自适应图标（mipmap-anydpi-v26/ic_launcher.xml）
+  - 前景：矢量 "矛" + 天平（珊瑚红 #E85D4C + 琥珀金 #F5A623）
+  - 背景：深海军蓝渐变（#0F0F1A → #1A1A2E）
+  - 5 种密度 PNG（mdpi 48dp / hdpi 72dp / xhdpi 96dp / xxhdpi 144dp / xxxhdpi 192dp）
 
 ### F15. Deep Link
 - [x] **F15.1** GoRouter 路由配置（/、/habit/:id、/settings）
@@ -168,9 +172,16 @@ maodun_app/
 - **L1** Web 端浏览器通知需要用户授权（首次访问时弹出）
 - **L2** flutter_local_notifications Web 端不可用（原生端专用）
 - **L3** 没有后端，数据仅本地存储
-- **L4** flutter_secure_storage 已就绪（接口已建），providers 当前仍用 SharedPreferences
+- **L4** flutter_secure_storage 已激活 — HabitProvider 通过 StorageServiceInterface 走平台适配层（Web→SharedPreferences，Native→flutter_secure_storage）
 - **L5** macOS/iOS CI 构建需要 macOS runner（公开 repo 免费额度有限）；iOS 发布需要 Apple 开发者账号签名
 - **L6** Android release 构建需要签名配置（Debug 模式可直接安装）
+
+### 性能优化记录（v1.9）
+
+- **P-01a** `toggleArchive` 添加 `_invalidateCache(habitId)` — 修复归档后 globalStreak 缓存不更新 Bug
+- **P-01b** `HistoryScreen` TabBar `length: 3` → `length: 4`（修复 4 tab view 对应 3 count 的错误）
+- **P-01c** `_AchievementsTab` `ListView` → `ListView.builder` — 成就列表懒加载渲染
+- **P-01d** 所有列表渲染验证：`HomeScreen`（SliverChildBuilderDelegate）✅、`HabitsScreen`（ListView.builder）✅、`_InsightsTab`（ListView.builder）✅
 
 ---
 
@@ -180,3 +191,4 @@ maodun_app/
 |------|------|------|
 | v1.6 | 2026-08-13 | 初版规格建立 |
 | v1.6 | 2026-08-13 | 补充 F12-F16：闪屏页、测试、图标、Deep Link、隐私政策、CI/CD |
+| v1.9 | 2026-08-13 | flutter_secure_storage 激活 + flutter_local_notifications 初始化接入 + 性能优化（缓存 Bug 修复 + ListView.builder + TabBar 修复） |

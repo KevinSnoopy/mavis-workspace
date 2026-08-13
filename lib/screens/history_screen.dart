@@ -12,7 +12,7 @@ class HistoryScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
-      length: 3,
+      length: 4,
       child: Scaffold(
         appBar: AppBar(
           title: const Text('📊 记录'),
@@ -332,24 +332,30 @@ class _AchievementsTab extends StatelessWidget {
           );
         }
 
-        // 按时间分组
+        // 按时间分组（每个分组 = header + N 个成就卡片）
+        final groups = <_AchievementGroup>[];
         final grouped = <String, List<dynamic>>{};
         for (final a in achievements) {
           final key = _formatDateGroup(a.unlockedAt);
           grouped.putIfAbsent(key, () => []).add(a);
         }
+        for (final entry in grouped.entries) {
+          groups.add(_AchievementGroup(dateLabel: entry.key, items: entry.value));
+        }
 
-        return ListView(
+        return ListView.builder(
           padding: const EdgeInsets.all(16),
           physics: const BouncingScrollPhysics(),
-          children: grouped.entries.map((entry) {
+          itemCount: groups.length,
+          itemBuilder: (context, groupIdx) {
+            final group = groups[groupIdx];
             return Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Padding(
                   padding: const EdgeInsets.symmetric(vertical: 8),
                   child: Text(
-                    entry.key,
+                    group.dateLabel,
                     style: TextStyle(
                       fontSize: 13,
                       fontWeight: FontWeight.w600,
@@ -357,7 +363,7 @@ class _AchievementsTab extends StatelessWidget {
                     ),
                   ),
                 ),
-                ...entry.value.map((a) => Container(
+                ...group.items.map((a) => Container(
                       margin: const EdgeInsets.only(bottom: 10),
                       padding: const EdgeInsets.all(16),
                       decoration: BoxDecoration(
@@ -399,7 +405,7 @@ class _AchievementsTab extends StatelessWidget {
                     )),
               ],
             );
-          }).toList(),
+          },
         );
       },
     );
@@ -413,6 +419,13 @@ class _AchievementsTab extends StatelessWidget {
     if (diff < 7) return '$diff天前';
     return '${date.month}月${date.day}日';
   }
+}
+
+/// 成就分组（用于 ListView.builder 懒加载）
+class _AchievementGroup {
+  final String dateLabel;
+  final List<dynamic> items;
+  _AchievementGroup({required this.dateLabel, required this.items});
 }
 
 // ─────────────────────────────────────────────

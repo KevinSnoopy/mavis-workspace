@@ -92,6 +92,42 @@ void main() {
       final restored = provider.habits.firstWhere((h) => h.id == added.id);
       expect(restored.archived, isFalse);
     });
+
+    test('toggleArchive 后 globalStreak 缓存正确失效', () async {
+      // 用独立的 provider 实例避免其他测试的副作用
+      final localProvider = HabitProvider.forTesting(_TestStorageAdapter());
+      for (int i = 0; i < 50; i++) {
+        if (!localProvider.isLoading) break;
+        await Future.delayed(const Duration(milliseconds: 10));
+      }
+
+      // 创建习惯
+      final h = Habit(
+        id: 'cache-test-h1',
+        name: '习惯1',
+        icon: '📚',
+        colorValue: 0xFFEF4444,
+        frequency: HabitFrequency.daily,
+        createdAt: DateTime.now(),
+      );
+      await localProvider.addHabit(h);
+      // addHabit 内部生成新 ID（timestamp），用 provider 中的实际 ID
+      final actualId = localProvider.habits.first.id;
+
+      await localProvider.checkIn(actualId, count: 1);
+
+      // 归档习惯1，globalStreak 应变为 0（无其他打卡习惯）
+      await localProvider.toggleArchive(actualId);
+      expect(localProvider.globalStreak, equals(0));
+
+      // 取消归档后，h1 仍打卡有连胜
+      await localProvider.toggleArchive(actualId);
+      final hUnarchived = localProvider.habits.any((h) => h.id == actualId && !h.archived);
+      final hStats = localProvider.getHabitStats(actualId);
+      expect(hUnarchived, isTrue, reason: '习惯应处于未归档状态');
+      expect(hStats?.currentStreak ?? 0, greaterThan(0), reason: '当前连胜应为 > 0');
+      expect(localProvider.globalStreak, greaterThan(0), reason: 'globalStreak 应 > 0');
+    });
   });
 
   group('HabitProvider - 打卡', () {

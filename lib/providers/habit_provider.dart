@@ -167,6 +167,13 @@ class HabitProvider extends ChangeNotifier {
     } else {
       _statsCache.clear();
     }
+    // globalStreak 取决于哪些习惯未被归档，必须失效
+    _cachedGlobalStreak = null;
+  }
+
+  /// 清除全局连胜缓存（不影响单项 stats 缓存）
+  /// 用于归档状态改变等影响全局统计的操作
+  void _invalidateGlobalStreakCache() {
     _cachedGlobalStreak = null;
   }
 
@@ -299,6 +306,8 @@ class HabitProvider extends ChangeNotifier {
       if (index != -1) {
         _habits[index] =
             _habits[index].copyWith(archived: !_habits[index].archived);
+        // 归档改变会影响 globalStreak（排除归档习惯），必须失效缓存
+        _invalidateCache(habitId);
         await _saveData();
         notifyListeners();
       }

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shape xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- 矛盾 App 品牌背景：深海军蓝 -->
+    <gradient
+        android:type="radial"
+        android:gradientRadius="400dp"
+        android:centerX="0.3"
+        android:centerY="0.3"
+        android:startColor="#1A1A2E"
+        android:endColor="#0F0F1A" />
+</shape>
