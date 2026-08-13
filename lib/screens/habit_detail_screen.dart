@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:provider/provider.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:provider/provider.dart';
 import '../providers/habit_provider.dart';
@@ -52,6 +54,20 @@ class HabitDetailScreen extends StatelessWidget {
                 Text(habit.name),
               ],
             ),
+            actions: [
+              IconButton(
+                onPressed: () async {
+                  HapticFeedback.lightImpact();
+                  await provider.checkIn(habitId);
+                },
+                icon: Icon(
+                  provider.getTodayCheckIn(habitId) != null
+                      ? Icons.check_circle
+                      : Icons.check_circle_outline,
+                  color: AppTheme.primary,
+                ),
+              ),
+            ],
           ),
           body: SingleChildScrollView(
             physics: const BouncingScrollPhysics(),
@@ -116,7 +132,7 @@ class HabitDetailScreen extends StatelessWidget {
                   child: BarChart(
                     BarChartData(
                       alignment: BarChartAlignment.spaceAround,
-                      maxY: 2,
+                      maxY: 1,
                       barTouchData: BarTouchData(
                         touchTooltipData: BarTouchTooltipData(
                           getTooltipItem: (group, groupIndex, rod, rodIndex) {

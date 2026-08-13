@@ -365,13 +365,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 } catch (e) {
                   if (dialogMounted) {
                     navigator.pop();
+                    final msg = e is FormatException
+                        ? '导入失败：不是有效的 JSON 格式，请检查粘贴内容'
+                        : e.toString().contains('导入数据格式错误')
+                            ? '导入失败：数据格式不正确，请检查 JSON 是否完整'
+                            : '导入失败，请重试';
                     scaffoldMessenger.showSnackBar(
                       SnackBar(
-                        content: Text(
-                          e.toString().startsWith('导入数据格式错误')
-                              ? '导入失败：数据格式不正确，请检查 JSON 是否完整'
-                              : '导入失败，请重试',
-                        ),
+                        content: Text(msg),
                         backgroundColor: Colors.red,
                       ),
                     );

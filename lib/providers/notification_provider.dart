@@ -3,18 +3,28 @@ import 'package:flutter/material.dart';
 /// 应用内通知管理
 class NotificationProvider extends ChangeNotifier {
   final List<_NotificationItem> _items = [];
+  int _seq = 0; // 递增序列号，配合时间戳保证唯一性
 
   List<_NotificationItem> get items => List.unmodifiable(_items);
   bool get hasUnread => _items.isNotEmpty;
 
-  /// 添加一条通知
+  /// 添加一条通知（相同标题+内容在 10 秒内去重，最多保留 50 条）
   void add({
     required String title,
     required String body,
     String? emoji,
     VoidCallback? onTap,
   }) {
-    final id = DateTime.now().millisecondsSinceEpoch.toString();
+    final now = DateTime.now();
+    // 去重：10 秒内相同标题+内容不重复添加
+    final isDuplicate = _items.any((i) =>
+        i.title == title &&
+        i.body == body &&
+        now.difference(i.createdAt).inSeconds < 10);
+    if (isDuplicate) return;
+
+    _seq++;
+    final id = '${now.millisecondsSinceEpoch}_$_seq';
     _items.insert(
         0,
         _NotificationItem(
@@ -23,8 +33,18 @@ class NotificationProvider extends ChangeNotifier {
           body: body,
           emoji: emoji,
           onTap: onTap,
-          createdAt: DateTime.now(),
+          createdAt: now,
         ));
+
+    // 容量限制：最多 50 条，删除最老的
+    if (_items.length > 50) {
+      _items.removeLast();
+    }
+
+    // 清理 7 天前的旧通知
+    _items.removeWhere(
+        (i) => now.difference(i.createdAt).inDays >= 7);
+
     notifyListeners();
 
     // 5 秒后自动消失（提示类通知）
@@ -33,7 +53,7 @@ class NotificationProvider extends ChangeNotifier {
     }
   }
 
-  /// 标记已读/删除
+  /// 标记已读/删除（只删第一条匹配的）
   void dismiss(String id) {
     _items.removeWhere((i) => i.id == id);
     notifyListeners();
