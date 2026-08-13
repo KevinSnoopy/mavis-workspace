@@ -176,8 +176,26 @@ class _OnboardPage extends StatelessWidget {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Text(emoji, style: const TextStyle(fontSize: 80)),
-          const SizedBox(height: 24),
+          // 渐变 emoji 容器
+          Container(
+            width: 120,
+            height: 120,
+            decoration: BoxDecoration(
+              gradient: AppTheme.primaryGradient,
+              borderRadius: BorderRadius.circular(32),
+              boxShadow: [
+                BoxShadow(
+                  color: AppTheme.primary.withOpacity(0.3),
+                  blurRadius: 32,
+                  offset: const Offset(0, 12),
+                ),
+              ],
+            ),
+            child: Center(
+              child: Text(emoji, style: const TextStyle(fontSize: 52)),
+            ),
+          ),
+          const SizedBox(height: 32),
           Text(
             title,
             style: const TextStyle(
@@ -185,11 +203,11 @@ class _OnboardPage extends StatelessWidget {
               fontWeight: FontWeight.bold,
             ),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 10),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
             decoration: BoxDecoration(
-              color: AppTheme.primary.withOpacity(0.15),
+              color: AppTheme.primary.withOpacity(0.12),
               borderRadius: BorderRadius.circular(12),
             ),
             child: Text(

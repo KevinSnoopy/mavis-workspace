@@ -15,7 +15,7 @@ class HistoryScreen extends StatelessWidget {
       length: 4,
       child: Scaffold(
         appBar: AppBar(
-          title: const Text('📊 记录'),
+          title: const Text('记录'),
           actions: [
             IconButton(
               icon: const Icon(Icons.settings),
@@ -129,12 +129,23 @@ class _OverviewTab extends StatelessWidget {
 
               // 今日进度
               if (todayHabits.isNotEmpty) ...[
-                const Text(
-                  '📅 今日进度',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                  ),
+                Row(
+                  children: [
+                    ShaderMask(
+                      shaderCallback: (bounds) =>
+                          AppTheme.primaryGradient.createShader(bounds),
+                      child: const Icon(Icons.trending_up_rounded,
+                          size: 16, color: Colors.white),
+                    ),
+                    const SizedBox(width: 6),
+                    const Text(
+                      '今日进度',
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
                 ),
                 const SizedBox(height: 12),
                 Container(
@@ -144,6 +155,21 @@ class _OverviewTab extends StatelessWidget {
                         ? AppTheme.bgCard
                         : Colors.white,
                     borderRadius: BorderRadius.circular(AppTheme.radiusMd),
+                    border: Border.all(
+                      color: Theme.of(context).brightness == Brightness.dark
+                          ? Colors.white.withOpacity(0.08)
+                          : Colors.black.withOpacity(0.06),
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(
+                            Theme.of(context).brightness == Brightness.dark
+                                ? 0.08
+                                : 0.04),
+                        blurRadius: 10,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
                   ),
                   child: Row(
                     children: [
@@ -202,12 +228,23 @@ class _OverviewTab extends StatelessWidget {
 
               // 习惯进度图
               if (activeHabits.isNotEmpty) ...[
-                const Text(
-                  '📈 习惯完成率',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                  ),
+                Row(
+                  children: [
+                    ShaderMask(
+                      shaderCallback: (bounds) =>
+                          AppTheme.successGradient.createShader(bounds),
+                      child: const Icon(Icons.insights_rounded,
+                          size: 16, color: Colors.white),
+                    ),
+                    const SizedBox(width: 6),
+                    const Text(
+                      '习惯完成率',
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
                 ),
                 const SizedBox(height: 12),
                 Container(
@@ -217,6 +254,21 @@ class _OverviewTab extends StatelessWidget {
                         ? AppTheme.bgCard
                         : Colors.white,
                     borderRadius: BorderRadius.circular(AppTheme.radiusMd),
+                    border: Border.all(
+                      color: Theme.of(context).brightness == Brightness.dark
+                          ? Colors.white.withOpacity(0.08)
+                          : Colors.black.withOpacity(0.06),
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(
+                            Theme.of(context).brightness == Brightness.dark
+                                ? 0.08
+                                : 0.04),
+                        blurRadius: 10,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
                   ),
                   child: Column(
                     children: activeHabits.take(5).map((habit) {
@@ -310,21 +362,38 @@ class _AchievementsTab extends StatelessWidget {
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                const Text('🏆', style: TextStyle(fontSize: 56)),
-                const SizedBox(height: 16),
-                Text(
-                  '还没有成就',
-                  style: TextStyle(
-                    fontSize: 16,
-                    color: AppTheme.textSecondary,
+                Container(
+                  width: 72,
+                  height: 72,
+                  decoration: BoxDecoration(
+                    gradient: AppTheme.accentGradient,
+                    borderRadius: BorderRadius.circular(20),
+                    boxShadow: [
+                      BoxShadow(
+                        color: AppTheme.accent.withOpacity(0.25),
+                        blurRadius: 20,
+                        offset: const Offset(0, 6),
+                      ),
+                    ],
+                  ),
+                  child: const Center(
+                    child: Text('🏆', style: TextStyle(fontSize: 34)),
                   ),
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: 20),
+                const Text(
+                  '还没有成就',
+                  style: TextStyle(
+                    fontSize: 17,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 6),
                 Text(
                   '连续打卡7天解锁第一个成就',
                   style: TextStyle(
                     fontSize: 13,
-                    color: AppTheme.textSecondary.withOpacity(0.7),
+                    color: AppTheme.textSecondary,
                   ),
                 ),
               ],
@@ -365,19 +434,47 @@ class _AchievementsTab extends StatelessWidget {
                 ),
                 ...group.items.map((a) => Container(
                       margin: const EdgeInsets.only(bottom: 10),
-                      padding: const EdgeInsets.all(16),
+                      padding: const EdgeInsets.all(14),
                       decoration: BoxDecoration(
                         color: Theme.of(context).brightness == Brightness.dark
                             ? AppTheme.bgCard
                             : Colors.white,
                         borderRadius: BorderRadius.circular(AppTheme.radiusMd),
                         border: Border.all(
-                          color: AppTheme.accent.withOpacity(0.2),
+                          color: AppTheme.accent.withOpacity(0.25),
                         ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: AppTheme.accent.withOpacity(
+                                Theme.of(context).brightness == Brightness.dark
+                                    ? 0.1
+                                    : 0.06),
+                            blurRadius: 12,
+                            offset: const Offset(0, 3),
+                          ),
+                        ],
                       ),
                       child: Row(
                         children: [
-                          Text(a.icon, style: const TextStyle(fontSize: 32)),
+                          // 图标容器
+                          Container(
+                            width: 52,
+                            height: 52,
+                            decoration: BoxDecoration(
+                              gradient: AppTheme.accentGradient,
+                              borderRadius: BorderRadius.circular(14),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: AppTheme.accent.withOpacity(0.25),
+                                  blurRadius: 10,
+                                  offset: const Offset(0, 3),
+                                ),
+                              ],
+                            ),
+                            child: Center(
+                              child: Text(a.icon, style: const TextStyle(fontSize: 26)),
+                            ),
+                          ),
                           const SizedBox(width: 12),
                           Expanded(
                             child: Column(
@@ -386,8 +483,8 @@ class _AchievementsTab extends StatelessWidget {
                                 Text(
                                   a.name,
                                   style: const TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.bold,
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.w600,
                                   ),
                                 ),
                                 Text(
@@ -602,13 +699,31 @@ class _StatCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(AppTheme.radiusMd),
         border: Border.all(
           color: isDark
-              ? Colors.white.withOpacity(0.05)
-              : Colors.black.withOpacity(0.05),
+              ? Colors.white.withOpacity(0.08)
+              : Colors.black.withOpacity(0.06),
         ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(isDark ? 0.08 : 0.04),
+            blurRadius: 10,
+            offset: const Offset(0, 2),
+          ),
+        ],
       ),
       child: Column(
         children: [
-          Text(icon, style: const TextStyle(fontSize: 24)),
+          // 图标背景
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: color.withOpacity(isDark ? 0.2 : 0.12),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Center(
+              child: Text(icon, style: const TextStyle(fontSize: 20)),
+            ),
+          ),
           const SizedBox(height: 8),
           Text(
             value,

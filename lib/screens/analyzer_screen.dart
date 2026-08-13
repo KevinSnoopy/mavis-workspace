@@ -166,7 +166,7 @@ class _AnalyzerScreenState extends State<AnalyzerScreen> {
           icon: const Icon(Icons.arrow_back),
           onPressed: () => Navigator.pop(context),
         ),
-        title: const Text('⚖️ 矛盾分析器'),
+        title: const Text('矛盾分析器'),
       ),
       body: _result == null ? _buildInput() : _buildResult(),
     );
@@ -227,6 +227,14 @@ class _AnalyzerScreenState extends State<AnalyzerScreen> {
             decoration: BoxDecoration(
               color: AppTheme.bgCard,
               borderRadius: BorderRadius.circular(AppTheme.radiusLg),
+              border: Border.all(color: Colors.white.withOpacity(0.08)),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.08),
+                  blurRadius: 16,
+                  offset: const Offset(0, 4),
+                ),
+              ],
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -289,6 +297,14 @@ class _AnalyzerScreenState extends State<AnalyzerScreen> {
             decoration: BoxDecoration(
               color: AppTheme.bgCard,
               borderRadius: BorderRadius.circular(AppTheme.radiusLg),
+              border: Border.all(color: Colors.white.withOpacity(0.08)),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.08),
+                  blurRadius: 16,
+                  offset: const Offset(0, 4),
+                ),
+              ],
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -317,7 +333,7 @@ class _AnalyzerScreenState extends State<AnalyzerScreen> {
                             borderRadius:
                                 BorderRadius.circular(AppTheme.radiusSm),
                           ),
-                          child: Text(q),
+                          child: Text(q, style: const TextStyle(fontSize: 14)),
                         ),
                       ),
                     )),
@@ -344,20 +360,32 @@ class _AnalyzerScreenState extends State<AnalyzerScreen> {
               border: Border(
                 left: BorderSide(color: AppTheme.primary, width: 4),
               ),
+              boxShadow: [
+                BoxShadow(
+                  color: AppTheme.primary.withOpacity(0.1),
+                  blurRadius: 16,
+                  offset: const Offset(0, 4),
+                ),
+              ],
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Row(
                   children: [
-                    const Text('🔥', style: TextStyle(fontSize: 20)),
+                    ShaderMask(
+                      shaderCallback: (bounds) =>
+                          AppTheme.primaryGradient.createShader(bounds),
+                      child: const Icon(Icons.local_fire_department_rounded,
+                          size: 18, color: Colors.white),
+                    ),
                     const SizedBox(width: 8),
                     Text(
                       '主要矛盾',
                       style: TextStyle(
-                        fontSize: 14,
+                        fontSize: 13,
                         color: AppTheme.primary,
-                        fontWeight: FontWeight.w500,
+                        fontWeight: FontWeight.w600,
                       ),
                     ),
                   ],
@@ -394,6 +422,13 @@ class _AnalyzerScreenState extends State<AnalyzerScreen> {
               border: const Border(
                 left: BorderSide(color: AppTheme.accent, width: 4),
               ),
+              boxShadow: [
+                BoxShadow(
+                  color: AppTheme.accent.withOpacity(0.1),
+                  blurRadius: 16,
+                  offset: const Offset(0, 4),
+                ),
+              ],
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,

@@ -49,7 +49,7 @@ class _HabitsScreenState extends State<HabitsScreen> {
           length: 2,
           child: Scaffold(
             appBar: AppBar(
-              title: const Text('✨ 习惯管理'),
+              title: const Text('习惯管理'),
               bottom: PreferredSize(
                 preferredSize: const Size.fromHeight(96),
                 child: Column(
@@ -102,11 +102,23 @@ class _HabitsScreenState extends State<HabitsScreen> {
                 _HabitList(habits: filteredArchived, isArchived: true),
               ],
             ),
-            floatingActionButton: FloatingActionButton.extended(
-              onPressed: () => _showAddHabitDialog(context),
-              backgroundColor: AppTheme.primary,
-              icon: const Icon(Icons.add),
-              label: const Text('添加'),
+            floatingActionButton: Container(
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(16),
+                boxShadow: [
+                  BoxShadow(
+                    color: AppTheme.primary.withOpacity(0.3),
+                    blurRadius: 16,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: FloatingActionButton.extended(
+                onPressed: () => _showAddHabitDialog(context),
+                backgroundColor: AppTheme.primary,
+                icon: const Icon(Icons.add),
+                label: const Text('添加'),
+              ),
             ),
           ),
         );
@@ -129,7 +141,7 @@ class _HabitsScreenState extends State<HabitsScreen> {
       isScrollControlled: true,
       backgroundColor: AppTheme.bgCard,
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(AppTheme.radiusXl)),
       ),
       builder: (ctx) {
         return StatefulBuilder(
@@ -168,7 +180,7 @@ class _HabitsScreenState extends State<HabitsScreen> {
                             context: ctx,
                             backgroundColor: AppTheme.bgCard,
                             shape: const RoundedRectangleBorder(
-                              borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+                              borderRadius: BorderRadius.vertical(top: Radius.circular(AppTheme.radiusXl)),
                             ),
                             builder: (_) => _TemplatePickerSheet(
                               onSelect: (t) => setState(() {
@@ -363,20 +375,51 @@ class _HabitList extends StatelessWidget {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Text(isArchived ? '📦' : '🌱',
-                style: const TextStyle(fontSize: 48)),
-            const SizedBox(height: 16),
+            Container(
+              width: 72,
+              height: 72,
+              decoration: BoxDecoration(
+                gradient: isArchived
+                    ? LinearGradient(
+                        colors: [
+                          Colors.white.withOpacity(0.08),
+                          Colors.white.withOpacity(0.04),
+                        ],
+                      )
+                    : AppTheme.primaryGradient,
+                borderRadius: BorderRadius.circular(20),
+                boxShadow: isArchived
+                    ? null
+                    : [
+                        BoxShadow(
+                          color: AppTheme.primary.withOpacity(0.25),
+                          blurRadius: 20,
+                          offset: const Offset(0, 6),
+                        ),
+                      ],
+              ),
+              child: Center(
+                child: Text(
+                  isArchived ? '📦' : '⚡',
+                  style: const TextStyle(fontSize: 32),
+                ),
+              ),
+            ),
+            const SizedBox(height: 20),
             Text(
               isArchived ? '没有暂停的习惯' : '还没有习惯',
-              style: TextStyle(color: AppTheme.textSecondary),
+              style: const TextStyle(
+                fontSize: 17,
+                fontWeight: FontWeight.w600,
+              ),
             ),
             if (!isArchived) ...[
-              const SizedBox(height: 8),
+              const SizedBox(height: 6),
               Text(
-                '点击底部 + 添加第一个习惯',
+                '点击底部按钮添加第一个习惯',
                 style: TextStyle(
                   fontSize: 13,
-                  color: AppTheme.textSecondary.withOpacity(0.7),
+                  color: AppTheme.textSecondary,
                 ),
               ),
             ],
@@ -446,24 +489,31 @@ class _HabitTile extends StatelessWidget {
         child: GestureDetector(
           onTap: () => _showEditSheet(context, habit),
           child: Container(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
               color: AppTheme.bgCard,
               borderRadius: BorderRadius.circular(AppTheme.radiusMd),
-              border: Border.all(color: Colors.white.withOpacity(0.05)),
+              border: Border.all(color: Colors.white.withOpacity(0.07)),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.06),
+                  blurRadius: 10,
+                  offset: const Offset(0, 2),
+                ),
+              ],
             ),
             child: Row(
               children: [
                 Container(
-                  width: 48,
-                  height: 48,
+                  width: 46,
+                  height: 46,
                   decoration: BoxDecoration(
-                    color: Color(habit.colorValue).withOpacity(0.2),
+                    color: Color(habit.colorValue).withOpacity(0.15),
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Center(
                     child:
-                        Text(habit.icon, style: const TextStyle(fontSize: 24)),
+                        Text(habit.icon, style: const TextStyle(fontSize: 22)),
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -474,17 +524,17 @@ class _HabitTile extends StatelessWidget {
                       Text(
                         habit.name,
                         style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w500,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
                         ),
                       ),
-                      const SizedBox(height: 4),
+                      const SizedBox(height: 5),
                       Row(
                         children: [
                           _StatChip('🔥 ${stats.currentStreak}天'),
-                          const SizedBox(width: 8),
+                          const SizedBox(width: 6),
                           _StatChip('📊 ${stats.totalCount}次'),
-                          const SizedBox(width: 8),
+                          const SizedBox(width: 6),
                           _StatChip(
                               '${stats.completionRate.toStringAsFixed(0)}%'),
                         ],
@@ -497,7 +547,7 @@ class _HabitTile extends StatelessWidget {
                     padding:
                         const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                     decoration: BoxDecoration(
-                      color: AppTheme.textSecondary.withOpacity(0.2),
+                      color: AppTheme.textSecondary.withOpacity(0.15),
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: Text(
@@ -538,7 +588,7 @@ class _HabitTile extends StatelessWidget {
       isScrollControlled: true,
       backgroundColor: AppTheme.bgCard,
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(AppTheme.radiusXl)),
       ),
       builder: (ctx) {
         return StatefulBuilder(
@@ -737,9 +787,19 @@ class _StatChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Text(
-      text,
-      style: TextStyle(fontSize: 12, color: AppTheme.textSecondary),
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+      decoration: BoxDecoration(
+        color: isDark
+            ? Colors.white.withOpacity(0.08)
+            : Colors.black.withOpacity(0.06),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(fontSize: 11, color: AppTheme.textSecondary),
+      ),
     );
   }
 }
