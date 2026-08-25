@@ -6,10 +6,13 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.eareyereading.data.local.dao.ReviewRecordDao
 import com.eareyereading.data.local.dao.ReadingStatsDao
+import com.eareyereading.domain.model.ArticleSource
+import com.eareyereading.domain.model.ArticleSources
 import com.eareyereading.domain.model.Book
 import com.eareyereading.domain.repository.BookRepository
 import com.eareyereading.domain.repository.VocabularyRepository
 import com.eareyereading.util.ArticleParser
+import com.eareyereading.util.RssParser
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.*
@@ -39,6 +42,14 @@ data class LibraryUiState(
     val showArchived: Boolean = false,
     val showUrlDialog: Boolean = false,
     val urlInput: String = "",
+    // 文章广场
+    val selectedTab: Int = 0,               // 0=书库, 1=文章
+    val articleSources: List<ArticleSource> = ArticleSources.sources,
+    val selectedSource: ArticleSource? = null,
+    val articles: List<RssParser.RssArticle> = emptyList(),
+    val articlesLoading: Boolean = false,
+    val articlesError: String? = null,
+    val showSourceSheet: Boolean = false,
 )
 
 @HiltViewModel
@@ -46,6 +57,7 @@ class LibraryViewModel @Inject constructor(
     private val bookRepository: BookRepository,
     private val vocabularyRepository: VocabularyRepository,
     private val articleParser: ArticleParser,
+    private val rssParser: RssParser,
     private val reviewRecordDao: ReviewRecordDao,
     private val readingStatsDao: ReadingStatsDao,
     @ApplicationContext private val context: Context,
@@ -241,5 +253,101 @@ class LibraryViewModel @Inject constructor(
 
     fun dismissLoadingMessage() {
         _uiState.update { it.copy(loadingMessage = "") }
+    }
+
+    // ── 文章广场 ──────────────────────────────────
+    fun setTab(index: Int) {
+        _uiState.update { it.copy(selectedTab = index) }
+    }
+
+    fun selectSource(source: ArticleSource) {
+        _uiState.update { it.copy(
+            selectedSource = source,
+            articles = emptyList(),
+            articlesLoading = true,
+            articlesError = null,
+        ) }
+        viewModelScope.launch {
+            try {
+                val feed = if (source.isRss) {
+                    rssParser.parse(source.url)
+                } else {
+                    // 非 RSS 源：抓取首页，尝试从中提取文章链接
+                    fetchArticleLinks(source)
+                }
+                if (feed != null && feed.items.isNotEmpty()) {
+                    _uiState.update { it.copy(
+                        articles = feed.items,
+                        articlesLoading = false,
+                    ) }
+                } else {
+                    _uiState.update { it.copy(
+                        articlesLoading = false,
+                        articlesError = "该源暂无文章，请稍后再试",
+                    ) }
+                }
+            } catch (e: Exception) {
+                _uiState.update { it.copy(
+                    articlesLoading = false,
+                    articlesError = "加载失败: ${e.message}",
+                ) }
+            }
+        }
+    }
+
+    private suspend fun fetchArticleLinks(source: ArticleSource): RssParser.RssFeed? {
+        // 对非 RSS 源，尝试抓取首页提取 article 链接
+        val result = articleParser.parseFromUrl(source.url) ?: return null
+        val articles = result.paragraphs.take(10).mapIndexed { i, p ->
+            RssParser.RssArticle(
+                title = p.take(80),
+                link = source.url,
+                description = p.take(200),
+                pubDate = null,
+                pubTimestamp = System.currentTimeMillis(),
+            )
+        }
+        return RssParser.RssFeed(
+            title = result.title,
+            description = null,
+            link = source.url,
+            items = articles,
+        )
+    }
+
+    fun clearSelectedSource() {
+        _uiState.update { it.copy(
+            selectedSource = null,
+            articles = emptyList(),
+            articlesError = null,
+        ) }
+    }
+
+    fun addArticleToLibrary(article: RssParser.RssArticle) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isLoading = true, loadingMessage = "正在导入文章...") }
+            try {
+                val result = articleParser.parseFromUrl(article.link)
+                if (result != null) {
+                    val book = Book(
+                        title = article.title,
+                        author = extractDomain(article.link),
+                        filePath = "",
+                        content = result.paragraphs.joinToString("\n\n"),
+                        addedAt = System.currentTimeMillis(),
+                    )
+                    bookRepository.addBook(book)
+                    _uiState.update { it.copy(
+                        isLoading = false,
+                        loadingMessage = "「${article.title.take(20)}...」已加入书库！",
+                        selectedTab = 0,   // 切回书库
+                    ) }
+                } else {
+                    _uiState.update { it.copy(isLoading = false, loadingMessage = "抓取失败，请重试") }
+                }
+            } catch (e: Exception) {
+                _uiState.update { it.copy(isLoading = false, loadingMessage = "导入失败: ${e.message}") }
+            }
+        }
     }
 }
