@@ -1,0 +1,21 @@
+# Build outputs
+build/
+.gradle/
+.idea/
+*.iml
+
+# Local config (contains device-specific paths)
+local.properties
+
+# Android Studio
+/.cxx/
+*.apk
+*.aab
+*.dex
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
