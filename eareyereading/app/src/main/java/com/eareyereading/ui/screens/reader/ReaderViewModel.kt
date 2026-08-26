@@ -117,7 +117,7 @@ class ReaderViewModel @Inject constructor(
     private var rsvpJob: Job? = null
     private var speedJob: Job? = null
     private var autoReadJob: Job? = null
-    private var currentBookId: Long = 0
+    private var currentBookId: Long? = null
     private var readingStartTime: Long = 0L
 
     init {
@@ -334,7 +334,7 @@ class ReaderViewModel @Inject constructor(
 
         viewModelScope.launch {
             _uiState.update { it.copy(readingMode = mode, showModeSelector = false) }
-            readingRepository.updateMode(currentBookId, mode)
+            currentBookId?.let { readingRepository.updateMode(it, mode) }
         }
     }
 
@@ -467,7 +467,7 @@ class ReaderViewModel @Inject constructor(
         viewModelScope.launch {
             _uiState.update { it.copy(rsvpSpeed = speed.coerceIn(100, 800)) }
             settingsRepository.setRsvpSpeed(speed)
-            readingRepository.updateRsvpSpeed(currentBookId, speed)
+            currentBookId?.let { readingRepository.updateRsvpSpeed(it, speed) }
         }
     }
 
@@ -564,16 +564,17 @@ class ReaderViewModel @Inject constructor(
 
     fun saveProgress() {
         viewModelScope.launch {
+            val bookId = currentBookId ?: return@launch
             val state = _uiState.value
             val totalChars = state.paragraphs.joinToString("\n\n").length
             val progress = if (totalChars > 0) {
                 state.currentParagraphIndex.toFloat() / state.paragraphs.size.coerceAtLeast(1)
             } else 0f
-            bookRepository.updateProgress(currentBookId, progress, state.currentParagraphIndex)
+            bookRepository.updateProgress(bookId, progress, state.currentParagraphIndex)
 
             readingRepository.saveState(
                 ReadingState(
-                    bookId = currentBookId,
+                    bookId = bookId,
                     currentPosition = state.currentWordIndex,
                     currentParagraph = state.currentParagraphIndex,
                     totalCharacters = totalChars,

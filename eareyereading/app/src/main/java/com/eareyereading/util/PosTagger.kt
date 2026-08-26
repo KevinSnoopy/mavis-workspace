@@ -128,7 +128,7 @@ class PosTagger @Inject constructor() {
 
 enum class PosTag {
     NOUN, VERB, ADJECTIVE, ADVERB, DETERMINER, PRONOUN,
-    PREPOSITION, CONJUNCTION, ADVERB, NUMERAL, OTHER,
+    PREPOSITION, CONJUNCTION, NUMERAL, OTHER,
 }
 
 enum class PosColor(val label: String, val hex: Long) {

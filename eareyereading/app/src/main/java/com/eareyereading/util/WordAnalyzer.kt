@@ -189,14 +189,3 @@ class WordAnalyzer @Inject constructor() {
         }
     }
 }
-
-data class ClozeWord(
-    val text: String,
-    val isHidden: Boolean,
-    val isWord: Boolean,
-)
-
-data class FuzzyWord(
-    val text: String,
-    val isBlurred: Boolean,
-)
