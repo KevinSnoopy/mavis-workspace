@@ -114,18 +114,14 @@ detekt {
     toolVersion = "1.23.4"
     buildUponDefaultConfig = true
     allRules = false
-    reports {
-        html {
-            required.set(true)
-            outputLocation.set(file("$projectDir/build/reports/detekt.html"))
-        }
-        sarif {
-            required.set(true)
-            outputLocation.set(file("$projectDir/build/reports/detekt.sarif"))
-        }
-    }
 }
 
 tasks.withType<io.gitlab.arturbosch.detekt.Detekt>().configureEach {
     ignoreFailures = true
+    reports {
+        html.required.set(true)
+        html.outputLocation.set(file("$projectDir/build/reports/detekt.html"))
+        sarif.required.set(true)
+        sarif.outputLocation.set(file("$projectDir/build/reports/detekt.sarif"))
+    }
 }
