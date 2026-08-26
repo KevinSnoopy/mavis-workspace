@@ -1,5 +1,5 @@
 # Detekt configuration for EareyeReading Android project
-# Run: ./gradlew detekt
+# Run: ./gradlew :app:detekt
 
 config:
   validation: true
@@ -11,20 +11,6 @@ config:
 build:
   maxIssues: 0
 
-processors:
-  active: true
-  exclude:
-    - '**/detekt/api/SarifException**
-
-console-reports:
-  active: true
-  exclude:
-    - 'KotlinBuildScript'
-
-output-reports:
-  active: true
-
-# ── 风格规则 ──────────────────────────────
 style:
   active: true
   ReturnCount:
@@ -32,7 +18,7 @@ style:
     max: 4
   MagicNumber:
     active: true
-    ignoreAnnotation: ['@Composable', '@Inject', '@Singleton']
+    ignoreAnnotation: ['Composable', 'Inject', 'Singleton']
     ignoreNumbers: ['-1', '0', '1', '2', '100', '1000', '3600', '60000', '0.5', '0.85', '0.3']
   MaxLineLength:
     active: true
@@ -41,9 +27,8 @@ style:
     active: true
   WildcardImports:
     active: true
-    excludes: ['**/test/**', '**/*.test.kt', '**/androidTest/**']
+    excludes: ['**/test/**', '**/*.test.kt']
 
-# ── 复杂度规则 ────────────────────────────
 complexity:
   active: true
   LongParameterList:
@@ -55,8 +40,6 @@ complexity:
     thresholdInFiles: 25
     thresholdInClasses: 20
     thresholdInInterfaces: 12
-    thresholdInObjects: 12
-    thresholdInEnums: 10
   ComplexMethod:
     active: true
     threshold: 20
@@ -66,7 +49,6 @@ complexity:
     active: true
     maxDepth: 5
 
-# ── 潜在 Bug ────────────────────────────
 potential-bugs:
   active: true
   NullableToStringCall:
@@ -76,28 +58,19 @@ potential-bugs:
   UnsafeCast:
     active: true
 
-# ── 性能 ────────────────────────────────
 performance:
   active: true
   ForEachOnRange:
     active: true
   SpreadOperator:
     active: true
-    excludeAnnotatedFunctions: ['@Composable']
+    excludeAnnotatedFunctions: ['Composable']
 
-# ── 迁移规则 ────────────────────────────
-migration:
-  active: false  # 关闭迁移规则，减少噪音
-
-# ── 命名规则 ────────────────────────────
 naming:
   active: true
   ClassNaming:
     active: true
     classPattern: '[A-Z][a-zA-Z0-9]*'
-  EnumNaming:
-    active: true
-    enumEntryPattern: '^[A-Z][a-zA-Z0-9]*$'
   FunctionNaming:
     active: true
     functionPattern: '([a-z][a-zA-Z0-9]*)'
