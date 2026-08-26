@@ -3,6 +3,7 @@ plugins {
     id("org.jetbrains.kotlin.android")
     id("com.google.devtools.ksp")
     id("com.google.dagger.hilt.android")
+    id("io.gitlab.arturbosch.detekt")
 }
 
 android {
@@ -107,4 +108,25 @@ dependencies {
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
+}
+
+detekt {
+    toolVersion = "1.23.4"
+    config.setFrom("$rootDir/detekt.yml")
+    buildUponDefaultConfig = true
+    allRules = false
+    disableDefaultRuleSets = false
+    reports {
+        html {
+            required.set(true)
+            outputLocation.set(file("$projectDir/build/reports/detekt.html"))
+        }
+        sarif {
+            required.set(true)
+            outputLocation.set(file("$projectDir/build/reports/detekt.sarif"))
+        }
+        txt {
+            required.set(false)
+        }
+    }
 }
