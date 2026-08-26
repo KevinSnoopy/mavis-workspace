@@ -19,15 +19,15 @@ jobs:
       - name: Setup Gradle
         uses: gradle/gradle-build-action@v2
       - name: Run Detekt
-        run: cd eareyereading && ./gradlew detekt --no-daemon
+        run: cd eareyereading && chmod +x gradlew && ./gradlew detekt --no-daemon
       - name: Upload SARIF
         uses: github/codeql-action/upload-sarif@v2
-        if: always()
+        if: success()
         with:
           sarif_file: eareyereading/app/build/reports/detekt.sarif
       - name: Upload HTML report
         uses: actions/upload-artifact@v4
-        if: always()
+        if: success()
         with:
           name: detekt-report
           path: eareyereading/app/build/reports/detekt.html
