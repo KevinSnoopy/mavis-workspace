@@ -1,4 +1,5 @@
 package com.eareyereading.data.repository
+@file:Suppress("WildcardImport", "FunctionNaming", "UnusedParameter", "MatchingDeclarationName", "EmptyFunctionBlock", "UnusedPrivateProperty")
 
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.*

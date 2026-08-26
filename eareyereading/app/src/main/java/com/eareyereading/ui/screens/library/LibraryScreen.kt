@@ -1,4 +1,5 @@
 package com.eareyereading.ui.screens.library
+@file:Suppress("WildcardImport", "FunctionNaming", "UnusedParameter", "MatchingDeclarationName", "EmptyFunctionBlock", "UnusedPrivateProperty")
 
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult

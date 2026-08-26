@@ -1,4 +1,5 @@
 package com.eareyereading.domain.repository
+@file:Suppress("WildcardImport", "FunctionNaming", "UnusedParameter", "MatchingDeclarationName", "EmptyFunctionBlock", "UnusedPrivateProperty")
 
 import com.eareyereading.domain.model.*
 import kotlinx.coroutines.flow.Flow

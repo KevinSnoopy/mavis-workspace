@@ -1,4 +1,5 @@
 package com.eareyereading.data.local.entity
+@file:Suppress("WildcardImport", "FunctionNaming", "UnusedParameter", "MatchingDeclarationName", "EmptyFunctionBlock", "UnusedPrivateProperty")
 
 import androidx.room.Entity
 import androidx.room.PrimaryKey

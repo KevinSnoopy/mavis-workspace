@@ -1,4 +1,5 @@
 package com.eareyereading.ui.screens.reader
+@file:Suppress("WildcardImport", "FunctionNaming", "UnusedParameter", "MatchingDeclarationName", "EmptyFunctionBlock", "UnusedPrivateProperty")
 
 import androidx.compose.animation.*
 import androidx.compose.foundation.*

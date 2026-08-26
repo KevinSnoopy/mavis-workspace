@@ -1,4 +1,5 @@
 package com.eareyereading.domain.model
+@file:Suppress("WildcardImport", "FunctionNaming", "UnusedParameter", "MatchingDeclarationName", "EmptyFunctionBlock", "UnusedPrivateProperty")
 
 data class Book(
     val id: Long = 0,

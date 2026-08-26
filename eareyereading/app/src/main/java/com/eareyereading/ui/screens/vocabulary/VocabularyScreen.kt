@@ -1,4 +1,5 @@
 package com.eareyereading.ui.screens.vocabulary
+@file:Suppress("WildcardImport", "FunctionNaming", "UnusedParameter", "MatchingDeclarationName", "EmptyFunctionBlock", "UnusedPrivateProperty")
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*

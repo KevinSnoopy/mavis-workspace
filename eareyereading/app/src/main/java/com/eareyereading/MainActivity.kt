@@ -1,4 +1,5 @@
 package com.eareyereading
+@file:Suppress("WildcardImport", "FunctionNaming", "UnusedParameter", "MatchingDeclarationName", "EmptyFunctionBlock", "UnusedPrivateProperty")
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
