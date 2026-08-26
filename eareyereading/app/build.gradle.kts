@@ -114,9 +114,6 @@ detekt {
     toolVersion = "1.23.4"
     buildUponDefaultConfig = true
     allRules = false
-    // Run detekt but don't fail the build on issues (reports still generated)
-    // Failures will be investigated and fixed incrementally
-    ignoreFailure = true
     reports {
         html {
             required.set(true)
@@ -127,4 +124,8 @@ detekt {
             outputLocation.set(file("$projectDir/build/reports/detekt.sarif"))
         }
     }
+}
+
+tasks.withType<io.gitlab.arturbosch.detekt.Detekt>().configureEach {
+    ignoreFailures = true
 }
