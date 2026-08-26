@@ -1,5 +1,4 @@
 package com.eareyereading.util
-@file:Suppress("WildcardImport", "FunctionNaming", "UnusedParameter", "MatchingDeclarationName", "EmptyFunctionBlock", "UnusedPrivateProperty")
 
 import javax.inject.Inject
 import javax.inject.Singleton

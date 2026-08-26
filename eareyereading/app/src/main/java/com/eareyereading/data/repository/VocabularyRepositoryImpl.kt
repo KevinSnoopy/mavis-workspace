@@ -1,5 +1,4 @@
 package com.eareyereading.data.repository
-@file:Suppress("WildcardImport", "FunctionNaming", "UnusedParameter", "MatchingDeclarationName", "EmptyFunctionBlock", "UnusedPrivateProperty")
 
 import com.eareyereading.data.local.dao.VocabularyDao
 import com.eareyereading.data.local.entity.VocabularyEntity

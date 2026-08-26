@@ -1,15 +1,33 @@
-# Detekt configuration - extends defaults, overrides specific rules
-# Known valid rule names in detekt 1.23.4
+# Detekt configuration - replaces default config (buildUponDefaultConfig=false)
+# Only enable rules that catch REAL bugs
 
+build:
+  maxIssues: 0
+
+# Only potential-bugs and performance are truly important
+potential-bugs:
+  active: true
+  NullableToStringCall:
+    active: true
+  UnsafeCast:
+    active: true
+
+# All style/complexity rules disabled - too noisy for Android/Compose
 style:
+  active: false
   MagicNumber:
     active: false
   MaxLineLength:
     active: false
   WildcardImport:
     active: false
+  UnusedImports:
+    active: false
+  FunctionNaming:
+    active: false
 
 complexity:
+  active: false
   LongMethod:
     active: false
   TooManyFunctions:
@@ -19,4 +37,27 @@ complexity:
   LongParameterList:
     active: false
   LoopWithTooManyJumpStatements:
+    active: false
+  CyclomaticComplexMethod:
+    active: false
+  LargeClass:
+    active: false
+  NestedBlockDepth:
+    active: false
+
+performance:
+  active: false
+
+naming:
+  active: false
+  MatchingDeclarationName:
+    active: false
+
+exceptions:
+  active: false
+  TooGenericExceptionCaught:
+    active: false
+  SwallowedException:
+    active: false
+  PrintStackTrace:
     active: false

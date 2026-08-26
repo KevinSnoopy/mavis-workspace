@@ -1,5 +1,4 @@
 package com.eareyereading.data.local.dao
-@file:Suppress("WildcardImport", "FunctionNaming", "UnusedParameter", "MatchingDeclarationName", "EmptyFunctionBlock", "UnusedPrivateProperty")
 
 import androidx.room.*
 import com.eareyereading.data.local.entity.WordFrequencyEntity

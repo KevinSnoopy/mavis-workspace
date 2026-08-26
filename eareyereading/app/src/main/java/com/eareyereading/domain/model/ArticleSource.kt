@@ -1,5 +1,4 @@
 package com.eareyereading.domain.model
-@file:Suppress("WildcardImport", "FunctionNaming", "UnusedParameter", "MatchingDeclarationName", "EmptyFunctionBlock", "UnusedPrivateProperty")
 
 /**
  * 文章来源（RSS 订阅或推荐站点）

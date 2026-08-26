@@ -1,5 +1,4 @@
 package com.eareyereading.ui.theme
-@file:Suppress("WildcardImport", "FunctionNaming", "UnusedParameter", "MatchingDeclarationName", "EmptyFunctionBlock", "UnusedPrivateProperty")
 
 import androidx.compose.material3.Typography
 import androidx.compose.ui.text.TextStyle

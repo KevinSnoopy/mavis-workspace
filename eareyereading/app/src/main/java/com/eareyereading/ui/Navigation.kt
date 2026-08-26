@@ -1,5 +1,4 @@
 package com.eareyereading.ui
-@file:Suppress("WildcardImport", "FunctionNaming", "UnusedParameter", "MatchingDeclarationName", "EmptyFunctionBlock", "UnusedPrivateProperty")
 
 import androidx.compose.runtime.Composable
 import androidx.navigation.NavHostController

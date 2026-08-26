@@ -1,5 +1,4 @@
 package com.eareyereading.data.local.database
-@file:Suppress("WildcardImport", "FunctionNaming", "UnusedParameter", "MatchingDeclarationName", "EmptyFunctionBlock", "UnusedPrivateProperty")
 
 import androidx.room.Database
 import androidx.room.RoomDatabase

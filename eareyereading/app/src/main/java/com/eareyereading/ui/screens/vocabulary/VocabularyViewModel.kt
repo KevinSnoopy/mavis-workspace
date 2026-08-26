@@ -1,5 +1,4 @@
 package com.eareyereading.ui.screens.vocabulary
-@file:Suppress("WildcardImport", "FunctionNaming", "UnusedParameter", "MatchingDeclarationName", "EmptyFunctionBlock", "UnusedPrivateProperty")
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope

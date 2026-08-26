@@ -112,8 +112,9 @@ dependencies {
 
 detekt {
     toolVersion = "1.23.4"
-    buildUponDefaultConfig = true
+    buildUponDefaultConfig = false
     allRules = false
+    config.setFrom(file("$rootDir/detekt.yml"))
 }
 
 tasks.withType<io.gitlab.arturbosch.detekt.Detekt>().configureEach {

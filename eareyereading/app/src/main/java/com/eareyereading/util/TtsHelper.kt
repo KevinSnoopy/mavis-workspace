@@ -1,5 +1,4 @@
 package com.eareyereading.util
-@file:Suppress("WildcardImport", "FunctionNaming", "UnusedParameter", "MatchingDeclarationName", "EmptyFunctionBlock", "UnusedPrivateProperty")
 
 import android.content.Context
 import android.speech.tts.TextToSpeech

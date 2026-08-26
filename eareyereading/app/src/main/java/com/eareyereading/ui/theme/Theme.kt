@@ -1,5 +1,4 @@
 package com.eareyereading.ui.theme
-@file:Suppress("WildcardImport", "FunctionNaming", "UnusedParameter", "MatchingDeclarationName", "EmptyFunctionBlock", "UnusedPrivateProperty")
 
 import android.app.Activity
 import androidx.compose.foundation.isSystemInDarkTheme
