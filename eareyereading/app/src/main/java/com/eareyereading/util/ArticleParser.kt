@@ -1,3 +1,5 @@
+@file:Suppress("TooGenericExceptionCaught", "ReturnCount")
+
 package com.eareyereading.util
 
 import java.io.BufferedReader
@@ -44,8 +46,14 @@ class ArticleParser @Inject constructor() {
                 val html = BufferedReader(InputStreamReader(conn.inputStream, charset)).readText()
                 extractArticle(html)
             }
-        } catch (e: Exception) {
-            e.printStackTrace()
+        } catch (e: java.net.MalformedURLException) {
+            android.util.Log.e("ArticleParser", "Invalid URL: ${urlStr}", e)
+            null
+        } catch (e: java.net.SocketTimeoutException) {
+            android.util.Log.e("ArticleParser", "Connection timeout for URL: ${urlStr}", e)
+            null
+        } catch (e: java.io.IOException) {
+            android.util.Log.e("ArticleParser", "IO error fetching article: ${urlStr}", e)
             null
         }
     }

@@ -1,3 +1,5 @@
+@file:Suppress("TooGenericExceptionCaught")
+
 package com.eareyereading.util
 
 import android.content.Context
@@ -45,7 +47,11 @@ class TranslationHelper @Inject constructor(
                 }
             )
             cont.resume(true)
-        } catch (e: Exception) {
+        } catch (e: android.speech.tts.TranslationSessionException) {
+            android.util.Log.w("TranslationHelper", "System translation not available", e)
+            cont.resume(false)
+        } catch (e: java.lang.RuntimeException) {
+            android.util.Log.w("TranslationHelper", "Runtime error initializing system translation", e)
             cont.resume(false)
         }
     }
@@ -74,7 +80,11 @@ class TranslationHelper @Inject constructor(
                         }
                     }
                 )
-            } catch (e: Exception) {
+            } catch (e: android.speech.tts.TranslationSessionException) {
+                android.util.Log.w("TranslationHelper", "Translation request failed", e)
+                cont.resume(lookupLocalDict(text))
+            } catch (e: java.lang.RuntimeException) {
+                android.util.Log.w("TranslationHelper", "Runtime error during translation", e)
                 cont.resume(lookupLocalDict(text))
             }
         } else {
@@ -99,7 +109,11 @@ class TranslationHelper @Inject constructor(
                 mlkitReady = false
                 cont.resume(false)
             }
-        } catch (e: Exception) {
+        } catch (e: com.google.mlkit.common.MlKitException) {
+            android.util.Log.w("TranslationHelper", "ML Kit initialization failed", e)
+            cont.resume(false)
+        } catch (e: java.lang.RuntimeException) {
+            android.util.Log.w("TranslationHelper", "Runtime error initializing ML Kit", e)
             cont.resume(false)
         }
     }

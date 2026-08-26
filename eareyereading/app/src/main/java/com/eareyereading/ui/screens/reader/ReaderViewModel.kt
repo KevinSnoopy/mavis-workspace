@@ -1,3 +1,5 @@
+@file:Suppress("TooGenericExceptionCaught")
+
 package com.eareyereading.ui.screens.reader
 
 import androidx.compose.ui.graphics.Color
@@ -224,7 +226,8 @@ class ReaderViewModel @Inject constructor(
     private fun parseHighlightColor(hex: String): Color {
         return try {
             Color(android.graphics.Color.parseColor(hex))
-        } catch (_: Exception) {
+        } catch (e: java.lang.IllegalArgumentException) {
+            android.util.Log.w("ReaderViewModel", "Invalid color hex: ${hex}", e)
             Highlight
         }
     }
@@ -556,7 +559,11 @@ class ReaderViewModel @Inject constructor(
                     paragraphTranslations = translations,
                     isTranslating = false,
                 ) }
-            } catch (e: Exception) {
+            } catch (e: com.google.mlkit.common.MlKitException) {
+                android.util.Log.e("ReaderViewModel", "ML Kit translation failed", e)
+                _uiState.update { it.copy(isTranslating = false) }
+            } catch (e: java.lang.RuntimeException) {
+                android.util.Log.e("ReaderViewModel", "Translation failed", e)
                 _uiState.update { it.copy(isTranslating = false) }
             }
         }

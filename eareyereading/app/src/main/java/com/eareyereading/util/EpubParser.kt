@@ -1,3 +1,5 @@
+@file:Suppress("SwallowedException", "ReturnCount")
+
 package com.eareyereading.util
 
 import java.io.File
@@ -18,8 +20,11 @@ class EpubParser @Inject constructor() {
     fun parseBook(filePath: String): List<String> {
         return try {
             parseEpub(File(filePath))
-        } catch (e: Exception) {
-            // 如果文件不存在或解析失败，返回示例内容
+        } catch (e: java.io.IOException) {
+            android.util.Log.e("EpubParser", "Error reading EPUB file: ${filePath}", e)
+            getSampleParagraphs()
+        } catch (e: java.util.zip.ZipException) {
+            android.util.Log.e("EpubParser", "Invalid EPUB file: ${filePath}", e)
             getSampleParagraphs()
         }
     }

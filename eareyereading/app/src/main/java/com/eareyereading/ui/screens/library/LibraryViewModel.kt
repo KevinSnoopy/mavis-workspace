@@ -1,3 +1,5 @@
+@file:Suppress("SwallowedException", "TooGenericExceptionCaught")
+
 package com.eareyereading.ui.screens.library
 
 import android.content.Context
@@ -114,7 +116,10 @@ class LibraryViewModel @Inject constructor(
                         )
                     )
                 }
-            } catch (_: Exception) { /* DB may not have records yet */ }
+            } catch (e: java.lang.RuntimeException) {
+                // DB may not have records yet - use default stats
+                android.util.Log.d("LibraryViewModel", "Stats not available yet", e)
+            }
         }
     }
 
@@ -125,7 +130,7 @@ class LibraryViewModel @Inject constructor(
         val today = dateFormat.parse(todayStr) ?: return 0
 
         val dates = stats.mapNotNull { stat ->
-            try { dateFormat.parse(stat.date) } catch (_: Exception) { null }
+            try { dateFormat.parse(stat.date) } catch (_: java.text.ParseException) { null }
         }.distinct().sorted().reversed()
 
         var streak = 0
@@ -195,7 +200,9 @@ class LibraryViewModel @Inject constructor(
                 } else {
                     _uiState.update { it.copy(isLoading = false, loadingMessage = "抓取失败，请检查链接") }
                 }
-            } catch (e: Exception) {
+            } catch (e: java.io.IOException) {
+                _uiState.update { it.copy(isLoading = false, loadingMessage = "抓取失败: 网络错误") }
+            } catch (e: java.lang.RuntimeException) {
                 _uiState.update { it.copy(isLoading = false, loadingMessage = "抓取失败: ${e.message}") }
             }
         }
@@ -205,7 +212,7 @@ class LibraryViewModel @Inject constructor(
         return try {
             val u = java.net.URL(url)
             u.host.removePrefix("www.")
-        } catch (e: Exception) {
+        } catch (e: java.net.MalformedURLException) {
             "Web Article"
         }
     }
@@ -231,8 +238,12 @@ class LibraryViewModel @Inject constructor(
                     filePath = destFile.absolutePath,
                 )
                 bookRepository.addBook(book)
-            } catch (e: Exception) {
-                e.printStackTrace()
+            } catch (e: java.io.IOException) {
+                android.util.Log.e("LibraryViewModel", "Error importing book file", e)
+                _uiState.update { it.copy(loadingMessage = "导入失败: 文件读取错误") }
+            } catch (e: java.lang.SecurityException) {
+                android.util.Log.e("LibraryViewModel", "Security error importing book", e)
+                _uiState.update { it.copy(loadingMessage = "导入失败: 权限错误") }
             } finally {
                 _uiState.update { it.copy(isLoading = false, loadingMessage = "") }
             }
@@ -286,7 +297,12 @@ class LibraryViewModel @Inject constructor(
                         articlesError = "该源暂无文章，请稍后再试",
                     ) }
                 }
-            } catch (e: Exception) {
+            } catch (e: java.io.IOException) {
+                _uiState.update { it.copy(
+                    articlesLoading = false,
+                    articlesError = "加载失败: 网络错误",
+                ) }
+            } catch (e: java.lang.RuntimeException) {
                 _uiState.update { it.copy(
                     articlesLoading = false,
                     articlesError = "加载失败: ${e.message}",
@@ -345,7 +361,9 @@ class LibraryViewModel @Inject constructor(
                 } else {
                     _uiState.update { it.copy(isLoading = false, loadingMessage = "抓取失败，请重试") }
                 }
-            } catch (e: Exception) {
+            } catch (e: java.io.IOException) {
+                _uiState.update { it.copy(isLoading = false, loadingMessage = "导入失败: 网络错误") }
+            } catch (e: java.lang.RuntimeException) {
                 _uiState.update { it.copy(isLoading = false, loadingMessage = "导入失败: ${e.message}") }
             }
         }

@@ -1,3 +1,5 @@
+@file:Suppress("SwallowedException", "ReturnCount")
+
 package com.eareyereading.util
 
 import org.xmlpull.v1.XmlPullParser
@@ -59,8 +61,14 @@ class RssParser @Inject constructor() {
             val xml = conn.inputStream.bufferedReader().readText()
             conn.disconnect()
             parseXml(xml)
-        } catch (e: Exception) {
-            e.printStackTrace()
+        } catch (e: java.net.MalformedURLException) {
+            android.util.Log.e("RssParser", "Invalid RSS URL: ${urlStr}", e)
+            null
+        } catch (e: java.net.SocketTimeoutException) {
+            android.util.Log.e("RssParser", "Connection timeout for RSS feed: ${urlStr}", e)
+            null
+        } catch (e: java.io.IOException) {
+            android.util.Log.e("RssParser", "IO error fetching RSS feed: ${urlStr}", e)
             null
         }
     }
@@ -184,7 +192,7 @@ class RssParser @Inject constructor() {
     private fun parseDate(dateStr: String?): Long {
         if (dateStr.isNullOrBlank()) return System.currentTimeMillis()
         for (fmt in DATE_FORMATS) {
-            try { return fmt.parse(dateStr.replace("Z", "+0000"))?.time ?: 0L } catch (_: Exception) {}
+            try { return fmt.parse(dateStr.replace("Z", "+0000"))?.time ?: 0L } catch (_: java.text.ParseException) { /* try next format */ }
         }
         return System.currentTimeMillis()
     }
