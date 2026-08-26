@@ -1,13 +1,6 @@
 # Detekt configuration for EareyeReading Android project
 # Run: ./gradlew :app:detekt
 
-config:
-  validation: true
-  excludes:
-    - '**/build/**'
-    - '**/.gradle/**'
-    - '**/generated/**'
-
 build:
   maxIssues: 0
 
