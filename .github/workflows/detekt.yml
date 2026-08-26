@@ -5,6 +5,7 @@ on:
     branches: [eareyereading, main]
   pull_request:
     branches: [eareyereading, main]
+  workflow_dispatch:
 
 jobs:
   detekt:
@@ -18,15 +19,15 @@ jobs:
       - name: Setup Gradle
         uses: gradle/gradle-build-action@v2
       - name: Run Detekt
-        run: ./gradlew detekt --no-daemon
+        run: cd eareyereading && ./gradlew detekt --no-daemon
       - name: Upload SARIF
         uses: github/codeql-action/upload-sarif@v2
         if: always()
         with:
-          sarif_file: app/build/reports/detekt.sarif
+          sarif_file: eareyereading/app/build/reports/detekt.sarif
       - name: Upload HTML report
         uses: actions/upload-artifact@v4
         if: always()
         with:
           name: detekt-report
-          path: app/build/reports/detekt.html
+          path: eareyereading/app/build/reports/detekt.html
