@@ -112,10 +112,8 @@ dependencies {
 
 detekt {
     toolVersion = "1.23.4"
-    config.setFrom("$rootDir/detekt.yml")
     buildUponDefaultConfig = true
     allRules = false
-    disableDefaultRuleSets = false
     reports {
         html {
             required.set(true)
@@ -124,9 +122,6 @@ detekt {
         sarif {
             required.set(true)
             outputLocation.set(file("$projectDir/build/reports/detekt.sarif"))
-        }
-        txt {
-            required.set(false)
         }
     }
 }
