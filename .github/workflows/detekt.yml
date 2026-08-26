@@ -7,6 +7,11 @@ on:
     branches: [eareyereading, main]
   workflow_dispatch:
 
+permissions:
+  security-events: write
+  contents: read
+  actions: read
+
 jobs:
   detekt:
     runs-on: ubuntu-latest
@@ -23,13 +28,15 @@ jobs:
       - name: Run Detekt
         run: cd eareyereading && gradle :app:detekt --no-daemon
       - name: Upload SARIF
-        uses: github/codeql-action/upload-sarif@v2
-        if: success()
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
         with:
           sarif_file: eareyereading/app/build/reports/detekt.sarif
+          checkout_path: eareyereading
+          category: detekt
       - name: Upload HTML report
         uses: actions/upload-artifact@v4
-        if: success()
+        if: always()
         with:
           name: detekt-report
           path: eareyereading/app/build/reports/detekt.html
