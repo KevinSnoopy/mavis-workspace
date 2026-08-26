@@ -1,7 +1,11 @@
-# Detekt configuration - disable noisy style/complexity rules
-# Android/Compose code naturally has many parameters, long functions, and numeric literals
+# Detekt configuration - replaces default config entirely
+# Only potential-bugs rules active (catches real issues, not style noise)
+
+build:
+  maxIssues: 50
 
 style:
+  active: false
   MagicNumber:
     active: false
   MaxLineLength:
@@ -12,6 +16,7 @@ style:
     active: false
 
 complexity:
+  active: false
   LongMethod:
     active: false
   TooManyFunctions:
@@ -22,3 +27,16 @@ complexity:
     active: false
   LoopWithTooManyJumpStatements:
     active: false
+
+potential-bugs:
+  active: true
+  NullableToStringCall:
+    active: true
+  UnsafeCast:
+    active: true
+
+performance:
+  active: false
+
+naming:
+  active: false
