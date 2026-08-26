@@ -22,6 +22,8 @@ style:
     active: false
   UnusedImports:
     active: false
+  ReturnCount:
+    active: false
 
 complexity:
   active: false
@@ -30,8 +32,6 @@ complexity:
   TooManyFunctions:
     active: false
   LongParameterList:
-    active: false
-  ReturnCount:
     active: false
   NestedBlockDepth:
     active: false
