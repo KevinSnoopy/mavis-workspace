@@ -1,10 +1,9 @@
 # Detekt configuration - replaces default config (buildUponDefaultConfig=false)
-# Only enable rules that catch REAL bugs
+# Only potential-bugs rules enabled (catches real bugs)
 
 build:
   maxIssues: 0
 
-# Only potential-bugs and performance are truly important
 potential-bugs:
   active: true
   NullableToStringCall:
@@ -12,7 +11,7 @@ potential-bugs:
   UnsafeCast:
     active: true
 
-# All style/complexity rules disabled - too noisy for Android/Compose
+# All style/complexity rules disabled
 style:
   active: false
   MagicNumber:
@@ -23,8 +22,6 @@ style:
     active: false
   UnusedImports:
     active: false
-  FunctionNaming:
-    active: false
 
 complexity:
   active: false
@@ -32,17 +29,13 @@ complexity:
     active: false
   TooManyFunctions:
     active: false
-  ReturnCount:
-    active: false
   LongParameterList:
     active: false
-  LoopWithTooManyJumpStatements:
-    active: false
-  CyclomaticComplexMethod:
-    active: false
-  LargeClass:
+  ReturnCount:
     active: false
   NestedBlockDepth:
+    active: false
+  LargeClass:
     active: false
 
 performance:
@@ -50,14 +43,7 @@ performance:
 
 naming:
   active: false
+  FunctionNaming:
+    active: false
   MatchingDeclarationName:
-    active: false
-
-exceptions:
-  active: false
-  TooGenericExceptionCaught:
-    active: false
-  SwallowedException:
-    active: false
-  PrintStackTrace:
     active: false
