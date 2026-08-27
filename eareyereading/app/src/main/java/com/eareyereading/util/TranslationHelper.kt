@@ -1,4 +1,4 @@
-@file:Suppress("TooGenericExceptionCaught")
+@file:Suppress("TooGenericExceptionCaught", "UNCHECKED_CAST")
 
 package com.eareyereading.util
 
@@ -10,6 +10,7 @@ import com.google.mlkit.nl.translate.Translation
 import com.google.mlkit.nl.translate.TranslatorOptions
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.coroutines.resume
@@ -17,6 +18,7 @@ import kotlin.coroutines.resume
 /**
  * 翻译助手
  * 优先级：系统翻译(Android 14+) > ML Kit > 本地词典
+ * 懒加载，首次翻译时初始化
  */
 @Singleton
 class TranslationHelper @Inject constructor(
@@ -26,33 +28,41 @@ class TranslationHelper @Inject constructor(
     private var mlkitReady = false
     private var translationSession: android.speech.tts.TranslationSession? = null
     private var useSystemTranslation = false
+    private var initAttempted = false
 
-    suspend fun init(): Boolean {
+    // ── 懒加载初始化（线程安全）─────────────────────
+    private suspend fun ensureInitialized() {
+        if (initAttempted) return
+        initAttempted = true
+
+        // 优先尝试 Android 14 系统翻译
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            val ok = initSystemTranslation()
-            if (ok) { useSystemTranslation = true; return true }
+            val ok = initSystemTranslationSync()
+            if (ok) { useSystemTranslation = true; return }
         }
-        return initMlKit()
+
+        // 降级到 ML Kit（后台预加载模型）
+        initMlKitAsync()
     }
 
     // ── Android 14+ 系统翻译 ─────────────────────
-    private suspend fun initSystemTranslation(): Boolean = suspendCancellableCoroutine { cont ->
-        try {
-            translationSession = android.speech.tts.TranslationSessionManager.createSession(
+    private fun initSystemTranslationSync(): Boolean {
+        return try {
+            android.speech.tts.TranslationSessionManager.createSession(
                 context,
                 object : android.speech.tts.TranslationResultCallback() {
-                    override fun onTranslationResult(
-                        result: android.speech.tts.TranslationResult,
-                    ) {}
+                    // 仅用于初始化 session，不需要处理回调
                 }
-            )
-            cont.resume(true)
+            ).use { session ->
+                translationSession = session
+                true
+            }
         } catch (e: android.speech.tts.TranslationSessionException) {
-            android.util.Log.w("TranslationHelper", "System translation not available", e)
-            cont.resume(false)
+            android.util.Log.w("TranslationHelper", "System translation not available: ${e.message}")
+            false
         } catch (e: java.lang.RuntimeException) {
-            android.util.Log.w("TranslationHelper", "Runtime error initializing system translation", e)
-            cont.resume(false)
+            android.util.Log.w("TranslationHelper", "Runtime error initializing system translation: ${e.message}")
+            false
         }
     }
 
@@ -65,26 +75,26 @@ class TranslationHelper @Inject constructor(
                     .setText(text)
                     .build()
                 translationSession?.requestTranslation(
-                    request, android.os.CancellationSignal(),
+                    request,
+                    android.os.CancellationSignal(),
                     object : android.speech.tts.TranslationResultCallback() {
-                        override fun onTranslationResult(
-                            result: android.speech.tts.TranslationResult,
-                        ) {
+                        override fun onTranslationResult(result: android.speech.tts.TranslationResult) {
                             val zh = result.getTargetLocaleTranslation(
                                 android.speech.tts.TranslationVoice.LOCALE_ZH_CN
                             )?.translatedText ?: result.translatedText
                             cont.resume(zh)
                         }
                         override fun onError(errorCode: Int, errorMsg: CharSequence?) {
+                            android.util.Log.w("TranslationHelper", "System translation error: $errorCode $errorMsg")
                             cont.resume(lookupLocalDict(text))
                         }
                     }
                 )
             } catch (e: android.speech.tts.TranslationSessionException) {
-                android.util.Log.w("TranslationHelper", "Translation request failed", e)
+                android.util.Log.w("TranslationHelper", "Translation request failed: ${e.message}")
                 cont.resume(lookupLocalDict(text))
             } catch (e: java.lang.RuntimeException) {
-                android.util.Log.w("TranslationHelper", "Runtime error during translation", e)
+                android.util.Log.w("TranslationHelper", "Runtime error during translation: ${e.message}")
                 cont.resume(lookupLocalDict(text))
             }
         } else {
@@ -93,7 +103,8 @@ class TranslationHelper @Inject constructor(
     }
 
     // ── ML Kit（Google，依赖 GMS）────────────────
-    private suspend fun initMlKit(): Boolean = suspendCancellableCoroutine { cont ->
+    // 后台异步初始化，不阻塞首次翻译
+    private fun initMlKitAsync() {
         try {
             val options = TranslatorOptions.Builder()
                 .setSourceLanguage(TranslateLanguage.ENGLISH)
@@ -104,31 +115,39 @@ class TranslationHelper @Inject constructor(
                 DownloadConditions.Builder().build()
             )?.addOnSuccessListener {
                 mlkitReady = true
-                cont.resume(true)
-            }?.addOnFailureListener {
+                android.util.Log.d("TranslationHelper", "ML Kit model downloaded, ready")
+            }?.addOnFailureListener { e ->
+                android.util.Log.w("TranslationHelper", "ML Kit download failed: ${e.message}")
                 mlkitReady = false
-                cont.resume(false)
             }
         } catch (e: com.google.mlkit.common.MlKitException) {
-            android.util.Log.w("TranslationHelper", "ML Kit initialization failed", e)
-            cont.resume(false)
+            android.util.Log.w("TranslationHelper", "ML Kit init failed: ${e.message}")
         } catch (e: java.lang.RuntimeException) {
-            android.util.Log.w("TranslationHelper", "Runtime error initializing ML Kit", e)
-            cont.resume(false)
+            android.util.Log.w("TranslationHelper", "Runtime error initializing ML Kit: ${e.message}")
         }
     }
 
-    private suspend fun translateViaMlKit(text: String): String? = suspendCancellableCoroutine { cont ->
-        if (!mlkitReady) { cont.resume(lookupLocalDict(text)); return@suspendCancellableCoroutine }
-        mlkitTranslator?.translate(text)
-            ?.addOnSuccessListener { translated -> cont.resume(translated) }
-            ?.addOnFailureListener { cont.resume(lookupLocalDict(text)) }
-            ?: cont.resume(lookupLocalDict(text))
+    private suspend fun translateViaMlKit(text: String): String? {
+        // ML Kit 未就绪：触发异步初始化，直接查词典
+        if (!mlkitReady) {
+            android.util.Log.d("TranslationHelper", "ML Kit not ready yet, using dict fallback")
+            return lookupLocalDict(text)
+        }
+        return suspendCancellableCoroutine { cont ->
+            mlkitTranslator?.translate(text)
+                ?.addOnSuccessListener { translated -> cont.resume(translated) }
+                ?.addOnFailureListener {
+                    android.util.Log.w("TranslationHelper", "ML Kit translate failed: ${it.message}")
+                    cont.resume(lookupLocalDict(text))
+                }
+                ?: cont.resume(lookupLocalDict(text))
+        }
     }
 
     // ── 主入口 ───────────────────────────────────
     suspend fun translateEnToZh(text: String): String? {
         if (text.isBlank()) return null
+        ensureInitialized()  // 首次触发懒加载
         return if (useSystemTranslation) translateViaSystem(text)
                else translateViaMlKit(text)
     }
@@ -144,6 +163,7 @@ class TranslationHelper @Inject constructor(
 
     suspend fun translateWord(word: String): String? = translateEnToZh(word)
     suspend fun translateContext(sentence: String): String? = translateEnToZh(sentence)
+    suspend fun translateSentence(sentence: String): String? = translateEnToZh(sentence)
 
     // ── 本地词典（1000 高频词）───────────────────
     private fun lookupLocalDict(text: String): String? {
@@ -157,6 +177,7 @@ class TranslationHelper @Inject constructor(
         translationSession?.close()
         mlkitTranslator = null; translationSession = null
         mlkitReady = false; useSystemTranslation = false
+        initAttempted = false  // 允许重新初始化
     }
 
     private companion object {

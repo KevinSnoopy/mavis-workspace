@@ -20,6 +20,9 @@ class TtsHelper @Inject constructor(
     private var pendingLanguage: String? = null
     private var pendingContinuations = mutableListOf<kotlin.coroutines.Continuation<Boolean>>()
 
+    // 标记是否正在自动朗读句子链，防止 speak() 打断
+    private var isInSentenceChain = false
+
     suspend fun initialize(language: String = "en"): Boolean = suspendCancellableCoroutine { cont ->
         // 已初始化完成，直接返回
         if (isInitialized && tts != null) {
@@ -49,6 +52,7 @@ class TtsHelper @Inject constructor(
                     else -> Locale.US
                 }
                 tts?.language = currentLocale
+                tts?.setSpeechRate(1.0f)
             }
             // 唤醒所有等待的协程
             val pending = pendingContinuations.toList()
@@ -73,35 +77,54 @@ class TtsHelper @Inject constructor(
         tts?.setSpeechRate(speed)
     }
 
+    /**
+     * 朗读一段文字
+     * 注意：自动朗读句子链进行中时，此方法会打断并停止朗读
+     */
     fun speak(text: String, onComplete: (() -> Unit)? = null) {
-        if (!isInitialized) return
+        // 先停止自动朗读链
+        stop()
 
-        tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+        if (!isInitialized) {
+            // TTS 未就绪，立即回调，防止 UI 永久等待
+            onComplete?.invoke()
+            return
+        }
+
+        val listener = object : UtteranceProgressListener() {
             override fun onStart(utteranceId: String?) {}
-            override fun onDone(utteranceId: String?) { onComplete?.invoke() }
-            override fun onError(utteranceId: String?) {}
-        })
-
+            override fun onDone(utteranceId: String?) {
+                onComplete?.invoke()
+            }
+            override fun onError(utteranceId: String?) {
+                onComplete?.invoke()
+            }
+        }
+        tts?.setOnUtteranceProgressListener(listener)
         tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "utterance_${System.currentTimeMillis()}")
     }
 
     /**
      * 逐句朗读 — 每个句子完成时触发 onSentenceDone
+     * 朗读链进行中时不可被打断
      */
     fun speakSentences(sentences: List<String>, onSentenceDone: (Int) -> Unit, onAllDone: () -> Unit) {
         if (!isInitialized || sentences.isEmpty()) {
             onAllDone()
             return
         }
+
+        isInSentenceChain = true
         var index = 0
 
         fun speakNext() {
             if (index >= sentences.size) {
+                isInSentenceChain = false
                 onAllDone()
                 return
             }
             val sentence = sentences[index]
-            tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+            val listener = object : UtteranceProgressListener() {
                 override fun onStart(utteranceId: String?) {}
                 override fun onDone(utteranceId: String?) {
                     onSentenceDone(index)
@@ -109,24 +132,34 @@ class TtsHelper @Inject constructor(
                     speakNext()
                 }
                 override fun onError(utteranceId: String?) {
+                    android.util.Log.w("TtsHelper", "TTS error on sentence $index, skipping")
                     index++
                     speakNext()
                 }
-            })
+            }
+            tts?.setOnUtteranceProgressListener(listener)
             tts?.speak(sentence, TextToSpeech.QUEUE_FLUSH, null, "sentence_$index")
         }
+
         speakNext()
     }
 
     fun stop() {
+        isInSentenceChain = false
         tts?.stop()
     }
 
     fun pause() {
-        tts?.stop()
+        stop()
     }
 
+    /**
+     * 是否正在自动朗读句子链
+     */
+    fun isInSentenceChain(): Boolean = isInSentenceChain
+
     fun shutdown() {
+        isInSentenceChain = false
         tts?.stop()
         tts?.shutdown()
         tts = null
