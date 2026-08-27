@@ -26,13 +26,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.eareyereading.domain.model.ArticleSource
 import com.eareyereading.domain.model.Book
 import com.eareyereading.util.RssParser
-import com.eareyereading.ui.theme.KnownWord
-import com.eareyereading.ui.theme.NewWord
-import com.eareyereading.ui.theme.Primary
-import com.eareyereading.ui.theme.Secondary
-import com.eareyereading.ui.theme.Success
-import java.text.SimpleDateFormat
-import java.util.*
+import com.eareyereading.ui.theme.*
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -57,70 +51,37 @@ fun LibraryScreen(
             TopAppBar(
                 title = {
                     Column {
-                        Text("📖 听阅", fontWeight = FontWeight.Bold)
                         Text(
-                            "生词 ${uiState.learnedWordCount}/${uiState.totalWordCount}",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            "书库",
+                            style = MaterialTheme.typography.headlineLarge,
+                            fontWeight = FontWeight.Bold,
                         )
                     }
                 },
                 actions = {
-                    // 复习按钮
-                    FilledTonalButton(
-                        onClick = onNavigateToReview,
-                        colors = ButtonDefaults.filledTonalButtonColors(
-                            containerColor = Secondary.copy(alpha = 0.15f),
-                            contentColor = Secondary,
-                        ),
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
-                        modifier = Modifier.height(36.dp),
-                    ) {
-                        Icon(Icons.Default.School, null, modifier = Modifier.size(18.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(
-                            if (uiState.dueReviewCount > 0) "复习 ${uiState.dueReviewCount}"
-                            else "复习",
-                            style = MaterialTheme.typography.labelMedium,
-                        )
-                    }
-                    Spacer(modifier = Modifier.width(4.dp))
-                    IconButton(onClick = onNavigateToVocabulary) {
-                        Icon(Icons.Default.MenuBook, contentDescription = "生词本")
-                    }
                     IconButton(onClick = onNavigateToSettings) {
-                        Icon(Icons.Default.Settings, contentDescription = "设置")
+                        Icon(Icons.Default.Settings, "设置", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface,
+                    containerColor = MaterialTheme.colorScheme.background,
                 ),
             )
         },
         floatingActionButton = {
-            Column(horizontalAlignment = Alignment.End) {
-                // 小按钮：URL 导入
-                SmallFloatingActionButton(
-                    onClick = viewModel::showUrlDialog,
-                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                ) {
-                    Icon(Icons.Default.Link, "导入网址", tint = MaterialTheme.colorScheme.onSecondaryContainer)
-                }
-                Spacer(modifier = Modifier.height(12.dp))
-                // 主按钮：文件导入
-                ExtendedFloatingActionButton(
-                    onClick = { filePicker.launch(arrayOf("application/epub+zip", "text/plain", "*/*")) },
-                    icon = { Icon(Icons.Default.Add, "导入") },
-                    text = { Text("导入书籍") },
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    contentColor = MaterialTheme.colorScheme.onPrimary,
-                )
-            }
+            ExtendedFloatingActionButton(
+                onClick = { filePicker.launch(arrayOf("application/epub+zip", "text/plain", "*/*")) },
+                icon = { Icon(Icons.Default.Add, "导入") },
+                text = { Text("导入书籍") },
+                containerColor = MaterialTheme.colorScheme.primary,
+                contentColor = MaterialTheme.colorScheme.onPrimary,
+            )
         },
     ) { padding ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .background(MaterialTheme.colorScheme.background)
                 .padding(padding),
         ) {
             // 搜索栏
@@ -129,42 +90,60 @@ fun LibraryScreen(
                 onValueChange = viewModel::onSearchQueryChange,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
-                placeholder = { Text("搜索书籍...") },
-                leadingIcon = { Icon(Icons.Default.Search, null) },
+                    .padding(horizontal = 24.dp, vertical = 8.dp),
+                placeholder = {
+                    Text("搜索书籍...", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                },
+                leadingIcon = {
+                    Icon(
+                        Icons.Default.Search,
+                        null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(20.dp),
+                    )
+                },
                 trailingIcon = {
                     if (uiState.searchQuery.isNotEmpty()) {
                         IconButton(onClick = { viewModel.onSearchQueryChange("") }) {
-                            Icon(Icons.Default.Clear, "清除")
+                            Icon(Icons.Default.Clear, "清除", modifier = Modifier.size(18.dp))
                         }
                     }
                 },
                 singleLine = true,
                 shape = RoundedCornerShape(12.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedContainerColor = MaterialTheme.colorScheme.surface,
+                    unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
+                    focusedBorderColor = Color.Transparent,
+                    unfocusedBorderColor = Color.Transparent,
+                ),
             )
 
-            // Tab 切换
+            // Tab 切换 - Apple 风格 pill tabs
             TabRow(
                 selectedTabIndex = uiState.selectedTab,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                modifier = Modifier.padding(horizontal = 24.dp),
                 indicator = {},
                 divider = {},
+                containerColor = Color.Transparent,
             ) {
                 Tab(
                     selected = uiState.selectedTab == 0,
                     onClick = { viewModel.setTab(0) },
-                    text = { Text("📚 书库") },
-                    selectedContentColor = Primary,
+                    text = { Text("书籍") },
+                    selectedContentColor = MaterialTheme.colorScheme.primary,
                     unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Tab(
                     selected = uiState.selectedTab == 1,
                     onClick = { viewModel.setTab(1) },
-                    text = { Text("📰 文章") },
-                    selectedContentColor = Primary,
+                    text = { Text("文章") },
+                    selectedContentColor = MaterialTheme.colorScheme.primary,
                     unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
+
+            Spacer(modifier = Modifier.height(16.dp))
 
             if (uiState.selectedTab == 0) {
                 // 今日阅读统计面板
@@ -172,8 +151,8 @@ fun LibraryScreen(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        .padding(horizontal = 24.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     StatCard(
                         icon = Icons.Default.Timer,
@@ -186,22 +165,33 @@ fun LibraryScreen(
                         icon = Icons.Default.LocalFireDepartment,
                         value = "${stats.streakDays}",
                         label = "连续打卡(天)",
-                        color = Secondary,
+                        color = Color(0xFFFF6B35),
                         modifier = Modifier.weight(1f),
                     )
                     StatCard(
                         icon = Icons.Default.MenuBook,
                         value = "${stats.totalBooks}",
                         label = "累计书籍",
-                        color = Success,
+                        color = Accent,
                         modifier = Modifier.weight(1f),
                     )
                 }
 
+                Spacer(modifier = Modifier.height(24.dp))
+
+                // Section header
+                Text(
+                    "我的书籍",
+                    style = SectionTitle,
+                    modifier = Modifier.padding(horizontal = 24.dp),
+                )
+
+                Spacer(modifier = Modifier.height(14.dp))
+
                 if (uiState.isLoading) {
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            CircularProgressIndicator()
+                            CircularProgressIndicator(color = Primary)
                             if (uiState.loadingMessage.isNotBlank()) {
                                 Spacer(modifier = Modifier.height(12.dp))
                                 Text(uiState.loadingMessage, style = MaterialTheme.typography.bodyMedium)
@@ -209,12 +199,15 @@ fun LibraryScreen(
                         }
                     }
                 } else if (uiState.books.isEmpty()) {
-                    EmptyLibrary(onImport = { filePicker.launch(arrayOf("application/epub+zip", "text/plain", "*/*")) })
+                    EmptyLibrary(
+                        onImport = { filePicker.launch(arrayOf("application/epub+zip", "text/plain", "*/*")) },
+                        onUrlImport = viewModel::showUrlDialog,
+                    )
                 } else {
                     LazyColumn(
                         modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                        contentPadding = PaddingValues(horizontal = 24.dp, vertical = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(14.dp),
                     ) {
                         items(uiState.books, key = { it.id }) { book ->
                             BookCard(
@@ -249,7 +242,11 @@ fun LibraryScreen(
             title = { Text("🌐 导入网址文章") },
             text = {
                 Column {
-                    Text("输入英文文章网址，自动抓取正文", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        "输入英文文章网址，自动抓取正文",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                     Spacer(modifier = Modifier.height(12.dp))
                     OutlinedTextField(
                         value = uiState.urlInput,
@@ -289,26 +286,27 @@ fun BookCard(
             .fillMaxWidth()
             .clickable(onClick = onClick),
         shape = RoundedCornerShape(16.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.5.dp),
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(16.dp),
+                .padding(18.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             // 封面占位
             Box(
                 modifier = Modifier
-                    .size(72.dp, 96.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(MaterialTheme.colorScheme.primaryContainer),
+                    .size(60.dp, 80.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(Color(0xFF2D3748)),
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
                     text = book.title.take(2).uppercase(),
-                    style = MaterialTheme.typography.headlineSmall,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = Color.White,
                     fontWeight = FontWeight.Bold,
                 )
             }
@@ -329,7 +327,7 @@ fun BookCard(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(12.dp))
 
                 // 进度条
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -339,19 +337,20 @@ fun BookCard(
                             .weight(1f)
                             .height(4.dp)
                             .clip(RoundedCornerShape(2.dp)),
-                        color = KnownWord,
+                        color = Accent,
                         trackColor = MaterialTheme.colorScheme.surfaceVariant,
                     )
-                    Spacer(modifier = Modifier.width(8.dp))
+                    Spacer(modifier = Modifier.width(10.dp))
                     Text(
                         text = "${(book.readProgress * 100).toInt()}%",
                         style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = Primary,
+                        fontWeight = FontWeight.Medium,
                     )
                 }
 
                 if (book.totalWords > 0) {
-                    Spacer(modifier = Modifier.height(4.dp))
+                    Spacer(modifier = Modifier.height(6.dp))
                     Text(
                         text = "${book.totalWords} 词",
                         style = MaterialTheme.typography.labelSmall,
@@ -362,7 +361,11 @@ fun BookCard(
 
             Box {
                 IconButton(onClick = { showMenu = true }) {
-                    Icon(Icons.Default.MoreVert, "更多")
+                    Icon(
+                        Icons.Default.MoreVert,
+                        "更多",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
                 DropdownMenu(
                     expanded = showMenu,
@@ -385,16 +388,19 @@ fun BookCard(
 }
 
 @Composable
-fun EmptyLibrary(onImport: () -> Unit) {
+fun EmptyLibrary(
+    onImport: () -> Unit,
+    onUrlImport: () -> Unit,
+) {
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(32.dp),
+            .padding(40.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
         Text("📚", style = MaterialTheme.typography.displayLarge)
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(20.dp))
         Text(
             "书架为空",
             style = MaterialTheme.typography.titleLarge,
@@ -406,16 +412,27 @@ fun EmptyLibrary(onImport: () -> Unit) {
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        Spacer(modifier = Modifier.height(24.dp))
-        FilledTonalButton(onClick = onImport) {
-            Icon(Icons.Default.Add, null)
+        Spacer(modifier = Modifier.height(28.dp))
+        Button(
+            onClick = onImport,
+            colors = ButtonDefaults.buttonColors(containerColor = Primary),
+            shape = RoundedCornerShape(12.dp),
+            contentPadding = PaddingValues(horizontal = 24.dp, vertical = 14.dp),
+        ) {
+            Icon(Icons.Default.Add, null, modifier = Modifier.size(18.dp))
             Spacer(modifier = Modifier.width(8.dp))
-            Text("导入书籍")
+            Text("导入书籍", fontWeight = FontWeight.SemiBold)
+        }
+        Spacer(modifier = Modifier.height(12.dp))
+        TextButton(onClick = onUrlImport) {
+            Icon(Icons.Default.Link, null, modifier = Modifier.size(16.dp))
+            Spacer(modifier = Modifier.width(4.dp))
+            Text("从网址导入")
         }
     }
 }
 
-// ── 统计卡片组件 ────────────────────────────────
+// ── 统计卡片组件 ──────────────────────────────────
 @Composable
 private fun StatCard(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
@@ -426,18 +443,18 @@ private fun StatCard(
 ) {
     Surface(
         modifier = modifier,
-        shape = RoundedCornerShape(12.dp),
+        shape = RoundedCornerShape(14.dp),
         color = color.copy(alpha = 0.1f),
     ) {
         Column(
-            modifier = Modifier.padding(12.dp),
+            modifier = Modifier.padding(14.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Icon(icon, label, tint = color, modifier = Modifier.size(20.dp))
-            Spacer(modifier = Modifier.height(4.dp))
+            Icon(icon, label, tint = color, modifier = Modifier.size(22.dp))
+            Spacer(modifier = Modifier.height(6.dp))
             Text(
                 text = value,
-                style = MaterialTheme.typography.titleMedium,
+                style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold,
                 color = color,
             )
@@ -469,7 +486,7 @@ fun ArticleSquareScreen(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                    .padding(horizontal = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 IconButton(onClick = onBackFromSource) {
@@ -482,13 +499,15 @@ fun ArticleSquareScreen(
                 )
             }
 
+            Spacer(modifier = Modifier.height(8.dp))
+
             when {
                 articlesLoading -> Box(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center,
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        CircularProgressIndicator()
+                        CircularProgressIndicator(color = Primary)
                         Spacer(modifier = Modifier.height(12.dp))
                         Text("正在加载文章...", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
@@ -498,7 +517,12 @@ fun ArticleSquareScreen(
                     contentAlignment = Alignment.Center,
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(Icons.Default.CloudOff, null, modifier = Modifier.size(48.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Icon(
+                            Icons.Default.CloudOff,
+                            null,
+                            modifier = Modifier.size(48.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(articlesError, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Spacer(modifier = Modifier.height(12.dp))
@@ -513,46 +537,59 @@ fun ArticleSquareScreen(
                 ) {
                     Text("该源暂无文章", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                else -> LazyColumn(
-                    contentPadding = PaddingValues(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    items(articles, key = { it.link + it.title }) { article ->
-                        ArticleItemCard(
-                            article = article,
-                            sourceName = selectedSource.name,
-                            onAdd = { onAddArticle(article) },
-                        )
+                else -> {
+                    Text(
+                        "文章列表",
+                        style = SectionTitle,
+                        modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
+                    )
+                    LazyColumn(
+                        contentPadding = PaddingValues(horizontal = 24.dp, vertical = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(14.dp),
+                    ) {
+                        items(articles, key = { it.link + it.title }) { article ->
+                            ArticleItemCard(
+                                article = article,
+                                sourceName = selectedSource.name,
+                                onAdd = { onAddArticle(article) },
+                            )
+                        }
+                        item { Spacer(modifier = Modifier.height(80.dp)) }
                     }
-                    item { Spacer(modifier = Modifier.height(80.dp)) }
                 }
             }
         }
     } else {
         // 来源列表
-        LazyColumn(
-            contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            // 按分类分组
-            val grouped = sources.groupBy { it.category }
-            grouped.forEach { (category, srcs) ->
-                item {
-                    Text(
-                        text = "${category.emoji} ${category.label}",
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(vertical = 4.dp),
-                    )
+        Column {
+            Text(
+                "订阅源",
+                style = SectionTitle,
+                modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
+            )
+            LazyColumn(
+                contentPadding = PaddingValues(horizontal = 24.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+            ) {
+                val grouped = sources.groupBy { it.category }
+                grouped.forEach { (category, srcs) ->
+                    item {
+                        Text(
+                            text = "${category.emoji} ${category.label}",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(vertical = 4.dp),
+                        )
+                    }
+                    items(srcs, key = { it.id }) { source ->
+                        ArticleSourceCard(
+                            source = source,
+                            onClick = { onSourceClick(source) },
+                        )
+                    }
                 }
-                items(srcs, key = { it.id }) { source ->
-                    ArticleSourceCard(
-                        source = source,
-                        onClick = { onSourceClick(source) },
-                    )
-                }
+                item { Spacer(modifier = Modifier.height(80.dp)) }
             }
-            item { Spacer(modifier = Modifier.height(80.dp)) }
         }
     }
 }
@@ -566,14 +603,16 @@ fun ArticleSourceCard(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick),
-        shape = RoundedCornerShape(12.dp),
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.5.dp),
     ) {
         Row(
-            modifier = Modifier.padding(16.dp),
+            modifier = Modifier.padding(18.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Surface(
-                shape = RoundedCornerShape(10.dp),
+                shape = RoundedCornerShape(12.dp),
                 color = Color(source.color).copy(alpha = 0.15f),
                 modifier = Modifier.size(48.dp),
             ) {
@@ -584,14 +623,15 @@ fun ArticleSourceCard(
                     )
                 }
             }
-            Spacer(modifier = Modifier.width(14.dp))
+            Spacer(modifier = Modifier.width(16.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = source.name,
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Bold,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
                 )
                 if (!source.description.isNullOrBlank()) {
+                    Spacer(modifier = Modifier.height(2.dp))
                     Text(
                         text = source.description,
                         style = MaterialTheme.typography.bodySmall,
@@ -600,23 +640,27 @@ fun ArticleSourceCard(
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
-                Spacer(modifier = Modifier.height(4.dp))
+                Spacer(modifier = Modifier.height(8.dp))
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     DifficultyChip(source.difficulty)
                     Surface(
-                        shape = RoundedCornerShape(4.dp),
+                        shape = RoundedCornerShape(6.dp),
                         color = Primary.copy(alpha = 0.1f),
                     ) {
                         Text(
                             text = if (source.isRss) "📡 RSS" else "🌐 Web",
                             style = MaterialTheme.typography.labelSmall,
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
                             color = Primary,
                         )
                     }
                 }
             }
-            Icon(Icons.Default.ChevronRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            Icon(
+                Icons.Default.ChevronRight,
+                null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }
@@ -631,14 +675,17 @@ fun ArticleItemCard(
 
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp),
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.5.dp),
     ) {
-        Column(modifier = Modifier.padding(14.dp)) {
+        Column(modifier = Modifier.padding(18.dp)) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(
                     text = sourceName,
                     style = MaterialTheme.typography.labelSmall,
                     color = Primary,
+                    fontWeight = FontWeight.Medium,
                 )
                 if (article.pubDate != null) {
                     Text(
@@ -648,11 +695,11 @@ fun ArticleItemCard(
                     )
                 }
             }
-            Spacer(modifier = Modifier.height(6.dp))
+            Spacer(modifier = Modifier.height(8.dp))
             Text(
                 text = article.title,
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.Bold,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -662,38 +709,37 @@ fun ArticleItemCard(
                     text = article.description,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 3,
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-            Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.height(12.dp))
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                 if (added) {
                     AssistChip(
                         onClick = {},
                         label = { Text("已添加", style = MaterialTheme.typography.labelSmall) },
-                        leadingIcon = { Icon(Icons.Default.Check, null, modifier = Modifier.size(14.dp)) },
+                        leadingIcon = {
+                            Icon(Icons.Default.Check, null, modifier = Modifier.size(14.dp))
+                        },
                         colors = AssistChipDefaults.assistChipColors(
-                            containerColor = Success.copy(alpha = 0.15f),
-                            labelColor = Success,
+                            containerColor = Accent.copy(alpha = 0.15f),
+                            labelColor = Accent,
                         ),
                     )
                 } else {
-                    FilledTonalButton(
+                    Button(
                         onClick = {
                             onAdd()
                             added = true
                         },
-                        colors = ButtonDefaults.filledTonalButtonColors(
-                            containerColor = Primary.copy(alpha = 0.15f),
-                            contentColor = Primary,
-                        ),
-                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 0.dp),
-                        modifier = Modifier.height(32.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Primary),
+                        shape = RoundedCornerShape(10.dp),
+                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
                     ) {
                         Icon(Icons.Default.Add, null, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("加入书库", style = MaterialTheme.typography.labelMedium)
+                        Text("加入书库", fontWeight = FontWeight.Medium)
                     }
                 }
             }
@@ -704,18 +750,18 @@ fun ArticleItemCard(
 @Composable
 fun DifficultyChip(level: Int) {
     val (color, label) = when (level) {
-        1 -> Success to "⭐ 入门"
-        2 -> Success to "⭐⭐ 简单"
-        3 -> Secondary to "⭐⭐⭐ 中等"
+        1 -> Accent to "⭐ 入门"
+        2 -> Accent to "⭐⭐ 简单"
+        3 -> Color(0xFFFF6B35) to "⭐⭐⭐ 中等"
         4 -> Color(0xFFFF9800) to "⭐⭐⭐⭐ 较难"
-        else -> Color(0xFFE53935) to "⭐⭐⭐⭐⭐ 困难"
+        else -> Error to "⭐⭐⭐⭐⭐ 困难"
     }
-    Surface(shape = RoundedCornerShape(4.dp), color = color.copy(alpha = 0.12f)) {
+    Surface(shape = RoundedCornerShape(6.dp), color = color.copy(alpha = 0.12f)) {
         Text(
             text = label,
             style = MaterialTheme.typography.labelSmall,
             color = color,
-            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
         )
     }
 }

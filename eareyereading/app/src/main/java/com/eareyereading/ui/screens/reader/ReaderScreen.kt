@@ -950,10 +950,10 @@ fun PosAnalysisView(
 ) {
     // POS 颜色映射
     fun posColor(tag: PosTag): Color = when (tag) {
-        PosTag.NOUN -> Color(0xFF5B7FFF)      // 蓝 - 名词
-        PosTag.VERB -> Color(0xFFE91E63)     // 粉 - 动词
-        PosTag.ADJECTIVE -> Color(0xFFFF9800) // 橙 - 形容词
-        PosTag.ADVERB -> Color(0xFF9C27B0)   // 紫 - 副词
+        PosTag.NOUN -> Color(0xFF007AFF)      // 蓝 - 名词
+        PosTag.VERB -> Color(0xFFFF3B30)     // 红 - 动词
+        PosTag.ADJECTIVE -> Color(0xFFFF9500) // 橙 - 形容词
+        PosTag.ADVERB -> Color(0xFF5856D6)   // 紫 - 副词
         else -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.85f)
     }
 
@@ -1009,10 +1009,10 @@ fun PosAnalysisView(
                 .padding(horizontal = 4.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            PosLegendItem("蓝色", Color(0xFF5B7FFF), "名词")
-            PosLegendItem("粉色", Color(0xFFE91E63), "动词")
-            PosLegendItem("橙色", Color(0xFFFF9800), "形容词")
-            PosLegendItem("紫色", Color(0xFF9C27B0), "副词")
+            PosLegendItem("蓝色", Color(0xFF007AFF), "名词")
+            PosLegendItem("红色", Color(0xFFFF3B30), "动词")
+            PosLegendItem("橙色", Color(0xFFFF9500), "形容词")
+            PosLegendItem("紫色", Color(0xFF5856D6), "副词")
         }
     }
 }

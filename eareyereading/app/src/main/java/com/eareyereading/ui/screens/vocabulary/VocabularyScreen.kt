@@ -1,5 +1,6 @@
 package com.eareyereading.ui.screens.vocabulary
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -12,14 +13,21 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.eareyereading.domain.model.Vocabulary
-import com.eareyereading.ui.theme.KnownWord
-import com.eareyereading.ui.theme.NewWord
-import com.eareyereading.ui.theme.Primary
+import com.eareyereading.ui.theme.*
+
+private val levelColors = listOf(
+    Color(0xFFFF3B30),
+    Color(0xFFFF9500),
+    Color(0xFFFFCC00),
+    Color(0xFF34C759),
+    Color(0xFF007AFF),
+)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -33,25 +41,27 @@ fun VocabularyScreen(
         topBar = {
             TopAppBar(
                 title = {
-                    Column {
-                        Text("生词本", fontWeight = FontWeight.Bold)
-                        Text(
-                            "${uiState.learnedCount}/${uiState.totalCount} 已掌握",
-                            style = MaterialTheme.typography.labelSmall,
-                        )
-                    }
+                    Text(
+                        "词汇本",
+                        style = MaterialTheme.typography.headlineLarge,
+                        fontWeight = FontWeight.Bold,
+                    )
                 },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回")
                     }
                 },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.background,
+                ),
             )
         },
     ) { padding ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .background(MaterialTheme.colorScheme.background)
                 .padding(padding),
         ) {
             // 搜索
@@ -60,31 +70,124 @@ fun VocabularyScreen(
                 onValueChange = viewModel::onSearch,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
-                placeholder = { Text("搜索单词...") },
-                leadingIcon = { Icon(Icons.Default.Search, null) },
+                    .padding(horizontal = 24.dp, vertical = 8.dp),
+                placeholder = {
+                    Text("搜索单词...", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                },
+                leadingIcon = {
+                    Icon(
+                        Icons.Default.Search,
+                        null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(20.dp),
+                    )
+                },
                 singleLine = true,
                 shape = RoundedCornerShape(12.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedContainerColor = MaterialTheme.colorScheme.surface,
+                    unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
+                    focusedBorderColor = Color.Transparent,
+                    unfocusedBorderColor = Color.Transparent,
+                ),
             )
 
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // 统计概览
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 24.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                StatMiniCard(
+                    value = "${uiState.learnedCount}",
+                    label = "已掌握",
+                    color = Accent,
+                    modifier = Modifier.weight(1f),
+                )
+                StatMiniCard(
+                    value = "${uiState.totalCount - uiState.learnedCount}",
+                    label = "学习中",
+                    color = Color(0xFFFF9500),
+                    modifier = Modifier.weight(1f),
+                )
+            }
+
+            Spacer(modifier = Modifier.height(20.dp))
+
+            // 难度分布
+            Text(
+                "难度分布",
+                style = SectionTitle,
+                modifier = Modifier.padding(horizontal = 24.dp),
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 24.dp),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+            ) {
+                for (i in 1..5) {
+                    val count = uiState.filteredWords.count { it.level == i }
+                    LevelChip(level = i, count = count)
+                }
+            }
+
+            Spacer(modifier = Modifier.height(20.dp))
+
             // Tab
-            TabRow(selectedTabIndex = uiState.selectedTab) {
+            TabRow(
+                selectedTabIndex = uiState.selectedTab,
+                modifier = Modifier.padding(horizontal = 24.dp),
+                indicator = {},
+                divider = {},
+                containerColor = Color.Transparent,
+            ) {
                 Tab(
                     selected = uiState.selectedTab == 0,
                     onClick = { viewModel.setTab(0) },
-                    text = { Text("全部 (${uiState.totalCount})") },
+                    text = { Text("全部") },
+                    selectedContentColor = Primary,
+                    unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Tab(
                     selected = uiState.selectedTab == 1,
                     onClick = { viewModel.setTab(1) },
-                    text = { Text("新词 (${uiState.totalCount - uiState.learnedCount})") },
+                    text = { Text("新词") },
+                    selectedContentColor = Primary,
+                    unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Tab(
                     selected = uiState.selectedTab == 2,
                     onClick = { viewModel.setTab(2) },
-                    text = { Text("已学 (${uiState.learnedCount})") },
+                    text = { Text("已学") },
+                    selectedContentColor = Primary,
+                    unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // 单词列表 header
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 24.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("单词列表", style = SectionTitle)
+                Text(
+                    "${uiState.filteredWords.size}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
 
             val displayed = when (uiState.selectedTab) {
                 1 -> uiState.filteredWords.filter { !it.isLearned }
@@ -93,10 +196,13 @@ fun VocabularyScreen(
             }
 
             if (displayed.isEmpty()) {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center,
+                ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text("📝", style = MaterialTheme.typography.displayMedium)
-                        Spacer(modifier = Modifier.height(8.dp))
+                        Text("📝", style = MaterialTheme.typography.displayLarge)
+                        Spacer(modifier = Modifier.height(12.dp))
                         Text(
                             when (uiState.selectedTab) {
                                 1 -> "暂无新词，继续阅读积累吧"
@@ -110,8 +216,8 @@ fun VocabularyScreen(
             } else {
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    contentPadding = PaddingValues(horizontal = 24.dp, vertical = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
                 ) {
                     items(displayed, key = { it.id }) { word ->
                         WordCard(
@@ -122,9 +228,68 @@ fun VocabularyScreen(
                             onEditNote = { note, example -> viewModel.updateNote(word, note, example) },
                         )
                     }
+                    item { Spacer(modifier = Modifier.height(24.dp)) }
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun StatMiniCard(
+    value: String,
+    label: String,
+    color: Color,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(14.dp),
+        color = color.copy(alpha = 0.1f),
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text(
+                text = value,
+                style = MaterialTheme.typography.headlineMedium,
+                fontWeight = FontWeight.Bold,
+                color = color,
+            )
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
+private fun LevelChip(level: Int, count: Int) {
+    val color = levelColors.getOrElse(level - 1) { Color.Gray }
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Surface(
+            modifier = Modifier.size(48.dp),
+            shape = RoundedCornerShape(12.dp),
+            color = color.copy(alpha = 0.1f),
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Text(
+                    "L$level",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = color,
+                )
+            }
+        }
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            "$count",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 
@@ -180,53 +345,80 @@ fun WordCard(
         )
     }
 
+    val levelColor = levelColors.getOrElse(vocabulary.level - 1) { Color.Gray }
+    val cardBgColor = if (vocabulary.isLearned) Accent.copy(alpha = 0.06f) else levelColor.copy(alpha = 0.06f)
+
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .clickable { expanded = !expanded },
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = if (vocabulary.isLearned)
-                KnownWord.copy(alpha = 0.08f)
-            else
-                NewWord.copy(alpha = 0.08f),
-        ),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = cardBgColor),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.5.dp),
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
+        Column(modifier = Modifier.padding(18.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = vocabulary.word,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                    )
-                    if (!vocabulary.phonetic.isNullOrBlank()) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    // 难度徽章
+                    Surface(
+                        modifier = Modifier.size(42.dp),
+                        shape = RoundedCornerShape(10.dp),
+                        color = levelColor.copy(alpha = 0.15f),
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Text(
+                                "L${vocabulary.level}",
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.Bold,
+                                color = levelColor,
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.width(14.dp))
+                    Column {
                         Text(
-                            text = vocabulary.phonetic,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontStyle = FontStyle.Italic,
+                            text = vocabulary.word,
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.SemiBold,
                         )
+                        if (!vocabulary.phonetic.isNullOrBlank()) {
+                            Text(
+                                text = vocabulary.phonetic,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontStyle = FontStyle.Italic,
+                            )
+                        }
                     }
                 }
                 if (vocabulary.isLearned) {
                     AssistChip(
                         onClick = {},
-                        label = { Text("已掌握") },
-                        leadingIcon = { Icon(Icons.Default.CheckCircle, null, modifier = Modifier.size(16.dp)) },
+                        label = { Text("✓ 已掌握", style = MaterialTheme.typography.labelSmall) },
+                        leadingIcon = {
+                            Icon(
+                                Icons.Default.CheckCircle,
+                                null,
+                                modifier = Modifier.size(14.dp),
+                            )
+                        },
                         colors = AssistChipDefaults.assistChipColors(
-                            containerColor = KnownWord.copy(alpha = 0.2f),
+                            containerColor = Accent.copy(alpha = 0.15f),
+                            labelColor = Accent,
                         ),
                     )
                 }
             }
 
             if (!vocabulary.definition.isNullOrBlank()) {
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(10.dp))
                 Text(
                     text = vocabulary.definition,
                     style = MaterialTheme.typography.bodyMedium,
@@ -246,18 +438,19 @@ fun WordCard(
 
             // 用户笔记
             if (!vocabulary.note.isNullOrBlank()) {
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(10.dp))
                 Surface(
-                    shape = RoundedCornerShape(8.dp),
+                    shape = RoundedCornerShape(10.dp),
                     color = Primary.copy(alpha = 0.08f),
                 ) {
-                    Row(modifier = Modifier.padding(8.dp)) {
+                    Row(modifier = Modifier.padding(10.dp)) {
                         Icon(
-                            Icons.Default.Note, null,
-                            modifier = Modifier.size(16.dp),
+                            Icons.Default.Lightbulb,
+                            null,
+                            modifier = Modifier.size(15.dp),
                             tint = Primary,
                         )
-                        Spacer(modifier = Modifier.width(6.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
                         Text(
                             text = vocabulary.note,
                             style = MaterialTheme.typography.bodySmall,
@@ -269,9 +462,9 @@ fun WordCard(
 
             // 例句
             if (!vocabulary.example.isNullOrBlank()) {
-                Spacer(modifier = Modifier.height(6.dp))
+                Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = "例句: ${vocabulary.example}",
+                    text = "📝 \"${vocabulary.example}\"",
                     style = MaterialTheme.typography.bodySmall,
                     color = Primary,
                     fontStyle = FontStyle.Italic,
@@ -279,26 +472,39 @@ fun WordCard(
             }
 
             if (expanded) {
-                Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(14.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.End,
                 ) {
                     if (!vocabulary.isLearned) {
-                        FilledTonalButton(onClick = onMarkLearned) {
+                        Button(
+                            onClick = onMarkLearned,
+                            colors = ButtonDefaults.buttonColors(containerColor = Accent),
+                            shape = RoundedCornerShape(10.dp),
+                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
+                        ) {
                             Icon(Icons.Default.Check, null, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text("标记已学")
+                            Text("认识", fontWeight = FontWeight.Medium)
                         }
+                        Spacer(modifier = Modifier.width(8.dp))
                     }
-                    Spacer(modifier = Modifier.width(8.dp))
-                    OutlinedButton(onClick = { showNoteDialog = true }) {
+                    OutlinedButton(
+                        onClick = { showNoteDialog = true },
+                        shape = RoundedCornerShape(10.dp),
+                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
+                    ) {
                         Icon(Icons.Default.Edit, null, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(4.dp))
                         Text("笔记")
                     }
                     Spacer(modifier = Modifier.width(8.dp))
-                    OutlinedButton(onClick = onAddToReview) {
+                    OutlinedButton(
+                        onClick = onAddToReview,
+                        shape = RoundedCornerShape(10.dp),
+                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
+                    ) {
                         Icon(Icons.Default.School, null, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(4.dp))
                         Text("复习")

@@ -1,8 +1,10 @@
 package com.eareyereading.ui.screens.settings
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
@@ -11,6 +13,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -19,6 +22,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.eareyereading.domain.model.ReadingTheme
 import com.eareyereading.domain.repository.SettingsRepository
+import com.eareyereading.ui.theme.*
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -75,71 +79,105 @@ fun SettingsScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("设置", fontWeight = FontWeight.Bold) },
+                title = {
+                    Text(
+                        "设置",
+                        style = MaterialTheme.typography.headlineLarge,
+                        fontWeight = FontWeight.Bold,
+                    )
+                },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回")
                     }
                 },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.background,
+                ),
             )
         },
     ) { padding ->
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
+                .background(MaterialTheme.colorScheme.background)
                 .padding(padding),
-            contentPadding = PaddingValues(16.dp),
+            contentPadding = PaddingValues(horizontal = 24.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
+            // 阅读设置
             item {
-                Text("阅读设置", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
-                Spacer(modifier = Modifier.height(8.dp))
+                Text("阅读", style = SectionTitle, modifier = Modifier.padding(vertical = 12.dp))
             }
 
-            // 字体大小
             item {
-                SettingCard(icon = Icons.Default.FormatSize, title = "字体大小", subtitle = "${uiState.fontSize}sp") {
-                    Column(modifier = Modifier.padding(horizontal = 16.dp)) {
+                SettingsListCard {
+                    SettingRow(
+                        icon = Icons.Default.FormatSize,
+                        iconBg = PrimaryLight,
+                        iconColor = Primary,
+                        title = "默认字体大小",
+                        subtitle = "${uiState.fontSize}sp",
+                    )
+                    Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) {
                         Slider(
                             value = uiState.fontSize.toFloat(),
                             onValueChange = { viewModel.setFontSize(it.toInt()) },
                             valueRange = 12f..32f,
                             steps = 19,
+                            colors = SliderDefaults.colors(
+                                thumbColor = Primary,
+                                activeTrackColor = Primary,
+                            ),
                         )
                     }
-                }
-            }
 
-            // RSVP 速度
-            item {
-                SettingCard(icon = Icons.AutoMirrored.Filled.VolumeUp, title = "RSVP 速度", subtitle = "${uiState.rsvpSpeed} 字/分钟") {
-                    Column(modifier = Modifier.padding(horizontal = 16.dp)) {
+                    HorizontalDivider(modifier = Modifier.padding(horizontal = 20.dp))
+
+                    SettingRow(
+                        icon = Icons.AutoMirrored.Filled.VolumeUp,
+                        iconBg = Color(0xFFF5F0FF),
+                        iconColor = Color(0xFF5856D6),
+                        title = "RSVP 默认速度",
+                        subtitle = "${uiState.rsvpSpeed} 字/分钟",
+                    )
+                    Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) {
                         Slider(
                             value = uiState.rsvpSpeed.toFloat(),
                             onValueChange = { viewModel.setRsvpSpeed(it.toInt()) },
                             valueRange = 100f..800f,
                             steps = 13,
+                            colors = SliderDefaults.colors(
+                                thumbColor = Color(0xFF5856D6),
+                                activeTrackColor = Color(0xFF5856D6),
+                            ),
                         )
                     }
-                }
-            }
 
-            // 阅读主题
-            item {
-                SettingCard(icon = Icons.Default.Palette, title = "阅读主题", subtitle = uiState.theme.displayName) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 8.dp),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    HorizontalDivider(modifier = Modifier.padding(horizontal = 20.dp))
+
+                    SettingRow(
+                        icon = Icons.Default.Visibility,
+                        iconBg = SuccessBg,
+                        iconColor = Accent,
+                        title = "阅读主题",
+                        subtitle = uiState.theme.displayName,
                     ) {
-                        ReadingTheme.entries.forEach { theme ->
-                            FilterChip(
-                                selected = theme == uiState.theme,
-                                onClick = { viewModel.setTheme(theme) },
-                                label = { Text(theme.displayName) },
-                                modifier = Modifier.weight(1f),
-                            )
+                        Row(
+                            modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            ReadingTheme.entries.forEach { theme ->
+                                FilterChip(
+                                    selected = theme == uiState.theme,
+                                    onClick = { viewModel.setTheme(theme) },
+                                    label = { Text(theme.displayName) },
+                                    colors = FilterChipDefaults.filterChipColors(
+                                        selectedContainerColor = Primary.copy(alpha = 0.12f),
+                                        selectedLabelColor = Primary,
+                                    ),
+                                )
+                            }
                         }
                     }
                 }
@@ -149,53 +187,127 @@ fun SettingsScreen(
 
             // 关于
             item {
-                Text("关于", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
-                Spacer(modifier = Modifier.height(8.dp))
+                Text("关于", style = SectionTitle, modifier = Modifier.padding(vertical = 12.dp))
             }
 
             item {
-                ListItem(
-                    headlineContent = { Text("听阅 EareyeReading") },
-                    supportingContent = { Text("版本 1.0.0") },
-                    leadingContent = {
-                        Icon(Icons.Default.MenuBook, null, tint = MaterialTheme.colorScheme.primary)
-                    },
-                )
+                SettingsListCard {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(20.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(
+                            Icons.Default.MenuBook,
+                            null,
+                            tint = Primary,
+                            modifier = Modifier.size(22.dp),
+                        )
+                        Spacer(modifier = Modifier.width(14.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                "听阅 EareyeReading",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                "版本 1.9.0",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+
+                    HorizontalDivider(modifier = Modifier.padding(horizontal = 20.dp))
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(20.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(
+                            Icons.Default.Star,
+                            null,
+                            tint = Color(0xFFFF6B35),
+                            modifier = Modifier.size(22.dp),
+                        )
+                        Spacer(modifier = Modifier.width(14.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                "功能特色",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                "全文翻译 · 词频统计 · 仿生阅读 · 快速阅读\n挖空练习 · 模糊听读 · 真人朗读 · 生词本",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
             }
 
-            item {
-                ListItem(
-                    headlineContent = { Text("功能特色") },
-                    supportingContent = {
-                        Text("全文翻译 · 词频统计 · 仿生阅读 · 快速阅读\n挖空练习 · 模糊听读 · 真人朗读 · 生词本")
-                    },
-                    leadingContent = {
-                        Icon(Icons.Default.Star, null, tint = MaterialTheme.colorScheme.secondary)
-                    },
-                )
-            }
+            item { Spacer(modifier = Modifier.height(40.dp)) }
         }
     }
 }
 
 @Composable
-fun SettingCard(
+private fun SettingsListCard(content: @Composable ColumnScope.() -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.5.dp),
+    ) {
+        Column(content = content)
+    }
+}
+
+@Composable
+private fun SettingRow(
     icon: ImageVector,
+    iconBg: Color,
+    iconColor: Color,
     title: String,
     subtitle: String,
-    content: @Composable () -> Unit,
+    trailing: (@Composable () -> Unit)? = null,
 ) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(icon, null, tint = MaterialTheme.colorScheme.primary)
-                Spacer(modifier = Modifier.width(12.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Medium)
-                    Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Surface(
+            modifier = Modifier.size(36.dp),
+            shape = RoundedCornerShape(9.dp),
+            color = iconBg,
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(icon, null, tint = iconColor, modifier = Modifier.size(18.dp))
             }
-            content()
+        }
+        Spacer(modifier = Modifier.width(14.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                title,
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.Medium,
+            )
+            Text(
+                subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        if (trailing != null) {
+            trailing()
         }
     }
 }
