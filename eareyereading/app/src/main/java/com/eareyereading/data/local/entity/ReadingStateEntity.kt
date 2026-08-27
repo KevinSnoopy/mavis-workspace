@@ -28,8 +28,10 @@ data class ReadingStateEntity(
 data class ReadingStatsEntity(
     @PrimaryKey
     val date: String,                     // "yyyy-MM-dd"
-    val totalReadingTimeMinutes: Int = 0,
-    val wordsRead: Int = 0,
+    val readingMinutes: Int = 0,          // 阅读分钟数（今日）
+    val charsRead: Int = 0,               // 今日阅读字符数
+    val wordsRead: Int = 0,               // 累计阅读词数
     val booksStarted: Int = 0,
     val booksFinished: Int = 0,
+    val timestamp: Long = System.currentTimeMillis(),
 )

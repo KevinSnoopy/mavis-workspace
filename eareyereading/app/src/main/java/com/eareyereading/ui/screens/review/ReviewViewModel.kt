@@ -133,10 +133,13 @@ class ReviewViewModel @Inject constructor(
         viewModelScope.launch {
             val existing = reviewRecordDao.getReviewForVocab(vocabularyId)
             if (existing == null) {
+                val now = System.currentTimeMillis()
                 reviewRecordDao.insertReview(
                     ReviewRecordEntity(
                         vocabularyId = vocabularyId,
                         word = word,
+                        nextReviewDate = now,
+                        lastReviewDate = now,
                     )
                 )
             }

@@ -22,10 +22,10 @@ interface ReviewRecordDao {
     suspend fun getReviewForVocab(vocabularyId: Long): ReviewRecordEntity?
 
     @Query("SELECT * FROM review_records WHERE nextReviewDate <= :now ORDER BY nextReviewDate ASC")
-    fun getDueReviews(now: Long = System.currentTimeMillis()): Flow<List<ReviewRecordEntity>>
+    fun getDueReviews(now: Long): Flow<List<ReviewRecordEntity>>
 
     @Query("SELECT COUNT(*) FROM review_records WHERE nextReviewDate <= :now")
-    fun getDueReviewCount(now: Long = System.currentTimeMillis()): Flow<Int>
+    fun getDueReviewCount(now: Long): Flow<Int>
 
     @Query("SELECT * FROM review_records ORDER BY nextReviewDate ASC")
     fun getAllReviews(): Flow<List<ReviewRecordEntity>>

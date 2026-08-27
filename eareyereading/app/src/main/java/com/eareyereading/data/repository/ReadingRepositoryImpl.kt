@@ -17,17 +17,17 @@ class ReadingRepositoryImpl @Inject constructor(
 ) : ReadingRepository {
 
     override suspend fun getState(bookId: Long): ReadingState? =
-        readingStateDao.getState(bookId)?.toDomain()
+        readingStateDao.getForBook(bookId)?.toDomain()
 
     override fun getStateFlow(bookId: Long): Flow<ReadingState?> =
-        readingStateDao.getStateFlow(bookId).map { it?.toDomain() }
+        readingStateDao.observeForBook(bookId).map { it?.toDomain() }
 
     override suspend fun saveState(state: ReadingState) {
-        readingStateDao.saveState(state.toEntity())
+        readingStateDao.upsert(state.toEntity())
     }
 
     override suspend fun updatePosition(bookId: Long, position: Int) {
-        readingStateDao.updatePosition(bookId, position)
+        readingStateDao.updateProgress(bookId, 0, position)
     }
 
     override suspend fun updateMode(bookId: Long, mode: ReadingMode) {
@@ -60,5 +60,6 @@ class ReadingRepositoryImpl @Inject constructor(
         rsvpSpeed = rsvpSpeed,
         fontSize = fontSize,
         theme = theme.value,
+        lastUpdated = System.currentTimeMillis(),
     )
 }

@@ -88,10 +88,13 @@ class VocabularyViewModel @Inject constructor(
             // 检查是否已在复习队列
             val existing = reviewRecordDao.getReviewForVocab(vocabulary.id)
             if (existing == null) {
+                val now = System.currentTimeMillis()
                 reviewRecordDao.insertReview(
                     ReviewRecordEntity(
                         vocabularyId = vocabulary.id,
                         word = vocabulary.word,
+                        nextReviewDate = now,
+                        lastReviewDate = now,
                     )
                 )
             }
