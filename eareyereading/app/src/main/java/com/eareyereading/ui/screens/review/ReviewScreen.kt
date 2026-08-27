@@ -53,7 +53,7 @@ fun ReviewScreen(
                 actions = {
                     if (dueCount > 0) {
                         Badge(
-                            containerColor = Color(0xFFFF9500),
+                            containerColor = Warning,
                             modifier = Modifier.padding(end = 8.dp),
                         ) {
                             Text("$dueCount")

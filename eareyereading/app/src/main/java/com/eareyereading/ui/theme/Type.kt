@@ -24,12 +24,12 @@ val Typography = Typography(
     labelSmall = TextStyle(fontFamily = FontFamily.Default, fontWeight = FontWeight.Medium, fontSize = 11.sp, lineHeight = 16.sp, letterSpacing = 0.3.sp),
 )
 
-// Section title style (uppercase, small, secondary color)
+// Section title style (uppercase, small, tertiary color)
 val SectionTitle = TextStyle(
     fontFamily = FontFamily.Default,
     fontWeight = FontWeight.SemiBold,
-    fontSize = 13.sp,
-    lineHeight = 18.sp,
-    letterSpacing = 0.5.sp,
-    color = OnSurfaceVariant,
+    fontSize = 12.sp,
+    lineHeight = 16.sp,
+    letterSpacing = 0.8.sp,
+    color = OnSurfaceTertiary,
 )

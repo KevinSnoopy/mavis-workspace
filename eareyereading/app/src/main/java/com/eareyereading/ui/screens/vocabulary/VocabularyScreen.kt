@@ -21,13 +21,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.eareyereading.domain.model.Vocabulary
 import com.eareyereading.ui.theme.*
 
-private val levelColors = listOf(
-    Color(0xFFFF3B30),
-    Color(0xFFFF9500),
-    Color(0xFFFFCC00),
-    Color(0xFF34C759),
-    Color(0xFF007AFF),
-)
+private val levelColors = listOf(L1, L2, L3, L4, L5)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -116,7 +110,7 @@ fun VocabularyScreen(
                     StatMiniCard(
                         value = "${uiState.totalCount - uiState.learnedCount}",
                         label = "学习中",
-                        color = Color(0xFFFF9500),
+                        color = Warning,
                         modifier = Modifier.weight(1f),
                     )
                 }

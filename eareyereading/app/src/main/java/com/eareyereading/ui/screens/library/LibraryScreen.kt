@@ -17,7 +17,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -165,14 +164,14 @@ fun LibraryScreen(
                         icon = Icons.Default.LocalFireDepartment,
                         value = "${stats.streakDays}",
                         label = "连续打卡(天)",
-                        color = Color(0xFFFF9500),
+                        color = Warning,
                         modifier = Modifier.weight(1f),
                     )
                     StatCard(
                         icon = Icons.Default.MenuBook,
                         value = "${stats.totalBooks}",
                         label = "累计书籍",
-                        color = Accent,
+                        color = Primary,
                         modifier = Modifier.weight(1f),
                     )
                 }
@@ -300,7 +299,7 @@ fun BookCard(
                 modifier = Modifier
                     .size(60.dp, 80.dp)
                     .clip(RoundedCornerShape(10.dp))
-                    .background(Color(0xFF2D3748)),
+                    .background(Primary),
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
@@ -337,7 +336,7 @@ fun BookCard(
                             .weight(1f)
                             .height(4.dp)
                             .clip(RoundedCornerShape(2.dp)),
-                        color = Accent,
+                        color = Primary,
                         trackColor = MaterialTheme.colorScheme.surfaceVariant,
                     )
                     Spacer(modifier = Modifier.width(10.dp))
@@ -645,13 +644,13 @@ fun ArticleSourceCard(
                     DifficultyChip(source.difficulty)
                     Surface(
                         shape = RoundedCornerShape(6.dp),
-                        color = Primary.copy(alpha = 0.1f),
+                        color = InfoBg,
                     ) {
                         Text(
                             text = if (source.isRss) "📡 RSS" else "🌐 Web",
                             style = MaterialTheme.typography.labelSmall,
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
-                            color = Primary,
+                            color = Info,
                         )
                     }
                 }
@@ -723,8 +722,8 @@ fun ArticleItemCard(
                             Icon(Icons.Default.Check, null, modifier = Modifier.size(14.dp))
                         },
                         colors = AssistChipDefaults.assistChipColors(
-                            containerColor = Accent.copy(alpha = 0.15f),
-                            labelColor = Accent,
+                            containerColor = SuccessBg,
+                            labelColor = Success,
                         ),
                     )
                 } else {
@@ -750,11 +749,11 @@ fun ArticleItemCard(
 @Composable
 fun DifficultyChip(level: Int) {
     val difficultyColors = listOf(
-        Color(0xFF34C759) to "⭐ 入门",
-        Color(0xFFFFCC00) to "⭐⭐ 简单",
-        Color(0xFFFF9500) to "⭐⭐⭐ 中等",
-        Color(0xFFFF6B35) to "⭐⭐⭐⭐ 较难",
-        Color(0xFFFF3B30) to "⭐⭐⭐⭐⭐ 困难",
+        L4 to "⭐ 入门",
+        L2 to "⭐⭐ 简单",
+        Warning to "⭐⭐⭐ 中等",
+        L1 to "⭐⭐⭐⭐ 较难",
+        L1 to "⭐⭐⭐⭐⭐ 困难",
     )
     val (color, label) = difficultyColors.getOrElse(level - 1) { Accent to "⭐ 入门" }
     Surface(shape = RoundedCornerShape(6.dp), color = color.copy(alpha = 0.12f)) {

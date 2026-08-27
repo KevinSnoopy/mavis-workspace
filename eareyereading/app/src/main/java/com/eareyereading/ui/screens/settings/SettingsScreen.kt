@@ -161,8 +161,8 @@ fun SettingsScreen(
 
                     SettingRow(
                         icon = Icons.AutoMirrored.Filled.VolumeUp,
-                        iconBg = Color(0xFFF5F0FF),
-                        iconColor = Color(0xFF5856D6),
+                        iconBg = PrimaryLight,
+                        iconColor = Info,
                         title = "RSVP 默认速度",
                         subtitle = "${uiState.rsvpSpeed} 字/分钟",
                     )
@@ -173,8 +173,8 @@ fun SettingsScreen(
                             valueRange = 100f..800f,
                             steps = 13,
                             colors = SliderDefaults.colors(
-                                thumbColor = Color(0xFF5856D6),
-                                activeTrackColor = Color(0xFF5856D6),
+                                thumbColor = Info,
+                                activeTrackColor = Info,
                             ),
                         )
                     }
@@ -226,8 +226,8 @@ fun SettingsScreen(
                     HorizontalDivider(modifier = Modifier.padding(horizontal = 20.dp))
                     SettingRowToggle(
                         icon = Icons.Default.LocalFireDepartment,
-                        iconBg = Color(0xFFFFF3E0),
-                        iconColor = Color(0xFFFF9500),
+                        iconBg = WarningBg,
+                        iconColor = Warning,
                         title = "连胜提醒",
                         checked = true,
                         onCheckedChange = {},
@@ -244,8 +244,8 @@ fun SettingsScreen(
                 SettingsListCard {
                     SettingRowToggle(
                         icon = Icons.Default.DarkMode,
-                        iconBg = Color(0xFFF2F2F7),
-                        iconColor = Color(0xFF8E8E93),
+                        iconBg = SurfaceSecondary,
+                        iconColor = OnSurfaceTertiary,
                         title = "深色模式",
                         checked = uiState.darkMode,
                         onCheckedChange = viewModel::setDarkMode,
@@ -253,8 +253,8 @@ fun SettingsScreen(
                     HorizontalDivider(modifier = Modifier.padding(horizontal = 20.dp))
                     SettingRowToggle(
                         icon = Icons.Default.Highlight,
-                        iconBg = Color(0xFFFFF5E5),
-                        iconColor = Color(0xFFFF9500),
+                        iconBg = WarningBg,
+                        iconColor = Warning,
                         title = "高亮 Collins 等级",
                         checked = uiState.collinsHighlight,
                         onCheckedChange = viewModel::setCollinsHighlight,
@@ -287,8 +287,8 @@ fun SettingsScreen(
                     HorizontalDivider(modifier = Modifier.padding(horizontal = 20.dp))
                     SettingRow(
                         icon = Icons.Default.Delete,
-                        iconBg = Color(0xFFF2F2F7),
-                        iconColor = Color(0xFF8E8E93),
+                        iconBg = SurfaceSecondary,
+                        iconColor = OnSurfaceTertiary,
                         title = "清除缓存",
                         subtitle = "23.4 MB",
                     )
@@ -304,11 +304,11 @@ fun SettingsScreen(
                 SettingsListCard {
                     SettingRow(
                         icon = Icons.Default.Refresh,
-                        iconBg = Color(0xFFFFEBEA),
-                        iconColor = Color(0xFFFF3B30),
+                        iconBg = ErrorBg,
+                        iconColor = Error,
                         title = "恢复默认设置",
                         subtitle = "",
-                        titleColor = Color(0xFFFF3B30),
+                        titleColor = Error,
                     )
                 }
                 Spacer(modifier = Modifier.height(20.dp))
@@ -382,12 +382,12 @@ private fun ProfileCard(
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Surface(
                         shape = RoundedCornerShape(6.dp),
-                        color = Color(0xFFFF9500).copy(alpha = 0.12f),
+                        color = WarningBg,
                     ) {
                         Text(
                             "🔥 $streakDays 天连胜",
                             style = MaterialTheme.typography.labelSmall,
-                            color = Color(0xFFFF9500),
+                            color = Warning,
                             fontWeight = FontWeight.Medium,
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
                         )
@@ -513,7 +513,7 @@ private fun SettingRowToggle(
                 checkedThumbColor = Color.White,
                 checkedTrackColor = Primary,
                 uncheckedThumbColor = Color.White,
-                uncheckedTrackColor = Color(0xFFE8E8ED),
+                uncheckedTrackColor = SurfaceHover,
             ),
         )
     }
