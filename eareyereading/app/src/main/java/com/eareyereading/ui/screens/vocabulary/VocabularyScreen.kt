@@ -94,48 +94,56 @@ fun VocabularyScreen(
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            // 统计概览
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 24.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                StatMiniCard(
-                    value = "${uiState.learnedCount}",
-                    label = "已掌握",
-                    color = Accent,
-                    modifier = Modifier.weight(1f),
+            // 学习概览
+            Column {
+                Text(
+                    "学习概览",
+                    style = SectionTitle,
+                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 12.dp),
                 )
-                StatMiniCard(
-                    value = "${uiState.totalCount - uiState.learnedCount}",
-                    label = "学习中",
-                    color = Color(0xFFFF9500),
-                    modifier = Modifier.weight(1f),
-                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 24.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    StatMiniCard(
+                        value = "${uiState.learnedCount}",
+                        label = "已掌握",
+                        color = Accent,
+                        modifier = Modifier.weight(1f),
+                    )
+                    StatMiniCard(
+                        value = "${uiState.totalCount - uiState.learnedCount}",
+                        label = "学习中",
+                        color = Color(0xFFFF9500),
+                        modifier = Modifier.weight(1f),
+                    )
+                }
             }
 
             Spacer(modifier = Modifier.height(20.dp))
 
             // 难度分布
-            Text(
-                "难度分布",
-                style = SectionTitle,
-                modifier = Modifier.padding(horizontal = 24.dp),
-            )
-            Spacer(modifier = Modifier.height(12.dp))
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 24.dp),
-                horizontalArrangement = Arrangement.SpaceEvenly,
-            ) {
-                for (i in 1..5) {
-                    val count = uiState.filteredWords.count { it.level == i }
-                    LevelChip(level = i, count = count)
+            Column {
+                Text(
+                    "难度分布",
+                    style = SectionTitle,
+                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 12.dp),
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 24.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    for (i in 1..5) {
+                        val count = uiState.filteredWords.count { it.level == i }
+                        LevelChip(level = i, count = count)
+                    }
                 }
             }
-
             Spacer(modifier = Modifier.height(20.dp))
 
             // Tab
@@ -156,14 +164,14 @@ fun VocabularyScreen(
                 Tab(
                     selected = uiState.selectedTab == 1,
                     onClick = { viewModel.setTab(1) },
-                    text = { Text("新词") },
+                    text = { Text("学习中") },
                     selectedContentColor = Primary,
                     unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Tab(
                     selected = uiState.selectedTab == 2,
                     onClick = { viewModel.setTab(2) },
-                    text = { Text("已学") },
+                    text = { Text("已掌握") },
                     selectedContentColor = Primary,
                     unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -205,7 +213,7 @@ fun VocabularyScreen(
                         Spacer(modifier = Modifier.height(12.dp))
                         Text(
                             when (uiState.selectedTab) {
-                                1 -> "暂无新词，继续阅读积累吧"
+                                1 -> "还没有正在学习的单词"
                                 2 -> "还没有已掌握的单词"
                                 else -> "生词本为空"
                             },
@@ -274,6 +282,7 @@ private fun LevelChip(level: Int, count: Int) {
             modifier = Modifier.size(48.dp),
             shape = RoundedCornerShape(12.dp),
             color = color.copy(alpha = 0.1f),
+            border = androidx.compose.foundation.BorderStroke(1.5.dp, color.copy(alpha = 0.3f)),
         ) {
             Box(contentAlignment = Alignment.Center) {
                 Text(
@@ -286,7 +295,7 @@ private fun LevelChip(level: Int, count: Int) {
         }
         Spacer(modifier = Modifier.height(4.dp))
         Text(
-            "$count",
+            "${count}词",
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

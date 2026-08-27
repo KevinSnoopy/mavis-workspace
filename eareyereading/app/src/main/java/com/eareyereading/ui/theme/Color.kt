@@ -35,6 +35,10 @@ val ErrorBg = Color(0xFFFFEBEA)
 val Info = Color(0xFF007AFF)
 val InfoBg = Color(0xFFEBF5FF)
 
+// ── 图标背景色（与 Primary/Accent 等配对使用）────────────
+
+val PrimaryLight = Color(0xFFEBF5FF)   // #007AFF 的浅色背景
+
 // ── 阅读主题色 ────────────────────────────────────
 
 val SepiaBg = Color(0xFFF5E6C8)

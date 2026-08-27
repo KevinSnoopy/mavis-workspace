@@ -165,7 +165,7 @@ fun LibraryScreen(
                         icon = Icons.Default.LocalFireDepartment,
                         value = "${stats.streakDays}",
                         label = "连续打卡(天)",
-                        color = Color(0xFFFF6B35),
+                        color = Color(0xFFFF9500),
                         modifier = Modifier.weight(1f),
                     )
                     StatCard(
@@ -749,13 +749,14 @@ fun ArticleItemCard(
 
 @Composable
 fun DifficultyChip(level: Int) {
-    val (color, label) = when (level) {
-        1 -> Accent to "⭐ 入门"
-        2 -> Accent to "⭐⭐ 简单"
-        3 -> Color(0xFFFF6B35) to "⭐⭐⭐ 中等"
-        4 -> Color(0xFFFF9800) to "⭐⭐⭐⭐ 较难"
-        else -> Error to "⭐⭐⭐⭐⭐ 困难"
-    }
+    val difficultyColors = listOf(
+        Color(0xFF34C759) to "⭐ 入门",
+        Color(0xFFFFCC00) to "⭐⭐ 简单",
+        Color(0xFFFF9500) to "⭐⭐⭐ 中等",
+        Color(0xFFFF6B35) to "⭐⭐⭐⭐ 较难",
+        Color(0xFFFF3B30) to "⭐⭐⭐⭐⭐ 困难",
+    )
+    val (color, label) = difficultyColors.getOrElse(level - 1) { Accent to "⭐ 入门" }
     Surface(shape = RoundedCornerShape(6.dp), color = color.copy(alpha = 0.12f)) {
         Text(
             text = label,

@@ -1,7 +1,6 @@
 package com.eareyereading.ui.screens.settings
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -32,6 +31,11 @@ data class SettingsUiState(
     val fontSize: Int = 18,
     val rsvpSpeed: Int = 300,
     val theme: ReadingTheme = ReadingTheme.LIGHT,
+    val streakDays: Int = 0,
+    val totalWords: Int = 0,
+    val darkMode: Boolean = false,
+    val notifications: Boolean = true,
+    val collinsHighlight: Boolean = true,
 )
 
 @HiltViewModel
@@ -65,6 +69,18 @@ class SettingsViewModel @Inject constructor(
 
     fun setTheme(theme: ReadingTheme) {
         viewModelScope.launch { settingsRepository.setTheme(theme) }
+    }
+
+    fun setDarkMode(enabled: Boolean) {
+        _uiState.value = _uiState.value.copy(darkMode = enabled)
+    }
+
+    fun setNotifications(enabled: Boolean) {
+        _uiState.value = _uiState.value.copy(notifications = enabled)
+    }
+
+    fun setCollinsHighlight(enabled: Boolean) {
+        _uiState.value = _uiState.value.copy(collinsHighlight = enabled)
     }
 }
 
@@ -103,13 +119,22 @@ fun SettingsScreen(
                 .background(MaterialTheme.colorScheme.background)
                 .padding(padding),
             contentPadding = PaddingValues(horizontal = 24.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(0.dp),
         ) {
-            // 阅读设置
+            // ── Profile Card ──────────────────────────────
             item {
-                Text("阅读", style = SectionTitle, modifier = Modifier.padding(vertical = 12.dp))
+                Spacer(modifier = Modifier.height(8.dp))
+                ProfileCard(
+                    streakDays = uiState.streakDays,
+                    totalWords = uiState.totalWords,
+                )
+                Spacer(modifier = Modifier.height(28.dp))
             }
 
+            // ── 阅读 ──────────────────────────────────
+            item {
+                SettingsSectionTitle("阅读")
+            }
             item {
                 SettingsListCard {
                     SettingRow(
@@ -119,7 +144,7 @@ fun SettingsScreen(
                         title = "默认字体大小",
                         subtitle = "${uiState.fontSize}sp",
                     )
-                    Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) {
+                    Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp)) {
                         Slider(
                             value = uiState.fontSize.toFloat(),
                             onValueChange = { viewModel.setFontSize(it.toInt()) },
@@ -141,7 +166,7 @@ fun SettingsScreen(
                         title = "RSVP 默认速度",
                         subtitle = "${uiState.rsvpSpeed} 字/分钟",
                     )
-                    Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) {
+                    Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp)) {
                         Slider(
                             value = uiState.rsvpSpeed.toFloat(),
                             onValueChange = { viewModel.setRsvpSpeed(it.toInt()) },
@@ -181,80 +206,218 @@ fun SettingsScreen(
                         }
                     }
                 }
+                Spacer(modifier = Modifier.height(20.dp))
             }
 
-            item { Spacer(modifier = Modifier.height(16.dp)) }
-
-            // 关于
+            // ── 学习 ──────────────────────────────────
             item {
-                Text("关于", style = SectionTitle, modifier = Modifier.padding(vertical = 12.dp))
+                SettingsSectionTitle("学习")
             }
-
             item {
                 SettingsListCard {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(20.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Icon(
-                            Icons.Default.MenuBook,
-                            null,
-                            tint = Primary,
-                            modifier = Modifier.size(22.dp),
-                        )
-                        Spacer(modifier = Modifier.width(14.dp))
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                "听阅 EareyeReading",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.SemiBold,
-                            )
-                            Spacer(modifier = Modifier.height(2.dp))
-                            Text(
-                                "版本 1.9.0",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                    }
-
+                    SettingRowToggle(
+                        icon = Icons.Default.Notifications,
+                        iconBg = SuccessBg,
+                        iconColor = Accent,
+                        title = "复习间隔提醒",
+                        checked = uiState.notifications,
+                        onCheckedChange = viewModel::setNotifications,
+                    )
                     HorizontalDivider(modifier = Modifier.padding(horizontal = 20.dp))
+                    SettingRowToggle(
+                        icon = Icons.Default.LocalFireDepartment,
+                        iconBg = Color(0xFFFFF3E0),
+                        iconColor = Color(0xFFFF9500),
+                        title = "连胜提醒",
+                        checked = true,
+                        onCheckedChange = {},
+                    )
+                }
+                Spacer(modifier = Modifier.height(20.dp))
+            }
 
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(20.dp),
-                        verticalAlignment = Alignment.CenterVertically,
+            // ── 外观 ──────────────────────────────────
+            item {
+                SettingsSectionTitle("外观")
+            }
+            item {
+                SettingsListCard {
+                    SettingRowToggle(
+                        icon = Icons.Default.DarkMode,
+                        iconBg = Color(0xFFF2F2F7),
+                        iconColor = Color(0xFF8E8E93),
+                        title = "深色模式",
+                        checked = uiState.darkMode,
+                        onCheckedChange = viewModel::setDarkMode,
+                    )
+                    HorizontalDivider(modifier = Modifier.padding(horizontal = 20.dp))
+                    SettingRowToggle(
+                        icon = Icons.Default.Highlight,
+                        iconBg = Color(0xFFFFF5E5),
+                        iconColor = Color(0xFFFF9500),
+                        title = "高亮 Collins 等级",
+                        checked = uiState.collinsHighlight,
+                        onCheckedChange = viewModel::setCollinsHighlight,
+                    )
+                }
+                Spacer(modifier = Modifier.height(20.dp))
+            }
+
+            // ── 数据 ──────────────────────────────────
+            item {
+                SettingsSectionTitle("数据")
+            }
+            item {
+                SettingsListCard {
+                    SettingRow(
+                        icon = Icons.Default.Download,
+                        iconBg = PrimaryLight,
+                        iconColor = Primary,
+                        title = "导出数据",
+                        subtitle = "",
+                    )
+                    HorizontalDivider(modifier = Modifier.padding(horizontal = 20.dp))
+                    SettingRow(
+                        icon = Icons.Default.Upload,
+                        iconBg = PrimaryLight,
+                        iconColor = Primary,
+                        title = "导入数据",
+                        subtitle = "",
+                    )
+                    HorizontalDivider(modifier = Modifier.padding(horizontal = 20.dp))
+                    SettingRow(
+                        icon = Icons.Default.Delete,
+                        iconBg = Color(0xFFF2F2F7),
+                        iconColor = Color(0xFF8E8E93),
+                        title = "清除缓存",
+                        subtitle = "23.4 MB",
+                    )
+                }
+                Spacer(modifier = Modifier.height(20.dp))
+            }
+
+            // ── 危险区域 ────────────────────────────────
+            item {
+                SettingsSectionTitle("危险区域")
+            }
+            item {
+                SettingsListCard {
+                    SettingRow(
+                        icon = Icons.Default.Refresh,
+                        iconBg = Color(0xFFFFEBEA),
+                        iconColor = Color(0xFFFF3B30),
+                        title = "恢复默认设置",
+                        subtitle = "",
+                        titleColor = Color(0xFFFF3B30),
+                    )
+                }
+                Spacer(modifier = Modifier.height(20.dp))
+            }
+
+            // ── 版本 ──────────────────────────────────
+            item {
+                Box(
+                    modifier = Modifier.fillMaxWidth(),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        "听阅 EareyeReading · v1.9.0",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(vertical = 16.dp),
+                    )
+                }
+                Spacer(modifier = Modifier.height(40.dp))
+            }
+        }
+    }
+}
+
+// ── 组件 ─────────────────────────────────────────────
+
+@Composable
+private fun ProfileCard(
+    streakDays: Int,
+    totalWords: Int,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.5.dp),
+    ) {
+        Row(
+            modifier = Modifier.padding(20.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            // Avatar
+            Surface(
+                modifier = Modifier.size(60.dp),
+                shape = RoundedCornerShape(30.dp),
+                color = Primary,
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Text(
+                        "K",
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White,
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.width(16.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    "Kevin",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    "已学习 128 天",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Surface(
+                        shape = RoundedCornerShape(6.dp),
+                        color = Color(0xFFFF9500).copy(alpha = 0.12f),
                     ) {
-                        Icon(
-                            Icons.Default.Star,
-                            null,
-                            tint = Color(0xFFFF6B35),
-                            modifier = Modifier.size(22.dp),
+                        Text(
+                            "🔥 $streakDays 天连胜",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color(0xFFFF9500),
+                            fontWeight = FontWeight.Medium,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
                         )
-                        Spacer(modifier = Modifier.width(14.dp))
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                "功能特色",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.SemiBold,
-                            )
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(
-                                "全文翻译 · 词频统计 · 仿生阅读 · 快速阅读\n挖空练习 · 模糊听读 · 真人朗读 · 生词本",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
+                    }
+                    Surface(
+                        shape = RoundedCornerShape(6.dp),
+                        color = Primary.copy(alpha = 0.12f),
+                    ) {
+                        Text(
+                            "📚 12847 词",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Primary,
+                            fontWeight = FontWeight.Medium,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                        )
                     }
                 }
             }
-
-            item { Spacer(modifier = Modifier.height(40.dp)) }
         }
     }
+}
+
+@Composable
+private fun SettingsSectionTitle(title: String) {
+    Text(
+        title,
+        style = SectionTitle,
+        modifier = Modifier.padding(vertical = 10.dp),
+    )
+    Spacer(modifier = Modifier.height(4.dp))
 }
 
 @Composable
@@ -276,7 +439,7 @@ private fun SettingRow(
     iconColor: Color,
     title: String,
     subtitle: String,
-    trailing: (@Composable () -> Unit)? = null,
+    titleColor: Color = MaterialTheme.colorScheme.onSurface,
 ) {
     Row(
         modifier = Modifier
@@ -299,15 +462,59 @@ private fun SettingRow(
                 title,
                 style = MaterialTheme.typography.bodyLarge,
                 fontWeight = FontWeight.Medium,
+                color = titleColor,
             )
-            Text(
-                subtitle,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            if (subtitle.isNotBlank()) {
+                Text(
+                    subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
-        if (trailing != null) {
-            trailing()
+    }
+}
+
+@Composable
+private fun SettingRowToggle(
+    icon: ImageVector,
+    iconBg: Color,
+    iconColor: Color,
+    title: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Surface(
+            modifier = Modifier.size(36.dp),
+            shape = RoundedCornerShape(9.dp),
+            color = iconBg,
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(icon, null, tint = iconColor, modifier = Modifier.size(18.dp))
+            }
         }
+        Spacer(modifier = Modifier.width(14.dp))
+        Text(
+            title,
+            style = MaterialTheme.typography.bodyLarge,
+            fontWeight = FontWeight.Medium,
+            modifier = Modifier.weight(1f),
+        )
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = Color.White,
+                checkedTrackColor = Primary,
+                uncheckedThumbColor = Color.White,
+                uncheckedTrackColor = Color(0xFFE8E8ED),
+            ),
+        )
     }
 }
