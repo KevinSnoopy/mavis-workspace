@@ -8,6 +8,7 @@ import com.eareyereading.domain.model.Book
 import com.eareyereading.domain.repository.BookRepository
 import com.eareyereading.domain.repository.VocabularyRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
@@ -43,6 +44,7 @@ class HomeViewModel @Inject constructor(
 
     private val _uiState = MutableStateFlow(HomeUiState())
     val uiState: StateFlow<HomeUiState> = _uiState.asStateFlow()
+    private var loadDataJob: Job? = null
 
     init {
         updateGreeting()
@@ -64,7 +66,8 @@ class HomeViewModel @Inject constructor(
     }
 
     private fun loadData() {
-        viewModelScope.launch {
+        loadDataJob?.cancel()
+        loadDataJob = viewModelScope.launch {
             // 加载词汇统计
             combine(
                 vocabularyRepository.getTotalCount(),
@@ -98,7 +101,7 @@ class HomeViewModel @Inject constructor(
                         todayMinutes = todayStats?.readingMinutes ?: 0,
                         todayChars = todayStats?.charsRead ?: 0,
                         streakDays = streakDays,
-                        totalBooks = allStats.distinctBy { s -> s.date }.size.coerceAtMost(allStats.size),
+                        totalBooks = allStats.distinctBy { s -> s.bookId }.size,
                     )
                 }
 

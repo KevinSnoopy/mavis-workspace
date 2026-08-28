@@ -22,6 +22,9 @@ class SettingsRepositoryImpl @Inject constructor(
         val TRANSLATION_ALPHA = floatPreferencesKey("translation_alpha")
         val RSVP_STRENGTH = intPreferencesKey("rsvp_strength")      // 1-5 强度
         val RSVP_INTERVAL = intPreferencesKey("rsvp_interval")      // 1-3 间隔
+        val DARK_MODE = booleanPreferencesKey("dark_mode")
+        val NOTIFICATIONS = booleanPreferencesKey("notifications_enabled")
+        val COLLINS_HIGHLIGHT = booleanPreferencesKey("collins_highlight")
     }
 
     override fun getRsvpSpeed(): Flow<Int> =
@@ -70,5 +73,30 @@ class SettingsRepositoryImpl @Inject constructor(
 
     override suspend fun setRsvpInterval(interval: Int) {
         dataStore.edit { it[RSVP_INTERVAL] = interval.coerceIn(1, 3) }
+    }
+
+    override fun getDarkMode(): Flow<Boolean> =
+        dataStore.data.map { it[DARK_MODE] ?: false }
+
+    override fun getNotifications(): Flow<Boolean> =
+        dataStore.data.map { it[NOTIFICATIONS] ?: true }
+
+    override fun getCollinsHighlight(): Flow<Boolean> =
+        dataStore.data.map { it[COLLINS_HIGHLIGHT] ?: true }
+
+    override suspend fun setDarkMode(enabled: Boolean) {
+        dataStore.edit { it[DARK_MODE] = enabled }
+    }
+
+    override suspend fun setNotifications(enabled: Boolean) {
+        dataStore.edit { it[NOTIFICATIONS] = enabled }
+    }
+
+    override suspend fun setCollinsHighlight(enabled: Boolean) {
+        dataStore.edit { it[COLLINS_HIGHLIGHT] = enabled }
+    }
+
+    override suspend fun clearAll() {
+        dataStore.edit { it.clear() }
     }
 }

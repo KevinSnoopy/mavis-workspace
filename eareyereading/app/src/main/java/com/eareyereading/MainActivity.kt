@@ -29,8 +29,9 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             val theme by settingsRepository.getTheme().collectAsState(initial = com.eareyereading.domain.model.ReadingTheme.LIGHT)
+            val darkMode by settingsRepository.getDarkMode().collectAsState(initial = false)
 
-            EareyeReadingTheme(readingTheme = theme) {
+            EareyeReadingTheme(readingTheme = theme, darkTheme = darkMode) {
                 Surface(modifier = Modifier.fillMaxSize()) {
                     AppNavigation()
                 }

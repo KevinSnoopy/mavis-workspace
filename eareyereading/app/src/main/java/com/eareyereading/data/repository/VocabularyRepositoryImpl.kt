@@ -36,7 +36,7 @@ class VocabularyRepositoryImpl @Inject constructor(
     }
 
     override suspend fun deleteWord(word: Vocabulary) {
-        vocabularyDao.delete(word.toEntity())
+        vocabularyDao.deleteVocabularyWithReview(word.id, word.toEntity())
     }
 
     override fun getTotalCount(): Flow<Int> = vocabularyDao.getTotalWordCount()
@@ -57,6 +57,20 @@ class VocabularyRepositoryImpl @Inject constructor(
         return translationHelper.translateEnToZh(sentence)
     }
 
+    override suspend fun addWordToReview(vocabularyId: Long, word: String) {
+        if (!vocabularyDao.hasReviewRecord(vocabularyId)) {
+            val now = System.currentTimeMillis()
+            vocabularyDao.insertReviewRecord(
+                com.eareyereading.data.local.entity.ReviewRecordEntity(
+                    vocabularyId = vocabularyId,
+                    word = word,
+                    nextReviewDate = now,
+                    lastReviewDate = now,
+                )
+            )
+        }
+    }
+
     private fun VocabularyEntity.toDomain() = Vocabulary(
         id = id, word = word, phonetic = phonetic, definition = definition,
         bookId = bookId, bookTitle = bookTitle, context = context,
@@ -65,6 +79,7 @@ class VocabularyRepositoryImpl @Inject constructor(
         dateAdded = dateAdded,
         note = note,
         example = example,
+        level = level,
     )
 
     private fun Vocabulary.toEntity() = VocabularyEntity(
@@ -75,5 +90,6 @@ class VocabularyRepositoryImpl @Inject constructor(
         dateAdded = dateAdded,
         note = note,
         example = example,
+        level = level,
     )
 }

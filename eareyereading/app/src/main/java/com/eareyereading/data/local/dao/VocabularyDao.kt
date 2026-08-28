@@ -1,8 +1,8 @@
 package com.eareyereading.data.local.dao
 
 import androidx.room.*
+import com.eareyereading.data.local.entity.ReviewRecordEntity
 import com.eareyereading.data.local.entity.VocabularyEntity
-import com.eareyereading.data.local.entity.WordFrequencyEntity
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -16,7 +16,7 @@ interface VocabularyDao {
     @Query("SELECT * FROM vocabulary WHERE isLearned = 1 ORDER BY lastReviewTime DESC")
     fun getLearnedWords(): Flow<List<VocabularyEntity>>
 
-    @Query("SELECT * FROM vocabulary WHERE word = :word LIMIT 1")
+    @Query("SELECT * FROM vocabulary WHERE LOWER(word) = LOWER(:word) LIMIT 1")
     suspend fun getWord(word: String): VocabularyEntity?
 
     @Query("SELECT * FROM vocabulary WHERE bookId = :bookId")
@@ -36,19 +36,23 @@ interface VocabularyDao {
 
     @Query("SELECT COUNT(*) FROM vocabulary WHERE isLearned = 1")
     fun getLearnedWordCount(): Flow<Int>
-}
 
-@Dao
-interface WordFrequencyDao {
-    @Query("SELECT * FROM word_frequency WHERE bookId = :bookId ORDER BY count DESC")
-    fun getWordFrequencies(bookId: Long): Flow<List<WordFrequencyEntity>>
+    // 原子删除：先删复习记录，再删词汇条目，防止孤儿记录
+    @Transaction
+    suspend fun deleteVocabularyWithReview(vocabId: Long, word: VocabularyEntity) {
+        deleteReviewRecord(vocabId)
+        deleteEntity(word)
+    }
 
-    @Query("SELECT * FROM word_frequency WHERE bookId = :bookId ORDER BY count DESC LIMIT :limit")
-    fun getTopFrequencies(bookId: Long, limit: Int): Flow<List<WordFrequencyEntity>>
+    @Query("DELETE FROM review_records WHERE vocabularyId = :vocabId")
+    suspend fun deleteReviewRecord(vocabId: Long)
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insertAll(words: List<WordFrequencyEntity>)
+    suspend fun insertReviewRecord(review: ReviewRecordEntity)
 
-    @Query("DELETE FROM word_frequency WHERE bookId = :bookId")
-    suspend fun deleteByBook(bookId: Long)
+    @Query("SELECT EXISTS(SELECT 1 FROM review_records WHERE vocabularyId = :vocabularyId LIMIT 1)")
+    suspend fun hasReviewRecord(vocabularyId: Long): Boolean
+
+    @Delete
+    suspend fun deleteEntity(word: VocabularyEntity)
 }

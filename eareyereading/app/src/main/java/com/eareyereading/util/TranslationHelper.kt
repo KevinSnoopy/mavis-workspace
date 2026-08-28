@@ -74,9 +74,14 @@ class TranslationHelper @Inject constructor(
                     .addTargetLocale(android.speech.tts.TranslationVoice.LOCALE_ZH_CN)
                     .setText(text)
                     .build()
+
+                // 正确使用 CancellationSignal：协程取消时自动停止翻译请求
+                val cancellationSignal = android.os.CancellationSignal()
+                cont.invokeOnCancellation { cancellationSignal.cancel() }
+
                 translationSession?.requestTranslation(
                     request,
-                    android.os.CancellationSignal(),
+                    cancellationSignal,
                     object : android.speech.tts.TranslationResultCallback() {
                         override fun onTranslationResult(result: android.speech.tts.TranslationResult) {
                             val zh = result.getTargetLocaleTranslation(

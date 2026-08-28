@@ -20,14 +20,6 @@ data class VocabularyEntity(
     val dateAdded: Long = System.currentTimeMillis(),
     val note: String? = null,             // 用户笔记
     val example: String? = null,           // 例句
-)
-
-@Entity(tableName = "word_frequency")
-data class WordFrequencyEntity(
-    @PrimaryKey(autoGenerate = true)
-    val id: Long = 0,
-    val bookId: Long,
-    val word: String,
-    val count: Int,
-    val frequency: Float,    // count / totalWords
+    // Collins 词频等级
+    val level: Int = 0,
 )

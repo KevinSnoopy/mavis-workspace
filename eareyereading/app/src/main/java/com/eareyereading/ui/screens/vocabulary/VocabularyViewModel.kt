@@ -2,8 +2,6 @@ package com.eareyereading.ui.screens.vocabulary
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.eareyereading.data.local.dao.ReviewRecordDao
-import com.eareyereading.data.local.entity.ReviewRecordEntity
 import com.eareyereading.domain.model.Vocabulary
 import com.eareyereading.domain.repository.VocabularyRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -23,7 +21,6 @@ data class VocabularyUiState(
 @HiltViewModel
 class VocabularyViewModel @Inject constructor(
     private val vocabularyRepository: VocabularyRepository,
-    private val reviewRecordDao: ReviewRecordDao,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(VocabularyUiState())
@@ -52,7 +49,15 @@ class VocabularyViewModel @Inject constructor(
                     searchQuery = query,
                 )
             }.collect { state ->
-                _uiState.value = state
+                _uiState.update {
+                    it.copy(
+                        allWords = state.allWords,
+                        filteredWords = state.filteredWords,
+                        totalCount = state.totalCount,
+                        learnedCount = state.learnedCount,
+                        searchQuery = state.searchQuery,
+                    )
+                }
             }
         }
     }
@@ -67,44 +72,47 @@ class VocabularyViewModel @Inject constructor(
 
     fun markAsLearned(vocabulary: Vocabulary) {
         viewModelScope.launch {
-            vocabularyRepository.updateWord(
-                vocabulary.copy(
-                    isLearned = true,
-                    lastReviewTime = System.currentTimeMillis(),
-                    reviewCount = vocabulary.reviewCount + 1,
+            try {
+                vocabularyRepository.updateWord(
+                    vocabulary.copy(
+                        isLearned = true,
+                        lastReviewTime = System.currentTimeMillis(),
+                        reviewCount = vocabulary.reviewCount + 1,
+                    )
                 )
-            )
+            } catch (e: Exception) {
+                android.util.Log.e("VocabularyViewModel", "Failed to mark as learned", e)
+            }
         }
     }
 
     fun updateNote(vocabulary: Vocabulary, note: String?, example: String?) {
         viewModelScope.launch {
-            vocabularyRepository.updateWord(vocabulary.copy(note = note, example = example))
+            try {
+                vocabularyRepository.updateWord(vocabulary.copy(note = note, example = example))
+            } catch (e: Exception) {
+                android.util.Log.e("VocabularyViewModel", "Failed to update note", e)
+            }
         }
     }
 
     fun addToReview(vocabulary: Vocabulary) {
         viewModelScope.launch {
-            // 检查是否已在复习队列
-            val existing = reviewRecordDao.getReviewForVocab(vocabulary.id)
-            if (existing == null) {
-                val now = System.currentTimeMillis()
-                reviewRecordDao.insertReview(
-                    ReviewRecordEntity(
-                        vocabularyId = vocabulary.id,
-                        word = vocabulary.word,
-                        nextReviewDate = now,
-                        lastReviewDate = now,
-                    )
-                )
+            try {
+                vocabularyRepository.addWordToReview(vocabulary.id, vocabulary.word)
+            } catch (e: Exception) {
+                android.util.Log.e("VocabularyViewModel", "Failed to add to review", e)
             }
         }
     }
 
     fun deleteWord(vocabulary: Vocabulary) {
         viewModelScope.launch {
-            reviewRecordDao.deleteReviewForVocab(vocabulary.id)
-            vocabularyRepository.deleteWord(vocabulary)
+            try {
+                vocabularyRepository.deleteWord(vocabulary)
+            } catch (e: Exception) {
+                android.util.Log.e("VocabularyViewModel", "Failed to delete word", e)
+            }
         }
     }
 }

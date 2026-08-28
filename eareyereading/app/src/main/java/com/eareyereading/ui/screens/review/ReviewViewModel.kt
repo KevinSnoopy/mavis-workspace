@@ -46,19 +46,20 @@ class ReviewViewModel @Inject constructor(
 
     fun loadDueReviews() {
         viewModelScope.launch {
-            reviewRecordDao.getDueReviews(System.currentTimeMillis(), 50).collect { records ->
-                val cards = records.map { record ->
-                    val vocab = vocabularyRepository.getWord(record.word)
-                    ReviewCard(record = record, vocabulary = vocab)
-                }
-                _uiState.update {
-                    it.copy(
-                        dueCards = cards,
-                        currentIndex = 0,
-                        isShowingAnswer = false,
-                        isSessionComplete = cards.isEmpty(),
-                    )
-                }
+            // 用 first() 而非 collect() — 一次拉取，不持续监听 DB 变化
+            // answerCard() 会直接更新 _uiState，不依赖 Flow 重拉
+            val records = reviewRecordDao.getDueReviews(System.currentTimeMillis(), 50).first()
+            val cards = records.map { record ->
+                val vocab = vocabularyRepository.getWord(record.word)
+                ReviewCard(record = record, vocabulary = vocab)
+            }
+            _uiState.update {
+                it.copy(
+                    dueCards = cards,
+                    currentIndex = 0,
+                    isShowingAnswer = false,
+                    isSessionComplete = cards.isEmpty(),
+                )
             }
         }
     }
@@ -82,13 +83,13 @@ class ReviewViewModel @Inject constructor(
         // SM-2 算法计算
         val q = quality.coerceIn(0, 5)
         val newEF = if (q < 3) {
-            record.easeFactor  // 不记得了就降低 EF
+            record.easeFactor  // 标准 SM-2：q<3 时 EF 不变，interval/reps 复位
         } else {
             max(1.3f, record.easeFactor + (0.1f - (5 - q) * (0.08f + (5 - q) * 0.02f)))
         }
 
         val (newInterval, newReps) = if (q < 3) {
-            Pair(1, 0)  // 重新开始
+            Pair(1, 0)  // 标准 SM-2：q<3 复位间隔，从头积累
         } else {
             val reps = record.repetitions + 1
             val interval = when (reps) {
@@ -103,15 +104,19 @@ class ReviewViewModel @Inject constructor(
         val nextReview = now + newInterval * 24 * 60 * 60 * 1000L
 
         viewModelScope.launch {
-            val updatedRecord = record.copy(
-                easeFactor = newEF,
-                interval = newInterval,
-                repetitions = newReps,
-                nextReviewDate = nextReview,
-                lastReviewDate = now,
-                lastQuality = q,
-            )
-            reviewRecordDao.updateReview(updatedRecord)
+            try {
+                val updatedRecord = record.copy(
+                    easeFactor = newEF,
+                    interval = newInterval,
+                    repetitions = newReps,
+                    nextReviewDate = nextReview,
+                    lastReviewDate = now,
+                    lastQuality = q,
+                )
+                reviewRecordDao.updateReview(updatedRecord)
+            } catch (e: Exception) {
+                android.util.Log.e("ReviewViewModel", "Failed to update review record", e)
+            }
         }
 
         val isCorrect = q >= 3
@@ -131,17 +136,21 @@ class ReviewViewModel @Inject constructor(
 
     fun addWordToReview(vocabularyId: Long, word: String) {
         viewModelScope.launch {
-            val existing = reviewRecordDao.getReviewForVocab(vocabularyId)
-            if (existing == null) {
-                val now = System.currentTimeMillis()
-                reviewRecordDao.insertReview(
-                    ReviewRecordEntity(
-                        vocabularyId = vocabularyId,
-                        word = word,
-                        nextReviewDate = now,
-                        lastReviewDate = now,
+            try {
+                val existing = reviewRecordDao.getReviewForVocab(vocabularyId)
+                if (existing == null) {
+                    val now = System.currentTimeMillis()
+                    reviewRecordDao.insertReview(
+                        ReviewRecordEntity(
+                            vocabularyId = vocabularyId,
+                            word = word,
+                            nextReviewDate = now,
+                            lastReviewDate = now,
+                        )
                     )
-                )
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("ReviewViewModel", "Failed to add word to review", e)
             }
         }
     }

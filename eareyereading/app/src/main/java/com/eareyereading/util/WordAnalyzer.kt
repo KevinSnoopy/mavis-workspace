@@ -114,7 +114,8 @@ class WordAnalyzer @Inject constructor() {
         } else emptySet()
 
         for (word in words) {
-            val start = text.indexOf(word, pos)
+            // 使用忽略大小写的搜索，确保匹配到文本中实际出现的位置
+            val start = text.indexOf(word, pos, ignoreCase = true)
             if (start == -1) {
                 result.add(ClozeWord(word, isHidden = false, isWord = true))
                 pos += word.length
@@ -151,7 +152,8 @@ class WordAnalyzer @Inject constructor() {
         var pos = 0
 
         for (word in words) {
-            val start = text.indexOf(word, pos)
+            // 使用忽略大小写的搜索
+            val start = text.indexOf(word, pos, ignoreCase = true)
             if (start == -1) {
                 result.add(FuzzyWord(word, isBlurred = true))
                 pos += word.length

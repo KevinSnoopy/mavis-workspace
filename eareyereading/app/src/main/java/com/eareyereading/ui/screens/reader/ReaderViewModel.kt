@@ -7,8 +7,10 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.eareyereading.data.local.dao.BookmarkDao
 import com.eareyereading.data.local.dao.HighlightDao
+import com.eareyereading.data.local.dao.ReadingStatsDao
 import com.eareyereading.data.local.entity.BookmarkEntity
 import com.eareyereading.data.local.entity.HighlightEntity
+import com.eareyereading.data.local.entity.ReadingStatsEntity
 import com.eareyereading.domain.model.*
 import com.eareyereading.domain.repository.*
 import com.eareyereading.ui.theme.*
@@ -41,8 +43,6 @@ data class ReaderUiState(
     val autoReadingParaIndex: Int = 0,
     val currentSentences: List<String> = emptyList(),
     val currentSentenceIndex: Int = 0,
-    // Collins 词频
-    val wordFrequencies: List<WordFrequency> = emptyList(),
     // 生词本词汇（用于阅读时高亮）
     val knownWords: Set<String> = emptySet(),
     val learnedWords: Set<String> = emptySet(),
@@ -52,10 +52,11 @@ data class ReaderUiState(
     // 模糊
     val fuzzyWords: List<FuzzyWord> = emptyList(),
     // 生词提示
-    val selectedWord: String? = null,
     val wordDefinition: String? = null,
     val selectedWordLevel: WordLevel = WordLevel.UNKNOWN,
     val showWordDialog: Boolean = false,
+    // 选中词汇（加入生词本后此处会更新为带 DB id 的完整 Vocabulary 对象）
+    val selectedVocab: Vocabulary? = null,
     // 全文翻译
     val showTranslation: Boolean = false,
     val paragraphTranslations: Map<Int, String> = emptyMap(),
@@ -111,6 +112,7 @@ class ReaderViewModel @Inject constructor(
     private val collinsClassifier: CollinsClassifier,
     private val bookmarkDao: BookmarkDao,
     private val highlightDao: HighlightDao,
+    private val readingStatsDao: ReadingStatsDao,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(ReaderUiState())
@@ -119,8 +121,15 @@ class ReaderViewModel @Inject constructor(
     private var rsvpJob: Job? = null
     private var speedJob: Job? = null
     private var autoReadJob: Job? = null
+    private var vocabJob: Job? = null
+    private var bookmarksJob: Job? = null
+    private var highlightsJob: Job? = null
+    private var bookJob: Job? = null
     private var currentBookId: Long? = null
     private var readingStartTime: Long = 0L
+    // 本次阅读会话的统计（用于 saveProgress/cleanup 时写入 DB）
+    private var sessionCharsRead: Long = 0L
+    private var lastRecordedParagraphIndex: Int = -1
 
     init {
         viewModelScope.launch {
@@ -151,10 +160,19 @@ class ReaderViewModel @Inject constructor(
     fun loadBook(bookId: Long) {
         currentBookId = bookId
         readingStartTime = System.currentTimeMillis()
-        viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true, readingStartTime = readingStartTime) }
+        sessionCharsRead = 0L
+        lastRecordedParagraphIndex = -1
 
-            // 加载生词本（用于阅读高亮）
+        // 取消旧的 Flow collectors，防止泄漏
+        vocabJob?.cancel()
+        bookmarksJob?.cancel()
+        highlightsJob?.cancel()
+        bookJob?.cancel()
+
+        _uiState.update { it.copy(isLoading = true, readingStartTime = readingStartTime) }
+
+        // 加载生词本（用于阅读高亮）
+        vocabJob = viewModelScope.launch {
             vocabularyRepository.getAllVocabulary().collect { vocabList ->
                 val known = vocabList.filter { it.isLearned }.map { it.word.lowercase() }.toSet()
                 val allWords = vocabList.map { it.word.lowercase() }.toSet()
@@ -162,39 +180,40 @@ class ReaderViewModel @Inject constructor(
             }
         }
 
-        viewModelScope.launch {
-            bookRepository.getBookById(bookId).collect { book ->
-                val paragraphs = if (book.content.isNotBlank()) {
-                    book.content.split("\n\n").filter { it.isNotBlank() }
-                } else {
-                    epubParser.parseBook(book.filePath)
-                }
-                val state = readingRepository.getState(bookId)
-                val freq = calculateWordFrequencies(paragraphs)
-                val totalChars = paragraphs.joinToString(" ").length
+        bookJob = viewModelScope.launch {
+            // 用 first() 而非 collect() — 单次拉取，避免 updateProgress 后 Flow 重发射时
+            // 错误地将 currentParagraphIndex 重置为保存的旧位置（覆盖用户当前阅读进度）
+            val book = bookRepository.getBookById(bookId).first() ?: return@launch
+            val paragraphs = if (book.content.isNotBlank()) {
+                book.content.split("\n\n").filter { it.isNotBlank() }
+            } else {
+                epubParser.parseBook(book.filePath)
+            }
+            val state = readingRepository.getState(bookId)
+            val totalChars = paragraphs.joinToString(" ").length
 
-                _uiState.update {
-                    it.copy(
-                        book = book,
-                        paragraphs = paragraphs,
-                        currentParagraphIndex = state?.currentParagraph ?: 0,
-                        currentWordIndex = state?.currentPosition ?: 0,
-                        readingMode = state?.readingMode ?: ReadingMode.NORMAL,
-                        rsvpSpeed = state?.rsvpSpeed ?: it.rsvpSpeed,
-                        wordFrequencies = freq,
-                        totalReadChars = totalChars,
-                        isLoading = false,
-                    )
-                }
+            _uiState.update {
+                it.copy(
+                    book = book,
+                    paragraphs = paragraphs,
+                    currentParagraphIndex = state?.currentParagraph ?: 0,
+                    currentWordIndex = state?.currentPosition ?: 0,
+                    readingMode = state?.readingMode ?: ReadingMode.NORMAL,
+                    rsvpSpeed = state?.rsvpSpeed ?: it.rsvpSpeed,
+                    totalReadChars = totalChars,
+                    isLoading = false,
+                )
+            }
 
-                // 初始化 TTS
-                if (!_uiState.value.ttsInitialized) {
-                    val ok = ttsHelper.initialize(book.language)
-                    _uiState.update { it.copy(ttsInitialized = ok) }
-                }
+            // 初始化 TTS
+            if (!_uiState.value.ttsInitialized) {
+                val ok = ttsHelper.initialize(book.language)
+                _uiState.update { it.copy(ttsInitialized = ok) }
+            }
 
                 // 加载书签
-                launch {
+                bookmarksJob?.cancel()
+                bookmarksJob = viewModelScope.launch {
                     bookmarkDao.getBookmarksForBook(bookId).collect { bookmarks ->
                         _uiState.update {
                             it.copy(bookmarkedParagraphs = bookmarks.map { b -> b.paragraphIndex }.toSet())
@@ -203,7 +222,8 @@ class ReaderViewModel @Inject constructor(
                 }
 
                 // 加载高亮
-                launch {
+                highlightsJob?.cancel()
+                highlightsJob = viewModelScope.launch {
                     highlightDao.getHighlightsForBook(bookId).collect { highlights ->
                         val grouped = highlights.groupBy { it.paragraphIndex }.mapValues { (_, list) ->
                             list.map { h ->
@@ -230,16 +250,6 @@ class ReaderViewModel @Inject constructor(
             android.util.Log.w("ReaderViewModel", "Invalid color hex: ${hex}", e)
             Highlight
         }
-    }
-
-    private suspend fun calculateWordFrequencies(paragraphs: List<String>): List<WordFrequency> {
-        val text = paragraphs.joinToString(" ")
-        val freqMap = wordAnalyzer.calculateWordFrequencies(text)
-        val total = freqMap.values.sum().toFloat()
-        return freqMap.entries
-            .sortedByDescending { it.value }
-            .take(100)
-            .map { WordFrequency(word = it.key, count = it.value, frequency = it.value / total) }
     }
 
     // ── 自动全文朗读 ─────────────────────────────
@@ -328,6 +338,11 @@ class ReaderViewModel @Inject constructor(
     fun setReadingMode(mode: ReadingMode) {
         rsvpJob?.cancel()
         speedJob?.cancel()
+        if (_uiState.value.isAutoReading) {
+            autoReadJob?.cancel()
+            ttsHelper.stop()
+            _uiState.update { it.copy(isAutoReading = false, currentSentences = emptyList(), currentSentenceIndex = 0) }
+        }
 
         if (mode == ReadingMode.CLOZE) {
             generateCloze()
@@ -375,19 +390,32 @@ class ReaderViewModel @Inject constructor(
             rsvpJob?.cancel()
             _uiState.update { it.copy(isPlaying = false) }
         } else {
-            _uiState.update { it.copy(isPlaying = true) }
-            rsvpJob = viewModelScope.launch {
-                val words = getCurrentParagraphWords()
-                val interval = (60_000L / _uiState.value.rsvpSpeed)
-                for (i in _uiState.value.currentWordIndex until words.size) {
-                    if (!_uiState.value.isPlaying) break
-                    _uiState.update { it.copy(currentWordIndex = i) }
-                    val word = words.getOrNull(i) ?: break
-                    ttsHelper.speak(word)
-                    delay(interval)
+            // 确保 TTS 初始化
+            if (!_uiState.value.ttsInitialized) {
+                viewModelScope.launch {
+                    val ok = ttsHelper.initialize(_uiState.value.book?.language ?: "en")
+                    _uiState.update { it.copy(ttsInitialized = ok) }
+                    if (ok) startRsvp()
                 }
-                _uiState.update { it.copy(isPlaying = false) }
+                return
             }
+            startRsvp()
+        }
+    }
+
+    private fun startRsvp() {
+        _uiState.update { it.copy(isPlaying = true) }
+        rsvpJob = viewModelScope.launch {
+            val words = getCurrentParagraphWords()
+            val interval = (60_000L / _uiState.value.rsvpSpeed)
+            for (i in _uiState.value.currentWordIndex until words.size) {
+                if (!_uiState.value.isPlaying) break
+                _uiState.update { it.copy(currentWordIndex = i) }
+                val word = words.getOrNull(i) ?: break
+                ttsHelper.speak(word)
+                delay(interval)
+            }
+            _uiState.update { it.copy(isPlaying = false) }
         }
     }
 
@@ -397,18 +425,31 @@ class ReaderViewModel @Inject constructor(
             ttsHelper.stop()
             _uiState.update { it.copy(isPlaying = false) }
         } else {
-            _uiState.update { it.copy(isPlaying = true) }
-            speedJob = viewModelScope.launch {
-                val paragraphs = _uiState.value.paragraphs
-                for (i in _uiState.value.currentParagraphIndex until paragraphs.size) {
-                    if (!_uiState.value.isPlaying) break
-                    _uiState.update { it.copy(currentParagraphIndex = i) }
-                    ttsHelper.speak(paragraphs[i])
-                    // 每句停留时间
-                    delay((paragraphs[i].length * 60L / 130).coerceAtLeast(1500L))
+            // 确保 TTS 初始化
+            if (!_uiState.value.ttsInitialized) {
+                viewModelScope.launch {
+                    val ok = ttsHelper.initialize(_uiState.value.book?.language ?: "en")
+                    _uiState.update { it.copy(ttsInitialized = ok) }
+                    if (ok) startSpeed()
                 }
-                _uiState.update { it.copy(isPlaying = false) }
+                return
             }
+            startSpeed()
+        }
+    }
+
+    private fun startSpeed() {
+        _uiState.update { it.copy(isPlaying = true) }
+        speedJob = viewModelScope.launch {
+            val paragraphs = _uiState.value.paragraphs
+            for (i in _uiState.value.currentParagraphIndex until paragraphs.size) {
+                if (!_uiState.value.isPlaying) break
+                _uiState.update { it.copy(currentParagraphIndex = i) }
+                ttsHelper.speak(paragraphs[i])
+                // 每句停留时间
+                delay((paragraphs[i].length * 60L / 130).coerceAtLeast(1500L))
+            }
+            _uiState.update { it.copy(isPlaying = false) }
         }
     }
 
@@ -423,12 +464,25 @@ class ReaderViewModel @Inject constructor(
             ttsHelper.pause()
             _uiState.update { it.copy(isTtsPlaying = false) }
         } else {
-            _uiState.update { it.copy(isTtsPlaying = true) }
-            val para = _uiState.value.paragraphs.getOrNull(_uiState.value.currentParagraphIndex) ?: return
-            ttsHelper.speak(para) {
+            // TTS 未初始化：尝试初始化
+            if (!_uiState.value.ttsInitialized) {
                 viewModelScope.launch {
-                    _uiState.update { it.copy(isTtsPlaying = false) }
+                    val ok = ttsHelper.initialize(_uiState.value.book?.language ?: "en")
+                    _uiState.update { it.copy(ttsInitialized = ok) }
+                    if (ok) doToggleTts()
                 }
+                return
+            }
+            doToggleTts()
+        }
+    }
+
+    private fun doToggleTts() {
+        val para = _uiState.value.paragraphs.getOrNull(_uiState.value.currentParagraphIndex) ?: return
+        _uiState.update { it.copy(isTtsPlaying = true) }
+        ttsHelper.speak(para) {
+            viewModelScope.launch {
+                _uiState.update { it.copy(isTtsPlaying = false) }
             }
         }
     }
@@ -502,7 +556,11 @@ class ReaderViewModel @Inject constructor(
                 ?: "未找到释义"
             _uiState.update {
                 it.copy(
-                    selectedWord = clean,
+                    selectedVocab = existing ?: Vocabulary(
+                        word = clean,
+                        level = level.ordinal + 1,
+                        dateAdded = System.currentTimeMillis(),
+                    ),
                     wordDefinition = definition,
                     selectedWordLevel = level,
                     showWordDialog = true,
@@ -513,17 +571,30 @@ class ReaderViewModel @Inject constructor(
 
     fun addToVocabulary(word: String, context: String?) {
         viewModelScope.launch {
+            val vocabToSave = _uiState.value.selectedVocab?.copy(
+                bookId = currentBookId,
+                bookTitle = _uiState.value.book?.title,
+                context = context,
+            ) ?: return@launch
+
+            // 已收录则直接关闭，不重复添加
             val existing = vocabularyRepository.getWord(word)
-            if (existing == null) {
-                val vocab = Vocabulary(
-                    word = word,
-                    bookId = currentBookId,
-                    bookTitle = _uiState.value.book?.title,
-                    context = context,
-                    dateAdded = System.currentTimeMillis(),
-                )
-                vocabularyRepository.addWord(vocab)
-                _uiState.update { it.copy(showWordDialog = false, selectedWord = null) }
+            if (existing != null) {
+                _uiState.update { it.copy(showWordDialog = false, selectedVocab = null) }
+                return@launch
+            }
+
+            // 捕获 DB 生成的 id，替换 selectedVocab 使「加入复习」拿到正确 vocabularyId
+            try {
+                val id = vocabularyRepository.addWord(vocabToSave)
+                _uiState.update {
+                    it.copy(
+                        showWordDialog = false,
+                        selectedVocab = vocabToSave.copy(id = id),
+                    )
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("ReaderViewModel", "Failed to add word to vocabulary", e)
             }
         }
     }
@@ -592,6 +663,40 @@ class ReaderViewModel @Inject constructor(
                     theme = state.theme,
                 )
             )
+
+            // 记录阅读统计（仅新增段落计入字符数）
+            val newParaIndex = state.currentParagraphIndex
+            if (newParaIndex > lastRecordedParagraphIndex) {
+                val newParagraphs = (lastRecordedParagraphIndex + 1)..newParaIndex
+                val charsAdded = newParagraphs.sumOf { idx ->
+                    state.paragraphs.getOrNull(idx)?.length ?: 0
+                }
+                sessionCharsRead += charsAdded
+                lastRecordedParagraphIndex = newParaIndex
+            }
+        }
+    }
+
+    private suspend fun flushSessionStats(bookId: Long) {
+        if (sessionCharsRead <= 0 || readingStartTime <= 0) return
+        val now = System.currentTimeMillis()
+        val minutesRead = ((now - readingStartTime) / 60_000).toInt().coerceAtLeast(1)
+        val dateFormat = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault())
+        val today = dateFormat.format(java.util.Date(now))
+        try {
+            // 先删同书同日旧记录，再插入新记录（保持每日每书一条）
+            readingStatsDao.deleteForBookAndDate(bookId, today)
+            readingStatsDao.insertStat(
+                ReadingStatsEntity(
+                    bookId = bookId,
+                    date = today,
+                    readingMinutes = minutesRead,
+                    charsRead = sessionCharsRead.toInt(),
+                    paragraphsRead = (lastRecordedParagraphIndex + 1).coerceAtLeast(1),
+                )
+            )
+        } catch (e: Exception) {
+            android.util.Log.e("ReaderViewModel", "Failed to record stats", e)
         }
     }
 
@@ -603,8 +708,16 @@ class ReaderViewModel @Inject constructor(
     fun cleanup() {
         rsvpJob?.cancel()
         speedJob?.cancel()
+        autoReadJob?.cancel()
+        vocabJob?.cancel()
+        bookmarksJob?.cancel()
+        highlightsJob?.cancel()
+        bookJob?.cancel()
         ttsHelper.stop()
-        saveProgress()
+        viewModelScope.launch {
+            saveProgress()
+            currentBookId?.let { flushSessionStats(it) }
+        }
     }
 
     fun setTranslationAlpha(alpha: Float) {
@@ -612,6 +725,22 @@ class ReaderViewModel @Inject constructor(
             _uiState.update { it.copy(translationAlpha = alpha.coerceIn(0.3f, 1f)) }
             settingsRepository.setTranslationAlpha(alpha.coerceIn(0.3f, 1f))
         }
+    }
+
+    fun dismissModeSelector() {
+        _uiState.update { it.copy(showModeSelector = false) }
+    }
+
+    fun showModeSelector() {
+        _uiState.update { it.copy(showModeSelector = true) }
+    }
+
+    fun toggleSettings() {
+        _uiState.update { it.copy(showSettings = !it.showSettings) }
+    }
+
+    fun dismissWordDialog() {
+        _uiState.update { it.copy(showWordDialog = false, selectedVocab = null) }
     }
 
     fun toggleWordLevelColors() {

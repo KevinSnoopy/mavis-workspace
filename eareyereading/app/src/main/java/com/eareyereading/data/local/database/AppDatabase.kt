@@ -16,7 +16,7 @@ import com.eareyereading.data.local.entity.*
         BookmarkEntity::class,
         HighlightEntity::class,
     ],
-    version = 4,
+    version = 5,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {

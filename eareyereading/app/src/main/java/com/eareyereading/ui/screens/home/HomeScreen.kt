@@ -166,7 +166,7 @@ fun HomeScreen(
                         contentPadding = PaddingValues(horizontal = 24.dp),
                         horizontalArrangement = Arrangement.spacedBy(14.dp),
                     ) {
-                        items(uiState.recentBooks) { book ->
+                        items(uiState.recentBooks, key = { it.id }) { book ->
                             RecentBookCard(
                                 book = book,
                                 onClick = { onBookClick(book.id) },

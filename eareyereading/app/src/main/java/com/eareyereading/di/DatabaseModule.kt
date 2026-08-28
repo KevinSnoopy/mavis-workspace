@@ -90,6 +90,11 @@ object DatabaseModule {
                         db.execSQL("ALTER TABLE vocabulary ADD COLUMN example TEXT")
                     }
                 },
+                object : Migration(4, 5) {
+                    override fun migrate(db: SupportSQLiteDatabase) {
+                        db.execSQL("ALTER TABLE vocabulary ADD COLUMN level INTEGER NOT NULL DEFAULT 0")
+                    }
+                },
             )
             .build()
     }
@@ -124,8 +129,4 @@ object DatabaseModule {
         context.dataStore
 }
 
-@Module
-@InstallIn(SingletonComponent::class)
-object RepositoryModule {
-    // 使用 @Binds 的方式会需要更多设置，这里用显式注册
-}
+

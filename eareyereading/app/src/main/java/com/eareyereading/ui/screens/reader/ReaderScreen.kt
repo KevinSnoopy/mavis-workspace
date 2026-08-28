@@ -175,10 +175,10 @@ fun ReaderScreen(
                                 Secondary else LocalContentColor.current,
                         )
                     }
-                    IconButton(onClick = { viewModel._uiState.update { it.copy(showModeSelector = true) } }) {
+                    IconButton(onClick = viewModel::showModeSelector) {
                         Icon(Icons.Default.MenuBook, "阅读模式")
                     }
-                    IconButton(onClick = { viewModel._uiState.update { it.copy(showSettings = true) } }) {
+                    IconButton(onClick = viewModel::toggleSettings) {
                         Icon(Icons.Default.Settings, "设置")
                     }
                 },
@@ -203,7 +203,7 @@ fun ReaderScreen(
                 .background(backgroundColor)
                 .padding(padding)
                 .padding(horizontal = 20.dp)
-                .padding(bottom = if (uiState.selectedWord != null && !uiState.showWordDialog) 72.dp else 0.dp),
+                .padding(bottom = if (uiState.selectedVocab != null && !uiState.showWordDialog) 72.dp else 0.dp),
         ) {
             if (uiState.isLoading) {
                 CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
@@ -299,13 +299,13 @@ fun ReaderScreen(
         },
         // 词汇栏：点击单词后底部显示释义
         bottomBar = {
-            if (uiState.selectedWord != null && !uiState.showWordDialog) {
+            if (uiState.selectedVocab != null && !uiState.showWordDialog) {
                 VocabularyBar(
-                    word = uiState.selectedWord!!,
+                    word = uiState.selectedVocab!!.word,
                     definition = uiState.wordDefinition,
                     wordLevel = uiState.selectedWordLevel,
-                    onAddToVocabulary = { viewModel.addToVocabulary(uiState.selectedWord!!, null) },
-                    onClose = { viewModel._uiState.update { it.copy(showWordDialog = false, selectedWord = null) } },
+                    onAddToVocabulary = { viewModel.addToVocabulary(uiState.selectedVocab!!.word, null) },
+                    onClose = viewModel::dismissWordDialog,
                 )
             }
         },
@@ -316,7 +316,7 @@ fun ReaderScreen(
         ModeSelectorDialog(
             currentMode = uiState.readingMode,
             onSelect = viewModel::setReadingMode,
-            onDismiss = { viewModel._uiState.update { it.copy(showModeSelector = false) } },
+            onDismiss = viewModel::dismissModeSelector,
         )
     }
 
@@ -337,7 +337,7 @@ fun ReaderScreen(
             onTranslationAlphaChange = viewModel::setTranslationAlpha,
             onWordLevelColorsToggle = viewModel::toggleWordLevelColors,
             onKnownWordsHighlightToggle = viewModel::toggleKnownWordsHighlight,
-            onDismiss = { viewModel._uiState.update { it.copy(showSettings = false) } },
+            onDismiss = viewModel::toggleSettings,
         )
     }
 
@@ -347,18 +347,18 @@ fun ReaderScreen(
             paragraphs = uiState.paragraphs,
             currentIndex = uiState.currentParagraphIndex,
             onSelect = viewModel::goToParagraph,
-            onDismiss = { viewModel._uiState.update { it.copy(showChapterNav = false) } },
+            onDismiss = viewModel::toggleChapterNav,
         )
     }
 
     // 单词弹窗
-    if (uiState.showWordDialog && uiState.selectedWord != null) {
+    if (uiState.showWordDialog && uiState.selectedVocab != null) {
         WordDetailDialog(
-            word = uiState.selectedWord!!,
+            word = uiState.selectedVocab!!.word,
             definition = uiState.wordDefinition,
             wordLevel = uiState.selectedWordLevel,
-            onAddToVocabulary = { viewModel.addToVocabulary(uiState.selectedWord!!, null) },
-            onDismiss = { viewModel._uiState.update { it.copy(showWordDialog = false, selectedWord = null) } },
+            onAddToVocabulary = { viewModel.addToVocabulary(uiState.selectedVocab!!.word, null) },
+            onDismiss = viewModel::dismissWordDialog,
         )
     }
 
@@ -761,7 +761,7 @@ fun ClozeReadingView(
         clozeWords.forEach { clozeWord ->
             if (clozeWord.isWord) {
                 if (clozeWord.isHidden) {
-                    if (answer != null && clozeWord.text == answer) {
+                    if (answer != null && clozeWord.text.equals(answer, ignoreCase = true)) {
                         Text(
                             text = "__${clozeWord.text}__",
                             color = Secondary,

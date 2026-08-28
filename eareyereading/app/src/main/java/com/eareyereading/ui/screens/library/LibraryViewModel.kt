@@ -85,7 +85,12 @@ class LibraryViewModel @Inject constructor(
                     learnedWordCount = learned,
                 )
             }.collect { state ->
-                _uiState.value = state
+                _uiState.update { it.copy(
+                    books = state.books,
+                    searchQuery = state.searchQuery,
+                    totalWordCount = state.totalWordCount,
+                    learnedWordCount = state.learnedWordCount,
+                ) }
             }
         }
 
@@ -223,10 +228,11 @@ class LibraryViewModel @Inject constructor(
             _uiState.update { it.copy(isLoading = true, loadingMessage = "正在导入...") }
             try {
                 val inputStream = context.contentResolver.openInputStream(uri)
+                    ?: throw java.io.IOException("无法读取文件内容")
                 val fileName = uri.lastPathSegment ?: "book_${System.currentTimeMillis()}.epub"
                 val destFile = File(context.filesDir, "books/$fileName")
                 destFile.parentFile?.mkdirs()
-                inputStream?.use { input ->
+                inputStream.use { input ->
                     destFile.outputStream().use { output ->
                         input.copyTo(output)
                     }
@@ -345,12 +351,13 @@ class LibraryViewModel @Inject constructor(
             try {
                 val result = articleParser.parseFromUrl(article.link)
                 if (result != null) {
+                    val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
                     val book = Book(
                         title = article.title,
                         author = extractDomain(article.link),
                         filePath = "",
                         content = result.paragraphs.joinToString("\n\n"),
-                        addedAt = System.currentTimeMillis(),
+                        addedAt = dateFormat.format(Date()),
                     )
                     bookRepository.addBook(book)
                     _uiState.update { it.copy(

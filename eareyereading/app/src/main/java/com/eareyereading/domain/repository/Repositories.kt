@@ -28,12 +28,7 @@ interface VocabularyRepository {
     suspend fun translateWord(word: String, context: String?): String?
     suspend fun translateParagraphs(paragraphs: List<String>): Map<Int, String>
     suspend fun translateSentence(sentence: String): String?
-}
-
-interface WordFrequencyRepository {
-    fun getFrequencies(bookId: Long): Flow<List<WordFrequency>>
-    fun getTopFrequencies(bookId: Long, limit: Int): Flow<List<WordFrequency>>
-    suspend fun calculateFrequencies(bookId: Long, paragraphs: List<String>)
+    suspend fun addWordToReview(vocabularyId: Long, word: String)
 }
 
 interface ReadingRepository {
@@ -53,10 +48,17 @@ interface SettingsRepository {
     fun getTranslationAlpha(): Flow<Float>
     fun getRsvpStrength(): Flow<Int>
     fun getRsvpInterval(): Flow<Int>
+    fun getDarkMode(): Flow<Boolean>
+    fun getNotifications(): Flow<Boolean>
+    fun getCollinsHighlight(): Flow<Boolean>
     suspend fun setRsvpSpeed(speed: Int)
     suspend fun setFontSize(size: Int)
     suspend fun setTheme(theme: ReadingTheme)
     suspend fun setTranslationAlpha(alpha: Float)
     suspend fun setRsvpStrength(strength: Int)
     suspend fun setRsvpInterval(interval: Int)
+    suspend fun setDarkMode(enabled: Boolean)
+    suspend fun setNotifications(enabled: Boolean)
+    suspend fun setCollinsHighlight(enabled: Boolean)
+    suspend fun clearAll()
 }

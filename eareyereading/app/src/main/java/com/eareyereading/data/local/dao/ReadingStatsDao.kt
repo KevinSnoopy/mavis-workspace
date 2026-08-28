@@ -9,6 +9,10 @@ interface ReadingStatsDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertStat(stat: ReadingStatsEntity): Long
 
+    // 按 bookId + date 合并：已有则替换（用于每日去重）
+    @Query("DELETE FROM reading_stats WHERE bookId = :bookId AND date = :date")
+    suspend fun deleteForBookAndDate(bookId: Long, date: String)
+
     @Query("SELECT * FROM reading_stats WHERE date = :date ORDER BY timestamp DESC")
     fun getStatsByDate(date: String): Flow<List<ReadingStatsEntity>>
 

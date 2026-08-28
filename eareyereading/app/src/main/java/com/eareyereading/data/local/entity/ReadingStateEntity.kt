@@ -20,18 +20,3 @@ data class ReadingStateEntity(
     val theme: String = "light",          // light | dark | sepia
     val lastUpdated: Long = System.currentTimeMillis(),
 )
-
-/**
- * 阅读统计
- */
-@Entity(tableName = "reading_stats")
-data class ReadingStatsEntity(
-    @PrimaryKey
-    val date: String,                     // "yyyy-MM-dd"
-    val readingMinutes: Int = 0,          // 阅读分钟数（今日）
-    val charsRead: Int = 0,               // 今日阅读字符数
-    val wordsRead: Int = 0,               // 累计阅读词数
-    val booksStarted: Int = 0,
-    val booksFinished: Int = 0,
-    val timestamp: Long = System.currentTimeMillis(),
-)

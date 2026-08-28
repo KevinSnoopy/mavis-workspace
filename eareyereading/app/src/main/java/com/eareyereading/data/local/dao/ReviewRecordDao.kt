@@ -18,11 +18,14 @@ interface ReviewRecordDao {
     @Query("DELETE FROM review_records WHERE vocabularyId = :vocabularyId")
     suspend fun deleteByVocabularyId(vocabularyId: Long)
 
+    // 别名，方便调用
+    suspend fun deleteReviewForVocab(vocabularyId: Long) = deleteByVocabularyId(vocabularyId)
+
     @Query("SELECT * FROM review_records WHERE vocabularyId = :vocabularyId LIMIT 1")
     suspend fun getReviewForVocab(vocabularyId: Long): ReviewRecordEntity?
 
-    @Query("SELECT * FROM review_records WHERE nextReviewDate <= :now ORDER BY nextReviewDate ASC")
-    fun getDueReviews(now: Long): Flow<List<ReviewRecordEntity>>
+    @Query("SELECT * FROM review_records WHERE nextReviewDate <= :now ORDER BY nextReviewDate ASC LIMIT :limit")
+    fun getDueReviews(now: Long, limit: Int): Flow<List<ReviewRecordEntity>>
 
     @Query("SELECT COUNT(*) FROM review_records WHERE nextReviewDate <= :now")
     fun getDueReviewCount(now: Long): Flow<Int>

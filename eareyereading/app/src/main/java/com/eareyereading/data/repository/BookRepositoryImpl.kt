@@ -1,6 +1,11 @@
 package com.eareyereading.data.repository
 
+import android.util.Log
 import com.eareyereading.data.local.dao.BookDao
+import com.eareyereading.data.local.dao.BookmarkDao
+import com.eareyereading.data.local.dao.HighlightDao
+import com.eareyereading.data.local.dao.ReadingStateDao
+import com.eareyereading.data.local.dao.WordFrequencyDao
 import com.eareyereading.data.local.entity.BookEntity
 import com.eareyereading.domain.model.Book
 import com.eareyereading.domain.repository.BookRepository
@@ -14,6 +19,10 @@ import javax.inject.Singleton
 class BookRepositoryImpl @Inject constructor(
     private val bookDao: BookDao,
     private val epubParser: EpubParser,
+    private val bookmarkDao: BookmarkDao,
+    private val highlightDao: HighlightDao,
+    private val readingStateDao: ReadingStateDao,
+    private val wordFrequencyDao: WordFrequencyDao,
 ) : BookRepository {
 
     override fun getAllBooks(): Flow<List<Book>> =
@@ -26,20 +35,28 @@ class BookRepositoryImpl @Inject constructor(
         bookDao.getBookByIdFlow(id).map { it?.toDomain() }
 
     override suspend fun addBook(book: Book): Long {
-        // URL 导入的文章：有 content，无 filePath
-        val paragraphs = if (book.content.isNotBlank()) {
-            book.content.split("\n\n").filter { it.isNotBlank() }
-        } else if (book.filePath.isNotBlank()) {
-            epubParser.parseBook(book.filePath)
-        } else {
+        val paragraphs = try {
+            if (book.content.isNotBlank()) {
+                book.content.split("\n\n").filter { it.isNotBlank() }
+            } else if (book.filePath.isNotBlank()) {
+                epubParser.parseBook(book.filePath)
+            } else {
+                emptyList()
+            }
+        } catch (e: Exception) {
+            Log.e("BookRepository", "Failed to parse book", e)
             emptyList()
         }
 
         val totalWords = paragraphs.joinToString(" ").split("\\s+".toRegex())
             .filter { it.isNotBlank() }.size
 
+        val contentToSave = if (book.content.isNotBlank()) book.content
+            else paragraphs.joinToString("\n\n")
+
         val entity = book.toEntity().copy(
             totalWords = totalWords,
+            content = contentToSave,
             addedAt = book.addedAt.ifBlank { "" },
         )
         return bookDao.insert(entity)
@@ -58,7 +75,12 @@ class BookRepositoryImpl @Inject constructor(
     }
 
     override suspend fun deleteBook(bookId: Long) {
-        bookDao.getBookById(bookId)?.let { bookDao.delete(it) }
+        // 级联删除：单步失败不影响其余步骤的清理
+        try { bookmarkDao.deleteAllForBook(bookId) } catch (e: Exception) { Log.w("BookRepository", "bookmark cascade failed", e) }
+        try { highlightDao.deleteAllForBook(bookId) } catch (e: Exception) { Log.w("BookRepository", "highlight cascade failed", e) }
+        try { readingStateDao.deleteForBook(bookId) } catch (e: Exception) { Log.w("BookRepository", "readingState cascade failed", e) }
+        try { wordFrequencyDao.deleteForBook(bookId) } catch (e: Exception) { Log.w("BookRepository", "wordFreq cascade failed", e) }
+        bookDao.getBookById(bookId)?.let { try { bookDao.delete(it) } catch (e: Exception) { Log.e("BookRepository", "book delete failed", e) } }
     }
 
     override fun searchBooks(query: String): Flow<List<Book>> =

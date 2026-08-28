@@ -17,7 +17,6 @@ data class Book(
     val addedAt: String = "",   // 添加时间（格式：yyyy-MM-dd HH:mm）
     // 内容（运行时加载）
     val paragraphs: List<String> = emptyList(),
-    val wordFrequencies: List<WordFrequency> = emptyList(),
 )
 
 data class Vocabulary(
@@ -35,12 +34,8 @@ data class Vocabulary(
     val dateAdded: Long = System.currentTimeMillis(),
     val note: String? = null,
     val example: String? = null,
-)
-
-data class WordFrequency(
-    val word: String,
-    val count: Int,
-    val frequency: Float,
+    // Collins 词频等级：1=CORE, 2=INTERMEDIATE, 3=UPPER_INTERMEDIATE, 4=ADVANCED, 5=RARE, 0=未知
+    val level: Int = 0,
 )
 
 data class ReadingState(

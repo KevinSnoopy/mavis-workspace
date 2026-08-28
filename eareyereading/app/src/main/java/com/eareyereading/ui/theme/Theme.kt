@@ -71,7 +71,9 @@ fun EareyeReadingTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
     content: @Composable () -> Unit,
 ) {
-    val colorScheme = when (readingTheme) {
+    // 深色模式覆盖 readingTheme 的颜色方案
+    val effectiveTheme = if (darkTheme) ReadingTheme.DARK else readingTheme
+    val colorScheme = when (effectiveTheme) {
         ReadingTheme.DARK -> DarkColorScheme.copy(
             background = DarkBg,
             surface = Color(0xFF252540),
@@ -90,8 +92,9 @@ fun EareyeReadingTheme(
         SideEffect {
             val window = (view.context as Activity).window
             window.statusBarColor = colorScheme.background.toArgb()
+            // DARK 主题强制深色状态栏；LIGHT / SEPIA 强制浅色状态栏
             WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars =
-                readingTheme != ReadingTheme.DARK && !darkTheme
+                effectiveTheme != ReadingTheme.DARK
         }
     }
 
