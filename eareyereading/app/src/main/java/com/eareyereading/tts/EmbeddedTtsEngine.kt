@@ -19,9 +19,12 @@ import com.k2fsa.sherpa.onnx.OfflineTtsModelConfig
 import com.k2fsa.sherpa.onnx.OfflineTtsVitsModelConfig
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
@@ -66,6 +69,16 @@ class EmbeddedTtsEngine @Inject constructor(
 
     // 是否正在播放
     private val isPlaying = AtomicBoolean(false)
+
+    // speak() 调用串行化锁：
+    // sherpa-onnx OfflineTts 的 native 指针不能并发使用，
+    // 否则两个协程同时调 generate() 会触发 JNI 段错误 (SIGSEGV)。
+    // TtsHelper.speak() 在 scope.launch 里多次调用本方法，必须串行。
+    private val speakMutex = Mutex()
+
+    // 当前正在跑的 speak() 协程的 Job。stop() 取消它，连带释放 mutex。
+    private val speakJobLock = Any()
+    private var currentSpeakJob: Job? = null
 
     // 引擎状态（用于 UI 显示）
     private val _state = MutableStateFlow<EngineState>(EngineState.NOT_INITIALIZED)
@@ -217,6 +230,205 @@ class EmbeddedTtsEngine @Inject constructor(
         private const val PREFS_NAME = "embedded_tts_prefs"
         private const val KEY_SELECTED_MODEL = "selected_model"
     }
+
+/**
+ * 把文本切成 sherpa-onnx 能安全合成的块。
+ *
+ * 背景：sherpa-onnx VITS/MeloTTS 对单次 generate() 输入长度敏感，~200 字符以内稳定，
+ * 太长会触发 ONNX Runtime 内存分配异常（Scudo: invalid chunk state）+ JNI crash。
+ * 切分优先按句子边界（. ! ? 后跟空白 + 大写/引号/左括号），保证切出来的块仍是自然句子。
+ */
+/**
+ * 把文本里 sherpa-onnx MeloTTS 模型不认识的字符替换成可发音的等价物。
+ *
+ * 已知 OOV 列表（来自实际 logcat）：
+ *  - 数字 '0'-'99'：被 Ignore OOV 直接跳过，导致 tensor 索引越界 → SIGSEGV
+ *  - 标点 'í'（西班牙语重音字符）、'—'（em-dash）、'"' '"'（smart quotes）、'(' ')'：同样 OOV
+ *  - '$' '&' '+' '@' '#' '%' '=' '<' '>' '\\' '`' '~' '^' '|' 等特殊符号
+ *
+ * 替换策略：
+ *  - 4 位年份 (2026) → "twenty twenty-six"，避免被切成 "twenty" + "twenty-six"
+ *  - 其他数字 (65, 28, 10, 07) → 英文单词
+ *  - 标点 → ASCII 等价（'—' → ", ", '"' → '"'）
+ *  - 货币、特殊符号 → 英文读法
+ */
+private fun preprocessForTts(text: String): String {
+    var s = text
+
+    // 4 位年份 (1000-2099)：转成英文单词
+    // 注意：要在普通数字转换之前，避免 "2026" 被切成 "two thousand" + "twenty-six"
+    s = Regex("\\b(1\\d{3}|20\\d{2})\\b").replace(s) { match ->
+        numberToWords(match.value.toInt())
+    }
+
+    // 时间格式 "10:07" → "ten oh seven"
+    s = Regex("\\b(\\d{1,2}):(\\d{2})\\b").replace(s) { match ->
+        val (h, m) = match.groupValues[1] to match.groupValues[2]
+        "${numberToWords(h.toInt())} oh ${numberToWords(m.toInt())}"
+    }
+
+    // 其他数字 (含小数)：转英文
+    // 不含已处理过的年份/时间
+    s = Regex("(?<!\\d)(\\d+)(?!\\d|:)").replace(s) { match ->
+        numberToWords(match.value.toIntOrNull() ?: return@replace match.value)
+    }
+
+    // 标点替换
+    s = s.replace("\u2014", ", ")     // em-dash → comma+space
+    s = s.replace("\u2013", "-")      // en-dash → hyphen
+    s = s.replace("\u2018", "'")      // left single quote
+    s = s.replace("\u2019", "'")      // right single quote
+    s = s.replace("\u201C", "\"")     // left double quote
+    s = s.replace("\u201D", "\"")     // right double quote
+    s = s.replace("\u00ed", "i")      // í → i (Rodríguez → Rodriguez)
+    s = s.replace("\u00e9", "e")      // é → e
+    s = s.replace("\u00e1", "a")      // á → a
+    s = s.replace("\u00f1", "n")      // ñ → n
+    s = s.replace("\u00fc", "u")      // ü → u
+    s = s.replace("\u00e7", "c")      // ç → c
+    // 货币符号
+    s = s.replace("$", " dollars ")
+    s = s.replace("\u20ac", " euros ")  // €
+    s = s.replace("\u00a3", " pounds ") // £
+    s = s.replace("\u00a5", " yen ")    // ¥
+    // 其他常见 OOV 符号
+    s = s.replace("@", " at ")
+    s = s.replace("&", " and ")
+    s = s.replace("+", " plus ")
+    s = s.replace("=", " equals ")
+    s = s.replace("#", " number ")
+    s = s.replace("%", " percent ")
+    s = s.replace("\\", " ")
+    s = s.replace("/", " ")            // 日期斜杠
+
+    // 括号、特殊括号、引号变体
+    s = s.replace("(", ", ")
+    s = s.replace(")", ", ")
+    s = s.replace("\u00a0", " ")        // non-breaking space
+    s = s.replace("`", "'")             // backtick
+    s = s.replace("|", " ")
+    s = s.replace("^", " ")
+    s = s.replace("~", " ")
+    s = s.replace("\u2026", "...")      // ellipsis
+
+    // 常见缩写展开（MeloTTS lexicon 不含这些，G2P fallback 可能触发 native 空指针）
+    s = s.replace(Regex("\\bU\\.S\\.\\b"), "United States")
+    s = s.replace(Regex("\\bU\\.S\\.A\\.\\b"), "United States of America")
+    s = s.replace(Regex("\\bU\\.K\\.\\b"), "United Kingdom")
+    s = s.replace(Regex("\\bE\\.U\\.\\b"), "European Union")
+    s = s.replace(Regex("\\bP\\.M\\.\\b"), "P M")
+    s = s.replace(Regex("\\bA\\.M\\.\\b"), "A M")
+    s = s.replace(Regex("\\bD\\.C\\.\\b"), "D C")
+    s = s.replace(Regex("\\bN\\.Y\\.\\b"), "New York")
+    // 时间缩写 PM/AM/ET/CT/PT/MT（无点号的全大写）
+    s = s.replace(Regex("\\bPM\\b"), "P M")
+    s = s.replace(Regex("\\bAM\\b"), "A M")
+    s = s.replace(Regex("\\bET\\b"), "Eastern Time")
+    s = s.replace(Regex("\\bCT\\b"), "Central Time")
+    s = s.replace(Regex("\\bPT\\b"), "Pacific Time")
+    s = s.replace(Regex("\\bMT\\b"), "Mountain Time")
+    s = s.replace(Regex("\\bAP\\b"), "Associated Press")
+    s = s.replace(Regex("\\bCEO\\b"), "C E O")
+    s = s.replace(Regex("\\bGDP\\b"), "G D P")
+    s = s.replace(Regex("\\bNASA\\b"), "N A S A")
+    s = s.replace(Regex("\\bFBI\\b"), "F B I")
+    s = s.replace(Regex("\\bCIA\\b"), "C I A")
+
+    // 把连续 3+ 大写字母拆成单字母（如 "NATO" → "N A T O"），
+    // MeloTTS lexicon 有单字母发音，避免 G2P 对未知缩写崩溃
+    s = Regex("\\b[A-Z]{3,}\\b").replace(s) { match ->
+        match.value.toCharArray().joinToString(" ")
+    }
+
+    // 把连续空白合并
+    s = s.replace(Regex("\\s+"), " ").trim()
+    return s
+}
+
+/**
+ * 整数 → 英文单词（0-9999）。超过 9999 返回数字字符串本身。
+ * 不处理负数（文本里基本不会有）。
+ */
+private fun numberToWords(n: Int): String {
+    if (n < 0) return n.toString()
+    if (n > 9999) return n.toString()
+    if (n == 0) return "zero"
+
+    val units = arrayOf("", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine")
+    val teens = arrayOf("ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen",
+                        "sixteen", "seventeen", "eighteen", "nineteen")
+    val tens = arrayOf("", "", "twenty", "thirty", "forty", "fifty",
+                       "sixty", "seventy", "eighty", "ninety")
+
+    fun under1000(x: Int): String {
+        if (x == 0) return ""
+        val hundreds = x / 100
+        val rest = x % 100
+        val h = if (hundreds > 0) "${units[hundreds]} hundred " else ""
+        val r = when {
+            rest == 0 -> ""
+            rest < 10 -> units[rest]
+            rest < 20 -> teens[rest - 10]
+            else -> "${tens[rest / 10]}${if (rest % 10 > 0) " ${units[rest % 10]}" else ""}"
+        }
+        return "$h$r".trim()
+    }
+
+    val thousands = n / 1000
+    val rest = n % 1000
+    val t = if (thousands > 0) "${under1000(thousands)} thousand " else ""
+    return "$t${under1000(rest)}".trim()
+}
+
+private fun splitForTts(text: String, maxChunkLen: Int = 200): List<String> {
+    if (text.length <= maxChunkLen) return listOf(text)
+
+    // 用同一个"句末 + 大写开头"的边界切
+    val sentenceBoundary = Regex("(?<=[.!?])\\s+(?=[A-Z\"\\(])")
+    val sentences = text.split(sentenceBoundary).filter { it.isNotBlank() }
+
+    val chunks = mutableListOf<String>()
+    val sb = StringBuilder()
+    for (s in sentences) {
+        // 单句已经超过 maxChunkLen（极少见，如超长标题）：硬切到 maxChunkLen
+        if (s.length > maxChunkLen) {
+            if (sb.isNotEmpty()) {
+                chunks.add(sb.toString().trim())
+                sb.clear()
+            }
+            var i = 0
+            while (i < s.length) {
+                val end = (i + maxChunkLen).coerceAtMost(s.length)
+                chunks.add(s.substring(i, end))
+                i = end
+            }
+            continue
+        }
+        // 累积句直到再加就会超过 maxChunkLen
+        if (sb.isNotEmpty() && sb.length + 1 + s.length > maxChunkLen) {
+            chunks.add(sb.toString().trim())
+            sb.clear()
+        }
+        if (sb.isNotEmpty()) sb.append(' ')
+        sb.append(s)
+    }
+    if (sb.isNotEmpty()) chunks.add(sb.toString().trim())
+    return chunks
+}
+
+/**
+ * 纯逐句切分（不累积）。按句末标点 . ! ? 后跟空白切分，
+ * 每个元素是一个独立句子，适合逐句送入 sherpa-onnx generate()。
+ * 单句仍可能很长（如标题），调用方自行截断。
+ */
+private fun splitSentences(text: String): List<String> {
+    if (text.isBlank()) return emptyList()
+    // 句末标点 + 空白 + 下一句开头（大写/引号/左括号/数字）
+    val sentenceBoundary = Regex("(?<=[.!?])\\s+(?=[A-Z\"\\(\\d])")
+    return text.split(sentenceBoundary)
+        .map { it.trim() }
+        .filter { it.isNotBlank() }
+}
 
     private val prefs by lazy {
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -649,32 +861,90 @@ class EmbeddedTtsEngine @Inject constructor(
         speed: Float = 1.0f,
         onDone: () -> Unit = {},
     ): Boolean = withContext(Dispatchers.IO) {
+        // 关键：native sherpa-onnx OfflineTts 指针不能并发使用。
+        // 之前 TtsHelper.speak() 在 scope.launch 里多次并发调用，
+        // 两个 IO 协程同时调 generate() → JNI 段错误 SIGSEGV。
+        // 用 Mutex 串行化整个 speak 调用。
+        // 同步 currentSpeakJob，stop() 可以取消当前播放（连同 mutex 一起释放）。
+        synchronized(speakJobLock) {
+            currentSpeakJob = coroutineContext[Job]
+        }
+        try {
+            speakMutex.withLock {
+                doSpeakLocked(text, speed, onDone)
+            }
+        } finally {
+            synchronized(speakJobLock) {
+                if (currentSpeakJob === coroutineContext[Job]) {
+                    currentSpeakJob = null
+                }
+            }
+        }
+    }
+
+    private suspend fun doSpeakLocked(
+        text: String,
+        speed: Float,
+        onDone: () -> Unit,
+    ): Boolean {
         val currentTts = tts ?: run {
             Log.w(TAG, "speak() called but tts not initialized")
-            return@withContext false
+            return false
         }
         if (text.isBlank()) {
             onDone()
-            return@withContext true
+            return true
         }
 
         try {
             isPlaying.set(true)
-            val audio = currentTts.generate(text, sid = 0, speed = speed)
-            val pcm = audio.samples
-            val sr = audio.sampleRate
-            Log.i(
-                TAG,
-                "Generated audio: ${pcm.size} samples, sampleRate=$sr, duration=${"%.1f".format(pcm.size / sr.toFloat())}s"
-            )
-            playPcm(pcm, sr)
+            // 先做文本预处理：把 sherpa-onnx MeloTTS 模型的 OOV 字符替换成可发音的等价物，
+            // 否则 chunks[0] 直接传给 generate() 时会触发 native 段错误 (SIGSEGV)。
+            // 已知 OOV: 'í' '—' '"' '(' ')' '65' '28' '2026' '10' '07' 等数字 + 标点。
+            val cleaned = preprocessForTts(text)
+            // 逐句朗读：按句子边界切分，每句单独 generate+play。
+            // 不累积多句成一个 chunk——累积会导致单次 generate 输入过长触发 native 空指针崩溃。
+            // 每句通常 < 150 字符，是 sherpa-onnx VITS/MeloTTS 的安全区间。
+            val sentences = splitSentences(cleaned)
+            Log.i(TAG, "Embedded TTS speak: inputLen=${text.length}, cleanedLen=${cleaned.length}, sentences=${sentences.size}")
+            for ((idx, sentence) in sentences.withIndex()) {
+                if (sentence.isBlank()) continue
+                // 每句之前检查协程是否已被取消（stop() 调用）。
+                kotlinx.coroutines.yield()
+                kotlinx.coroutines.currentCoroutineContext()[Job]?.let { job ->
+                    if (!job.isActive) throw kotlinx.coroutines.CancellationException("stop() requested")
+                }
+                // 单句仍可能超长（如超长标题无句末标点），硬切到 150 字符避免 native 崩溃
+                val safeSentence = if (sentence.length > 150) sentence.substring(0, 150) else sentence
+                try {
+                    val audio = currentTts.generate(safeSentence, sid = 0, speed = speed)
+                    val pcm = audio.samples
+                    val sr = audio.sampleRate
+                    Log.i(
+                        TAG,
+                        "Embedded TTS sentence $idx/${sentences.size}: len=${safeSentence.length}, " +
+                            "generated ${pcm.size} samples, duration=${"%.1f".format(pcm.size / sr.toFloat())}s",
+                    )
+                    playPcm(pcm, sr)
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    // 单句 generate 崩溃（如 native G2P bug）：跳过该句，继续下一句
+                    Log.e(TAG, "sentence $idx generate failed, skipping: '${safeSentence.take(60)}'", e)
+                }
+            }
             isPlaying.set(false)
             onDone()
-            true
+            return true
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            // playPcm 内部的 delay() 会在协程取消时抛出 CancellationException；
+            // 不能吞掉，否则 withContext 不会正确传播取消信号。
+            isPlaying.set(false)
+            throw e
         } catch (e: Exception) {
             Log.e(TAG, "speak failed", e)
             isPlaying.set(false)
-            false
+            return false
         }
     }
 
@@ -682,6 +952,14 @@ class EmbeddedTtsEngine @Inject constructor(
      * 停止当前播放。
      */
     fun stop() {
+        // 取消当前 speak 协程：让 doSpeakLocked 立刻退出（协程取消时
+        // kotlinx coroutines Mutex.withLock 会在 finally 释放锁）。
+        // 之前只停 AudioTrack 会导致旧 speak 继续在 mutex 里跑完整段，
+        // 用户的"停止"按钮实际无效——新的 speak 必须等旧协程跑完才能进。
+        synchronized(speakJobLock) {
+            currentSpeakJob?.cancel()
+            currentSpeakJob = null
+        }
         synchronized(audioTrackLock) {
             try {
                 audioTrack?.let {
@@ -699,10 +977,28 @@ class EmbeddedTtsEngine @Inject constructor(
 
     /**
      * 播放 PCM 浮点音频数据。
+     *
+     * 改为 suspend 函数后用 [delay] 替代 [Thread.sleep]，使播放等待期间
+     * 能响应协程取消（如 viewModelScope 被清除时），避免占用 IO 线程直到
+     * 整段音频播完。
      */
-    private fun playPcm(samples: FloatArray, sampleRate: Int) {
+    private suspend fun playPcm(samples: FloatArray, sampleRate: Int) {
         if (samples.isEmpty()) return
-        stop() // 停止上一次播放
+        // 注意：不能调 stop()！stop() 会 cancel currentSpeakJob（即当前协程自己），
+        // 导致多 chunk 播放时第二个 chunk 的 playPcm 立刻取消整个 speak 协程。
+        // 这里只需释放上一个 AudioTrack（如果有），不取消协程。
+        synchronized(audioTrackLock) {
+            try {
+                audioTrack?.let {
+                    if (it.state == AudioTrack.STATE_INITIALIZED) {
+                        it.pause()
+                        it.flush()
+                    }
+                    it.release()
+                }
+            } catch (_: Exception) {}
+            audioTrack = null
+        }
 
         // sherpa-onnx 输出范围 [-1, 1] 的 Float，AudioTrack 需要 16-bit PCM
         val pcm16 = ShortArray(samples.size) { i ->
@@ -737,14 +1033,15 @@ class EmbeddedTtsEngine @Inject constructor(
 
         // 等待播放完成
         val durationMs = (pcm16.size * 1000L) / sampleRate
-        val frameDuration = durationMs / 50
         var elapsed = 0L
         while (elapsed < durationMs) {
-            Thread.sleep(50)
+            // delay 而非 Thread.sleep：释放 IO 线程，且能响应协程取消。
+            // delay 在协程被 cancel 时会抛 CancellationException，自动退出循环。
+            kotlinx.coroutines.delay(50)
             elapsed += 50
             synchronized(audioTrackLock) {
                 if (audioTrack !== track) {
-                    // 被打断
+                    // 被 stop() 打断（新 track 或 null）
                     track.release()
                     return
                 }

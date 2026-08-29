@@ -19,8 +19,11 @@ import com.eareyereading.util.*
 import com.eareyereading.util.CollinsClassifier.WordLevel
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
@@ -664,12 +667,22 @@ class ReaderViewModel @Inject constructor(
 
                 _uiState.update { it.copy(autoReadingParaIndex = paraIdx, currentParagraphIndex = paraIdx) }
 
-                // 按句子分割（简单处理：按 . ! ? 分割）
-                val sentences = para.split(Regex("(?<=[.!?])\\s+")).filter { it.isNotBlank() }
+                // 按句子分割。
+                // 用 (?<=[.!?])\s+(?=[A-Z"\(]) 切分，要求句末标点后跟空白 + 大写字母/引号/左括号，
+                // 这样 "Aug." "Mr." "Dr." 这种缩写后的 "." + 空格 + 小写/数字不会误切，
+                // 而 "happened. The" 这种正常句子边界仍能切出来。
+                val sentences = para.split(Regex("(?<=[.!?])\\s+(?=[A-Z\"\\(])")).filter { it.isNotBlank() }
                 _uiState.update { it.copy(currentSentences = sentences) }
 
-                suspendCancellableCoroutine { cont ->
-                    var cancelled = false
+                suspendCancellableCoroutine<Unit> { cont ->
+                    // 用 AtomicBoolean 防止 race；并优先靠 cont.isActive 守门
+                    val completed = java.util.concurrent.atomic.AtomicBoolean(false)
+
+                    fun finishOnce() {
+                        if (completed.compareAndSet(false, true) && cont.isActive) {
+                            cont.resume(Unit)
+                        }
+                    }
 
                     ttsHelper.speakSentences(
                         sentences = sentences,
@@ -677,17 +690,22 @@ class ReaderViewModel @Inject constructor(
                             _uiState.update { it.copy(currentSentenceIndex = sentenceIdx) }
                         },
                         onAllDone = {
-                            if (!cancelled) cont.resume(true)
+                            finishOnce()
                         },
                     )
 
-                    // 超时保护（每段最长 60 秒）
-                    viewModelScope.launch {
+                    // 超时保护（每段最长 60 秒）。
+                    // 用 cont.context 派生子协程，cont 被取消时子协程自动取消，
+                    // 避免 viewModelScope 派生的协程在父协程死掉后还跑。
+                    kotlinx.coroutines.CoroutineScope(cont.context).launch {
                         kotlinx.coroutines.delay(60_000)
-                        if (!cancelled) {
-                            cancelled = true
-                            cont.resume(false)
-                        }
+                        finishOnce()
+                    }
+
+                    // cont 取消时（父协程 stopAutoRead() 取消），立刻把 completed 标 true
+                    // 防止 speakSentences 的异步回调在取消后又 resume。
+                    cont.invokeOnCancellation {
+                        completed.set(true)
                     }
                 }
 
@@ -840,12 +858,60 @@ class ReaderViewModel @Inject constructor(
             for (i in _uiState.value.currentParagraphIndex until paragraphs.size) {
                 if (!_uiState.value.isPlaying) break
                 _uiState.update { it.copy(currentParagraphIndex = i) }
-                ttsHelper.speak(paragraphs[i])
-                // 每句停留时间：按单词数计算（SPEED_READ_WPM = 词/分钟）
+
+                // 按句切分（跟自动朗读用同一个 regex，保证句边界一致）
+                val sentences = paragraphs[i]
+                    .split(Regex("(?<=[.!?])\\s+(?=[A-Z\"\\(])"))
+                    .filter { it.isNotBlank() }
+                _uiState.update { it.copy(currentSentences = sentences) }
+
+                if (sentences.isEmpty()) {
+                    // 没有句子（极少见），按原 WPM 停留时间跳过
+                    val wordCount = paragraphs[i].split(Regex("\\s+")).count { it.isNotBlank() }
+                    delay((wordCount * 60L / SPEED_READ_WPM).coerceAtLeast(SPEED_READ_MIN_DELAY_MS))
+                    continue
+                }
+
+                // 调 speakSentences — UI 会按句推进 currentSentenceIndex
+                suspendCancellableCoroutine<Unit> { cont ->
+                    val completed = java.util.concurrent.atomic.AtomicBoolean(false)
+                    fun finishOnce() {
+                        if (completed.compareAndSet(false, true) && cont.isActive) {
+                            cont.resume(Unit)
+                        }
+                    }
+
+                    ttsHelper.speakSentences(
+                        sentences = sentences,
+                        onSentenceDone = { sentenceIdx ->
+                            _uiState.update { it.copy(currentSentenceIndex = sentenceIdx) }
+                        },
+                        onAllDone = { finishOnce() },
+                    )
+
+                    // 超时保护（每段最长 5 分钟）
+                    kotlinx.coroutines.CoroutineScope(cont.context).launch {
+                        kotlinx.coroutines.delay(5 * 60_000)
+                        finishOnce()
+                    }
+
+                    cont.invokeOnCancellation {
+                        completed.set(true)
+                        ttsHelper.stop()
+                    }
+                }
+
+                // 段间停顿：按单词数计算 WPM 停留
                 val wordCount = paragraphs[i].split(Regex("\\s+")).count { it.isNotBlank() }
                 delay((wordCount * 60L / SPEED_READ_WPM).coerceAtLeast(SPEED_READ_MIN_DELAY_MS))
             }
-            _uiState.update { it.copy(isPlaying = false) }
+            _uiState.update {
+                it.copy(
+                    isPlaying = false,
+                    currentSentences = emptyList(),
+                    currentSentenceIndex = 0,
+                )
+            }
         }
     }
 
@@ -1053,39 +1119,49 @@ class ReaderViewModel @Inject constructor(
     }
 
     fun saveProgress() {
-        viewModelScope.launch {
-            val bookId = currentBookId ?: return@launch
-            val state = _uiState.value
-            val totalChars = state.paragraphs.joinToString("\n\n").length
-            val progress = if (totalChars > 0) {
-                state.currentParagraphIndex.toFloat() / state.paragraphs.size.coerceAtLeast(1)
-            } else 0f
-            bookRepository.updateProgress(bookId, progress, state.currentParagraphIndex)
+        viewModelScope.launch { doSaveProgress() }
+    }
 
-            readingRepository.saveState(
-                ReadingState(
-                    bookId = bookId,
-                    currentPosition = state.currentWordIndex,
-                    currentParagraph = state.currentParagraphIndex,
-                    totalCharacters = totalChars,
-                    totalParagraphs = state.paragraphs.size,
-                    readingMode = state.readingMode,
-                    rsvpSpeed = state.rsvpSpeed,
-                    fontSize = state.fontSize,
-                    theme = state.theme,
-                )
+    /**
+     * 持久化阅读进度 + 更新会话统计。
+     *
+     * 提取为 suspend 函数是因为 [cleanup] 可能在 viewModelScope 已取消时
+     * （即 [onCleared] 路径）被调用；此时 [saveProgress] 内的
+     * viewModelScope.launch 永远不会执行。提取后，[onCleared] 可通过
+     * runBlocking 同步调用本函数，确保进度不丢。
+     */
+    private suspend fun doSaveProgress() {
+        val bookId = currentBookId ?: return
+        val state = _uiState.value
+        val totalChars = state.paragraphs.joinToString("\n\n").length
+        val progress = if (totalChars > 0) {
+            state.currentParagraphIndex.toFloat() / state.paragraphs.size.coerceAtLeast(1)
+        } else 0f
+        bookRepository.updateProgress(bookId, progress, state.currentParagraphIndex)
+
+        readingRepository.saveState(
+            ReadingState(
+                bookId = bookId,
+                currentPosition = state.currentWordIndex,
+                currentParagraph = state.currentParagraphIndex,
+                totalCharacters = totalChars,
+                totalParagraphs = state.paragraphs.size,
+                readingMode = state.readingMode,
+                rsvpSpeed = state.rsvpSpeed,
+                fontSize = state.fontSize,
+                theme = state.theme,
             )
+        )
 
-            // 记录阅读统计（仅新增段落计入字符数）
-            val newParaIndex = state.currentParagraphIndex
-            if (newParaIndex > lastRecordedParagraphIndex) {
-                val newParagraphs = (lastRecordedParagraphIndex + 1)..newParaIndex
-                val charsAdded = newParagraphs.sumOf { idx ->
-                    state.paragraphs.getOrNull(idx)?.length ?: 0
-                }
-                sessionCharsRead += charsAdded
-                lastRecordedParagraphIndex = newParaIndex
+        // 记录阅读统计（仅新增段落计入字符数）
+        val newParaIndex = state.currentParagraphIndex
+        if (newParaIndex > lastRecordedParagraphIndex) {
+            val newParagraphs = (lastRecordedParagraphIndex + 1)..newParaIndex
+            val charsAdded = newParagraphs.sumOf { idx ->
+                state.paragraphs.getOrNull(idx)?.length ?: 0
             }
+            sessionCharsRead += charsAdded
+            lastRecordedParagraphIndex = newParaIndex
         }
     }
 
@@ -1117,6 +1193,13 @@ class ReaderViewModel @Inject constructor(
         return wordAnalyzer.extractWords(para)
     }
 
+    /**
+     * 取消所有运行中的作业并停止 TTS。
+     *
+     * 如果 viewModelScope 仍然存活（Composable onDispose 调用），进度和统计
+     * 异步保存；如果已取消（[onCleared] 路径），则用 runBlocking 同步保存，
+     * 避免 viewModelScope.launch 在已取消的 scope 上静默丢弃保存操作。
+     */
     fun cleanup() {
         rsvpJob?.cancel()
         speedJob?.cancel()
@@ -1126,9 +1209,17 @@ class ReaderViewModel @Inject constructor(
         highlightsJob?.cancel()
         bookJob?.cancel()
         ttsHelper.stop()
-        viewModelScope.launch {
-            saveProgress()
-            currentBookId?.let { flushSessionStats(it) }
+        if (viewModelScope.isActive) {
+            viewModelScope.launch {
+                doSaveProgress()
+                currentBookId?.let { flushSessionStats(it) }
+            }
+        } else {
+            // onCleared() 路径：scope 已取消，同步保存避免数据丢失
+            runBlocking(Dispatchers.IO) {
+                doSaveProgress()
+                currentBookId?.let { flushSessionStats(it) }
+            }
         }
     }
 
