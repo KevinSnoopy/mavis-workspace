@@ -242,7 +242,8 @@ class EmbeddedTtsEngine @Inject constructor(
         val dir = File(context.filesDir, MODELS_DIR_NAME)
         return modelInfo.files.all { file ->
             val f = File(dir, file.relativePath)
-            f.exists() && f.length() > 0 && File(dir, file.relativePath + COMPLETE_SUFFIX).exists()
+            val contentOk = if (f.isDirectory) f.exists() else f.exists() && f.length() > 0
+            contentOk && File(dir, file.relativePath + COMPLETE_SUFFIX).exists()
         }
     }
 
@@ -450,7 +451,9 @@ class EmbeddedTtsEngine @Inject constructor(
         // 为所有文件写 .complete 标记
         for (f in modelInfo.files) {
             val target = File(modelsDir, f.relativePath)
-            if (target.exists() && target.length() > 0) {
+            // 目录：存在即可；文件：存在且非空
+            val ok = if (target.isDirectory) target.exists() else target.exists() && target.length() > 0
+            if (ok) {
                 File(modelsDir, f.relativePath + COMPLETE_SUFFIX).createNewFile()
             } else {
                 Log.e(TAG, "解压后文件缺失或为空：${f.relativePath}")
