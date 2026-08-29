@@ -51,6 +51,8 @@ interface SettingsRepository {
     fun getDarkMode(): Flow<Boolean>
     fun getNotifications(): Flow<Boolean>
     fun getCollinsHighlight(): Flow<Boolean>
+    /** TTS 语速倍率（0.5 - 2.0），用于内置/系统 TTS 的 speak 调用 */
+    fun getTtsSpeed(): Flow<Float>
     suspend fun setRsvpSpeed(speed: Int)
     suspend fun setFontSize(size: Int)
     suspend fun setTheme(theme: ReadingTheme)
@@ -60,5 +62,6 @@ interface SettingsRepository {
     suspend fun setDarkMode(enabled: Boolean)
     suspend fun setNotifications(enabled: Boolean)
     suspend fun setCollinsHighlight(enabled: Boolean)
+    suspend fun setTtsSpeed(speed: Float)
     suspend fun clearAll()
 }

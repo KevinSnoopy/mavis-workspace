@@ -2,6 +2,7 @@
 
 package com.eareyereading.ui.screens.reader
 
+import android.content.Context
 import androidx.compose.ui.graphics.Color
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -17,12 +18,71 @@ import com.eareyereading.ui.theme.*
 import com.eareyereading.util.*
 import com.eareyereading.util.CollinsClassifier.WordLevel
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+import kotlin.coroutines.resume
+
+/**
+ * TTS 引擎引导弹窗的事件载荷。
+ */
+data class TtsInstallPrompt(
+    val reason: TtsHelper.InitFailureReason,
+    val availableEngines: List<TtsEngineHelper.TtsEngineInfo>,
+    /** 自动回退候选引擎包名（如果不为空，弹窗会提示用户已自动尝试过此引擎） */
+    val fallbackEnginePackage: String? = null,
+    /** 通过 Intent 扫描发现的引擎（讯飞/百度/Google翻译等可能在这里） */
+    val discoveredEngines: List<TtsEngineHelper.TtsEngineInfo> = emptyList(),
+    /** 系统设置中选择的 TTS 引擎包名（Settings.Secure.TTS_DEFAULT_SYNTH） */
+    val systemDefaultEnginePackage: String? = null,
+    /** 是否处于"幽灵默认"状态：系统设置指向不存在的包，OEM 引擎不对第三方 app 开放 */
+    val isPhantomDefaultState: Boolean = false,
+    /** 设备上是否安装了 Google Play 商店 */
+    val hasGooglePlay: Boolean = false,
+    /** 未安装的第三方 TTS app（用于引导安装） */
+    val uninstalledThirdPartyTtsApps: List<TtsEngineHelper.ThirdPartyTtsApp> = emptyList(),
+    /** 安装指南步骤（当设备完全没有可用引擎时显示） */
+    val installGuideSteps: List<String> = emptyList(),
+    /** 当前 dialog 的对话场景（用于驱动 UI） */
+    val scenario: DialogScenario = DialogScenario.NO_ENGINE,
+    /** 内置 TTS 模型是否已下载 */
+    val embeddedModelDownloaded: Boolean = false,
+    /** 内置 TTS 模型显示名 */
+    val embeddedModelDisplayName: String = "",
+    /** 内置 TTS 模型大小（人类可读） */
+    val embeddedModelSizeText: String = "",
+) {
+    enum class DialogScenario {
+        HAS_DISCOVERED_ENGINES,
+        SYSTEM_DEFAULT_INSTALLED_BUT_UNREACHABLE,
+        NO_ENGINE,
+    }
+}
+
+/**
+ * 用户对 TTS 引导弹窗的回应动作。
+ */
+sealed class TtsInstallAction {
+    /** 打开指定引擎（或默认）的系统设置 */
+    data class OpenEngineSettings(val enginePackage: String?) : TtsInstallAction()
+    /** 跳转到安装 Google TTS 的界面（Google Play 商店或浏览器） */
+    data object InstallGoogleTts : TtsInstallAction()
+    /** 跳转到"未知来源应用"设置（让用户允许安装第三方 APK） */
+    data object OpenUnknownSourcesSettings : TtsInstallAction()
+    /** 用指定的引擎包名重新初始化 */
+    data class RetryWithEngine(val enginePackage: String) : TtsInstallAction()
+    /** 跳转到安装第三方 TTS app 的下载页面 */
+    data class InstallThirdPartyTtsApp(val app: TtsEngineHelper.ThirdPartyTtsApp) : TtsInstallAction()
+    /** 下载内置 TTS 模型 */
+    data object DownloadEmbeddedTts : TtsInstallAction()
+    /** 关闭弹窗 */
+    data object Dismiss : TtsInstallAction()
+}
 
 data class ReaderUiState(
     val book: Book? = null,
@@ -101,6 +161,7 @@ private data class ReadingSettings(
 
 @HiltViewModel
 class ReaderViewModel @Inject constructor(
+    @ApplicationContext private val context: Context,
     private val bookRepository: BookRepository,
     private val vocabularyRepository: VocabularyRepository,
     private val readingRepository: ReadingRepository,
@@ -118,6 +179,258 @@ class ReaderViewModel @Inject constructor(
     private val _uiState = MutableStateFlow(ReaderUiState())
     val uiState: StateFlow<ReaderUiState> = _uiState.asStateFlow()
 
+    // 一次性 UI 提示（错误 / 警告），UI 层收集后弹 Toast
+    private val _toastMessage = MutableSharedFlow<String>(extraBufferCapacity = 4)
+    val toastMessage: SharedFlow<String> = _toastMessage.asSharedFlow()
+
+    // TTS 引擎引导事件：弹窗引导用户去设置/安装 TTS 引擎
+    private val _ttsInstallPrompt = MutableSharedFlow<TtsInstallPrompt>(extraBufferCapacity = 2)
+    val ttsInstallPrompt: SharedFlow<TtsInstallPrompt> = _ttsInstallPrompt.asSharedFlow()
+
+    private fun showToast(msg: String) {
+        _toastMessage.tryEmit(msg)
+    }
+
+    private fun showTtsInstallPrompt(reason: TtsHelper.InitFailureReason, force: Boolean = false) {
+        // 防抖：本会话内已经弹过则不再弹。
+        // 例外：当完全没有系统 TTS 引擎且内置模型未下载时，弹窗是用户触达"下载内置 TTS"
+        // 的唯一入口，必须允许每次点击朗读都重新弹出，否则用户关掉一次就再也找不到下载按钮。
+        val embeddedEngine = ttsHelper.getEmbeddedEngine()
+        val embeddedNotDownloaded = !embeddedEngine.isModelDownloaded()
+        val isNoEngineCritical = reason == TtsHelper.InitFailureReason.NO_ENGINE && embeddedNotDownloaded
+        if (!force && !isNoEngineCritical && ttsPromptShownThisSession) {
+            android.util.Log.d("ReaderViewModel", "TTS install prompt suppressed (already shown this session)")
+            return
+        }
+        val engines = TtsEngineHelper.listAvailableEngines(context)
+        val fallback = TtsEngineHelper.findFallbackEngine(context)
+        val discovered = TtsEngineHelper.discoverAllTtsEngines(context)
+        val systemDefaultPkg = TtsEngineHelper.getSystemDefaultEnginePackage(context)
+        val isPhantom = TtsEngineHelper.isPhantomDefaultState(context)
+        val hasPlay = TtsEngineHelper.hasGooglePlay(context)
+        val uninstalledTtsApps = TtsEngineHelper.listUninstalledThirdPartyTtsApps(context)
+
+        // 内置 TTS 状态（embeddedEngine 已在上方防抖判断时获取，此处复用）
+        val embeddedDownloaded = embeddedEngine.isModelDownloaded()
+        val embeddedModelInfo = embeddedEngine.getCurrentModelInfo()
+        val embeddedSizeText = formatBytes(embeddedModelInfo.sizeBytes)
+
+        // 决定场景
+        val scenario = when {
+            discovered.isNotEmpty() ->
+                TtsInstallPrompt.DialogScenario.HAS_DISCOVERED_ENGINES
+            // 系统设置指向一个**已知 TTS 引擎包**（最常见的就是刚装好的 com.google.android.tts）
+            // 且用户实际上可以"重试连接"让它生效
+            systemDefaultPkg != null &&
+                TtsEngineHelper.isKnownTtsEnginePackage(systemDefaultPkg) ->
+                TtsInstallPrompt.DialogScenario.SYSTEM_DEFAULT_INSTALLED_BUT_UNREACHABLE
+            else ->
+                TtsInstallPrompt.DialogScenario.NO_ENGINE
+        }
+        val installGuide = if (scenario == TtsInstallPrompt.DialogScenario.NO_ENGINE) {
+            TtsEngineHelper.getInstallGuideSteps(context)
+        } else {
+            emptyList()
+        }
+
+        android.util.Log.i(
+            "ReaderViewModel",
+            "Showing TTS prompt: scenario=$scenario, " +
+                "discovered=${discovered.size}, systemDefault=$systemDefaultPkg, " +
+                "fallback=${fallback?.packageName}, embeddedDownloaded=$embeddedDownloaded"
+        )
+        _ttsInstallPrompt.tryEmit(
+            TtsInstallPrompt(
+                reason = reason,
+                availableEngines = engines,
+                fallbackEnginePackage = fallback?.packageName,
+                discoveredEngines = discovered,
+                systemDefaultEnginePackage = systemDefaultPkg,
+                isPhantomDefaultState = isPhantom,
+                hasGooglePlay = hasPlay,
+                uninstalledThirdPartyTtsApps = uninstalledTtsApps,
+                installGuideSteps = installGuide,
+                scenario = scenario,
+                embeddedModelDownloaded = embeddedDownloaded,
+                embeddedModelDisplayName = embeddedModelInfo.displayName,
+                embeddedModelSizeText = embeddedSizeText,
+            )
+        )
+        ttsPromptShownThisSession = true
+    }
+
+    private fun formatBytes(bytes: Long): String {
+        if (bytes < 1024) return "$bytes B"
+        val kb = bytes / 1024.0
+        if (kb < 1024) return "%.1f KB".format(kb)
+        val mb = kb / 1024.0
+        return "%.0f MB".format(mb)
+    }
+
+    /**
+     * 当用户手动尝试某个引擎成功后，重置防抖标记，以便后续失败仍能弹窗。
+     */
+    fun onTtsInitSucceeded() {
+        ttsPromptShownThisSession = false
+    }
+
+    /**
+     * 用户确认安装引导后，由 UI 层调用，处理后续跳转或安装动作。
+     */
+    fun onTtsInstallAction(action: TtsInstallAction) {
+        when (action) {
+            is TtsInstallAction.OpenEngineSettings -> {
+                val intent = TtsEngineHelper.buildTtsSettingsIntent(action.enginePackage)
+                intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                try {
+                    context.startActivity(intent)
+                } catch (e: android.content.ActivityNotFoundException) {
+                    android.util.Log.w("ReaderViewModel", "TTS settings not found", e)
+                    showToast("未找到 TTS 设置入口")
+                }
+            }
+            is TtsInstallAction.InstallGoogleTts -> {
+                val intent = if (TtsEngineHelper.hasGooglePlay(context)) {
+                    TtsEngineHelper.buildGooglePlayIntentForGoogleTts()
+                } else {
+                    TtsEngineHelper.buildApkDownloadIntentForGoogleTts()
+                }
+                try {
+                    context.startActivity(intent)
+                } catch (e: android.content.ActivityNotFoundException) {
+                    android.util.Log.w("ReaderViewModel", "Google TTS install not found", e)
+                    showToast("未找到 Google TTS 安装入口，请手动到应用商店搜索下载")
+                }
+            }
+            is TtsInstallAction.InstallThirdPartyTtsApp -> {
+                val intent = TtsEngineHelper.buildInstallAppIntent(
+                    action.app,
+                    hasPlay = TtsEngineHelper.hasGooglePlay(context),
+                )
+                try {
+                    context.startActivity(intent)
+                } catch (e: android.content.ActivityNotFoundException) {
+                    android.util.Log.w("ReaderViewModel", "Third-party TTS install not found", e)
+                    showToast("未找到下载入口，请手动到应用商店搜索「${action.app.displayName}」")
+                }
+            }
+            is TtsInstallAction.OpenUnknownSourcesSettings -> {
+                val intent = TtsEngineHelper.buildUnknownSourcesSettingsIntent(context)
+                try {
+                    context.startActivity(intent)
+                    showToast("请找到浏览器/文件管理器并允许安装未知应用")
+                } catch (e: android.content.ActivityNotFoundException) {
+                    android.util.Log.w("ReaderViewModel", "Unknown sources settings not found", e)
+                    showToast("未找到对应设置，请到设置→安全→未知来源 手动开启")
+                }
+            }
+            is TtsInstallAction.DownloadEmbeddedTts -> {
+                downloadEmbeddedTtsModel()
+            }
+            is TtsInstallAction.RetryWithEngine -> {
+                retryTtsInitWithEngine(action.enginePackage)
+            }
+            is TtsInstallAction.Dismiss -> { /* no-op */ }
+        }
+    }
+
+    /**
+     * 下载内置 TTS 模型，下载完后自动初始化并启用。
+     */
+    private fun downloadEmbeddedTtsModel() {
+        val embeddedEngine = ttsHelper.getEmbeddedEngine()
+        val modelInfo = embeddedEngine.getCurrentModelInfo()
+        showToast("开始下载内置 TTS 模型（约 ${modelInfo.sizeBytes / 1_000_000}MB），请保持网络...")
+        viewModelScope.launch {
+            val ok = embeddedEngine.downloadModel(modelInfo) { progress ->
+                // 这里可以做更精细的进度提示，但简单起见只 log
+                android.util.Log.d("ReaderViewModel", "Embedded TTS download progress: ${(progress * 100).toInt()}%")
+            }
+            if (ok) {
+                showToast("下载完成，正在启用内置 TTS...")
+                val initOk = ttsHelper.initializeEmbeddedForced()
+                if (initOk) {
+                    showToast("✅ 内置 TTS 已启用！现在可以朗读了")
+                } else {
+                    showToast("模型下载完成但初始化失败")
+                }
+            } else {
+                showToast("下载失败，请检查网络后重试")
+            }
+        }
+    }
+
+    /**
+     * 使用指定的引擎包名重新尝试初始化 TTS。
+     *
+     * 特殊值 `__EMBEDDED__` 表示激活内置 sherpa-onnx TTS。
+     */
+    private fun retryTtsInitWithEngine(enginePackage: String?) {
+        viewModelScope.launch {
+            val ok = if (enginePackage == "__EMBEDDED__") {
+                // 特殊值：激活内置 TTS
+                try {
+                    ttsHelper.initializeEmbeddedForced()
+                } catch (e: Exception) {
+                    android.util.Log.e("ReaderViewModel", "Embedded TTS init failed", e)
+                    false
+                }
+            } else {
+                try {
+                    ttsHelper.initializeWith(
+                        language = _uiState.value.book?.language ?: "en",
+                        enginePackage = enginePackage,
+                    )
+                } catch (e: TimeoutCancellationException) {
+                    android.util.Log.w("ReaderViewModel", "TTS init timed out (retry)", e)
+                    false
+                } catch (e: Exception) {
+                    android.util.Log.e("ReaderViewModel", "TTS init failed (retry)", e)
+                    false
+                }
+            }
+            _uiState.update { it.copy(ttsInitialized = ok) }
+            if (ok) {
+                ttsPromptShownThisSession = false // 重置防抖
+                showToast("TTS 已启用")
+            } else {
+                val reason = ttsHelper.lastFailureReason
+                // 用户主动重试时强制弹窗
+                if (reason != null) showTtsInstallPrompt(reason, force = true)
+                else showToast("TTS 初始化仍然失败")
+            }
+        }
+    }
+
+    /**
+     * 处理 TTS 初始化失败：设置状态、弹提示/引导。
+     */
+    private fun handleTtsInitFailure(prefix: String) {
+        _uiState.update { it.copy(ttsInitialized = false) }
+        val reason = ttsHelper.lastFailureReason
+        // 特化：系统 TTS 全失败且内置模型未下载 — 这是国产手机最常见场景，
+        // 提示应指向"下载内置 TTS"而非"安装系统引擎"。
+        val embeddedNotDownloaded = !ttsHelper.getEmbeddedEngine().isModelDownloaded()
+        val message = when {
+            reason == TtsHelper.InitFailureReason.NO_ENGINE && embeddedNotDownloaded ->
+                "$prefix：系统 TTS 不可用，需下载内置语音模型（约 ${ttsHelper.getEmbeddedEngine().getCurrentModelInfo().sizeBytes / 1_000_000}MB）"
+            reason == null -> "$prefix：设备未安装 TTS 引擎"
+            TtsEngineHelper.isChineseDevice() -> {
+                // 国产手机：附加品牌专属提示
+                val vendorHint = TtsEngineHelper.getEngineDisplayInfo(
+                    TtsEngineHelper.findFallbackEngine(context)?.packageName ?: ""
+                ).first
+                "$prefix：${reason.userMessage}（已尝试 $vendorHint 引擎）"
+            }
+            else -> "$prefix：${reason.userMessage}"
+        }
+        showToast(message)
+        if (reason != null && reason != TtsHelper.InitFailureReason.LANGUAGE_UNSUPPORTED) {
+            // 引导用户去安装/启用 TTS 引擎（语言不支持不引导，避免骚扰）
+            showTtsInstallPrompt(reason)
+        }
+    }
+
     private var rsvpJob: Job? = null
     private var speedJob: Job? = null
     private var autoReadJob: Job? = null
@@ -127,9 +440,30 @@ class ReaderViewModel @Inject constructor(
     private var bookJob: Job? = null
     private var currentBookId: Long? = null
     private var readingStartTime: Long = 0L
+
+    companion object {
+        // 自动朗读：段落间停顿时间（毫秒）
+        private const val PARAGRAPH_PAUSE_MS = 600L
+        // 快速阅读：默认语速（词/分钟），用于计算每段停留时间
+        private const val SPEED_READ_WPM = 130
+        // 快速阅读：每段最小停留时间（毫秒）
+        private const val SPEED_READ_MIN_DELAY_MS = 1500L
+        // 挖空练习：挖空比例
+        private const val CLOZE_RATIO = 0.15f
+        // 模糊听读：可见字符比例
+        private const val FUZZY_VISIBLE_RATIO = 0.3f
+        // 翻译透明度下限
+        private const val TRANSLATION_ALPHA_MIN = 0.3f
+        private const val TRANSLATION_ALPHA_MAX = 1f
+    }
     // 本次阅读会话的统计（用于 saveProgress/cleanup 时写入 DB）
     private var sessionCharsRead: Long = 0L
     private var lastRecordedParagraphIndex: Int = -1
+
+    // TTS 引导弹窗防抖：本会话内已经弹过则不再弹（避免用户每次点朗读都看到同一个弹窗）
+    private var ttsPromptShownThisSession = false
+    // TTS 初始化过程中用于协调 reader 协程间的等待锁
+    private val ttsInitLock = Any()
 
     init {
         viewModelScope.launch {
@@ -140,7 +474,13 @@ class ReaderViewModel @Inject constructor(
                 settingsRepository.getFontSize(),
                 settingsRepository.getTheme(),
                 settingsRepository.getTranslationAlpha(),
-            ) { speed, strength, interval, fontSize, theme, alpha ->
+            ) { values ->
+                val speed = values[0] as Int
+                val strength = values[1] as Int
+                val interval = values[2] as Int
+                val fontSize = values[3] as Int
+                val theme = values[4] as ReadingTheme
+                val alpha = values[5] as Float
                 ReadingSettings(speed, fontSize, theme, alpha, strength, interval)
             }.collect { s ->
                 _uiState.update {
@@ -183,14 +523,18 @@ class ReaderViewModel @Inject constructor(
         bookJob = viewModelScope.launch {
             // 用 first() 而非 collect() — 单次拉取，避免 updateProgress 后 Flow 重发射时
             // 错误地将 currentParagraphIndex 重置为保存的旧位置（覆盖用户当前阅读进度）
-            val book = bookRepository.getBookById(bookId).first() ?: return@launch
+            val book = bookRepository.getBookById(bookId).first()
+            if (book == null) {
+                _uiState.update { it.copy(isLoading = false) }
+                return@launch
+            }
             val paragraphs = if (book.content.isNotBlank()) {
                 book.content.split("\n\n").filter { it.isNotBlank() }
             } else {
                 epubParser.parseBook(book.filePath)
             }
             val state = readingRepository.getState(bookId)
-            val totalChars = paragraphs.joinToString(" ").length
+            val totalChars = paragraphs.joinToString(" ").length.toLong()
 
             _uiState.update {
                 it.copy(
@@ -207,8 +551,23 @@ class ReaderViewModel @Inject constructor(
 
             // 初始化 TTS
             if (!_uiState.value.ttsInitialized) {
-                val ok = ttsHelper.initialize(book.language)
+                val ok = try {
+                    ttsHelper.initialize(book.language)
+                } catch (e: TimeoutCancellationException) {
+                    android.util.Log.w("ReaderViewModel", "TTS init timed out", e)
+                    false
+                } catch (e: Exception) {
+                    android.util.Log.e("ReaderViewModel", "TTS init failed", e)
+                    false
+                }
                 _uiState.update { it.copy(ttsInitialized = ok) }
+                // 加载书籍时静默失败，不弹引导（等用户点击朗读时再弹）
+                if (!ok) {
+                    android.util.Log.i(
+                        "ReaderViewModel",
+                        "TTS init failed silently on load: ${ttsHelper.lastFailureReason}",
+                    )
+                }
             }
 
                 // 加载书签
@@ -241,7 +600,6 @@ class ReaderViewModel @Inject constructor(
                 }
             }
         }
-    }
 
     private fun parseHighlightColor(hex: String): Color {
         return try {
@@ -268,9 +626,21 @@ class ReaderViewModel @Inject constructor(
         // 初始化 TTS
         if (!_uiState.value.ttsInitialized) {
             viewModelScope.launch {
-                val ok = ttsHelper.initialize(_uiState.value.book?.language ?: "en")
+                val ok = try {
+                    ttsHelper.initialize(_uiState.value.book?.language ?: "en")
+                } catch (e: TimeoutCancellationException) {
+                    android.util.Log.w("ReaderViewModel", "TTS init timed out", e)
+                    false
+                } catch (e: Exception) {
+                    android.util.Log.e("ReaderViewModel", "TTS init failed", e)
+                    false
+                }
                 _uiState.update { it.copy(ttsInitialized = ok) }
-                if (ok) doStartAutoRead(paragraphs)
+                if (ok) {
+                    doStartAutoRead(paragraphs)
+                } else {
+                    handleTtsInitFailure("自动朗读不可用")
+                }
             }
         } else {
             doStartAutoRead(paragraphs)
@@ -322,7 +692,7 @@ class ReaderViewModel @Inject constructor(
                 }
 
                 // 段落间停顿
-                kotlinx.coroutines.delay(600)
+                kotlinx.coroutines.delay(PARAGRAPH_PAUSE_MS)
             }
 
             _uiState.update { it.copy(isAutoReading = false, currentSentences = emptyList()) }
@@ -361,7 +731,7 @@ class ReaderViewModel @Inject constructor(
         val currentIdx = _uiState.value.currentParagraphIndex
         if (currentIdx < paragraphs.size) {
             val text = paragraphs[currentIdx]
-            val clozeWords = wordAnalyzer.generateClozeText(text, ratio = 0.15f)
+            val clozeWords = wordAnalyzer.generateClozeText(text, ratio = CLOZE_RATIO)
             _uiState.update { it.copy(clozeWords = clozeWords, hiddenWordAnswer = null) }
         }
     }
@@ -371,7 +741,7 @@ class ReaderViewModel @Inject constructor(
         val currentIdx = _uiState.value.currentParagraphIndex
         if (currentIdx < paragraphs.size) {
             val text = paragraphs[currentIdx]
-            val fuzzyWords = wordAnalyzer.generateFuzzyText(text, visibleRatio = 0.3f)
+            val fuzzyWords = wordAnalyzer.generateFuzzyText(text, visibleRatio = FUZZY_VISIBLE_RATIO)
             _uiState.update { it.copy(fuzzyWords = fuzzyWords) }
         }
     }
@@ -380,7 +750,8 @@ class ReaderViewModel @Inject constructor(
         when (_uiState.value.readingMode) {
             ReadingMode.RSVP -> toggleRsvp()
             ReadingMode.SPEED -> toggleSpeed()
-            ReadingMode.NORMAL -> toggleTts()
+            // NORMAL 模式下「播放」= 从当前段开始自动朗读，与顶栏的「朗读」(只读当前段) 区分开
+            ReadingMode.NORMAL -> toggleAutoRead()
             else -> toggleTts()
         }
     }
@@ -393,9 +764,21 @@ class ReaderViewModel @Inject constructor(
             // 确保 TTS 初始化
             if (!_uiState.value.ttsInitialized) {
                 viewModelScope.launch {
-                    val ok = ttsHelper.initialize(_uiState.value.book?.language ?: "en")
+                    val ok = try {
+                        ttsHelper.initialize(_uiState.value.book?.language ?: "en")
+                    } catch (e: TimeoutCancellationException) {
+                        android.util.Log.w("ReaderViewModel", "TTS init timed out", e)
+                        false
+                    } catch (e: Exception) {
+                        android.util.Log.e("ReaderViewModel", "TTS init failed", e)
+                        false
+                    }
                     _uiState.update { it.copy(ttsInitialized = ok) }
-                    if (ok) startRsvp()
+                    if (ok) {
+                        startRsvp()
+                    } else {
+                        handleTtsInitFailure("RSVP 不可用")
+                    }
                 }
                 return
             }
@@ -428,9 +811,21 @@ class ReaderViewModel @Inject constructor(
             // 确保 TTS 初始化
             if (!_uiState.value.ttsInitialized) {
                 viewModelScope.launch {
-                    val ok = ttsHelper.initialize(_uiState.value.book?.language ?: "en")
+                    val ok = try {
+                        ttsHelper.initialize(_uiState.value.book?.language ?: "en")
+                    } catch (e: TimeoutCancellationException) {
+                        android.util.Log.w("ReaderViewModel", "TTS init timed out", e)
+                        false
+                    } catch (e: Exception) {
+                        android.util.Log.e("ReaderViewModel", "TTS init failed", e)
+                        false
+                    }
                     _uiState.update { it.copy(ttsInitialized = ok) }
-                    if (ok) startSpeed()
+                    if (ok) {
+                        startSpeed()
+                    } else {
+                        handleTtsInitFailure("速读不可用")
+                    }
                 }
                 return
             }
@@ -446,8 +841,9 @@ class ReaderViewModel @Inject constructor(
                 if (!_uiState.value.isPlaying) break
                 _uiState.update { it.copy(currentParagraphIndex = i) }
                 ttsHelper.speak(paragraphs[i])
-                // 每句停留时间
-                delay((paragraphs[i].length * 60L / 130).coerceAtLeast(1500L))
+                // 每句停留时间：按单词数计算（SPEED_READ_WPM = 词/分钟）
+                val wordCount = paragraphs[i].split(Regex("\\s+")).count { it.isNotBlank() }
+                delay((wordCount * 60L / SPEED_READ_WPM).coerceAtLeast(SPEED_READ_MIN_DELAY_MS))
             }
             _uiState.update { it.copy(isPlaying = false) }
         }
@@ -467,9 +863,21 @@ class ReaderViewModel @Inject constructor(
             // TTS 未初始化：尝试初始化
             if (!_uiState.value.ttsInitialized) {
                 viewModelScope.launch {
-                    val ok = ttsHelper.initialize(_uiState.value.book?.language ?: "en")
+                    val ok = try {
+                        ttsHelper.initialize(_uiState.value.book?.language ?: "en")
+                    } catch (e: TimeoutCancellationException) {
+                        android.util.Log.w("ReaderViewModel", "TTS init timed out", e)
+                        false
+                    } catch (e: Exception) {
+                        android.util.Log.e("ReaderViewModel", "TTS init failed", e)
+                        false
+                    }
                     _uiState.update { it.copy(ttsInitialized = ok) }
-                    if (ok) doToggleTts()
+                    if (ok) {
+                        doToggleTts()
+                    } else {
+                        handleTtsInitFailure("朗读不可用")
+                    }
                 }
                 return
             }
@@ -489,6 +897,7 @@ class ReaderViewModel @Inject constructor(
 
     fun nextParagraph() {
         val paragraphs = _uiState.value.paragraphs
+        if (paragraphs.isEmpty()) return
         val nextIdx = (_uiState.value.currentParagraphIndex + 1).coerceAtMost(paragraphs.size - 1)
         _uiState.update { it.copy(currentParagraphIndex = nextIdx, currentWordIndex = 0) }
         saveProgress()
@@ -497,6 +906,8 @@ class ReaderViewModel @Inject constructor(
     }
 
     fun prevParagraph() {
+        val paragraphs = _uiState.value.paragraphs
+        if (paragraphs.isEmpty()) return
         val prevIdx = (_uiState.value.currentParagraphIndex - 1).coerceAtLeast(0)
         _uiState.update { it.copy(currentParagraphIndex = prevIdx, currentWordIndex = 0) }
         saveProgress()
@@ -506,6 +917,7 @@ class ReaderViewModel @Inject constructor(
 
     fun goToParagraph(index: Int) {
         val paragraphs = _uiState.value.paragraphs
+        if (paragraphs.isEmpty()) return
         val idx = index.coerceIn(0, paragraphs.size - 1)
         _uiState.update { it.copy(currentParagraphIndex = idx, currentWordIndex = 0) }
         saveProgress()
@@ -722,8 +1134,8 @@ class ReaderViewModel @Inject constructor(
 
     fun setTranslationAlpha(alpha: Float) {
         viewModelScope.launch {
-            _uiState.update { it.copy(translationAlpha = alpha.coerceIn(0.3f, 1f)) }
-            settingsRepository.setTranslationAlpha(alpha.coerceIn(0.3f, 1f))
+            _uiState.update { it.copy(translationAlpha = alpha.coerceIn(TRANSLATION_ALPHA_MIN, TRANSLATION_ALPHA_MAX)) }
+            settingsRepository.setTranslationAlpha(alpha.coerceIn(TRANSLATION_ALPHA_MIN, TRANSLATION_ALPHA_MAX))
         }
     }
 

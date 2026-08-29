@@ -1,5 +1,6 @@
-package com.eareyereading.di
 @file:Suppress("WildcardImport", "FunctionNaming", "UnusedParameter", "MatchingDeclarationName")
+
+package com.eareyereading.di
 
 import com.eareyereading.data.repository.*
 import com.eareyereading.domain.repository.*

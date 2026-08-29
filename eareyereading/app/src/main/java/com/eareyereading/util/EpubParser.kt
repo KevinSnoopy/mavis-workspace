@@ -16,16 +16,17 @@ class EpubParser @Inject constructor() {
 
     /**
      * 解析 EPUB 文件，返回段落列表
+     * 解析失败（文件不存在、IO 错误、格式错误）时返回空列表，由调用方决定如何处理。
      */
     fun parseBook(filePath: String): List<String> {
         return try {
             parseEpub(File(filePath))
         } catch (e: java.io.IOException) {
             android.util.Log.e("EpubParser", "Error reading EPUB file: ${filePath}", e)
-            getSampleParagraphs()
+            emptyList()
         } catch (e: java.util.zip.ZipException) {
             android.util.Log.e("EpubParser", "Invalid EPUB file: ${filePath}", e)
-            getSampleParagraphs()
+            emptyList()
         }
     }
 
@@ -33,17 +34,17 @@ class EpubParser @Inject constructor() {
      * 解析 EPUB 文件
      */
     private fun parseEpub(file: File): List<String> {
-        if (!file.exists()) return getSampleParagraphs()
+        if (!file.exists()) return emptyList()
 
         val paragraphs = mutableListOf<String>()
         ZipFile(file).use { zip ->
             // 找到 OPF 文件
             val opfEntry = zip.entries().asSequence()
                 .filter { it.name.endsWith(".opf") }
-                .firstOrNull() ?: return getSampleParagraphs()
+                .firstOrNull() ?: return emptyList()
 
             // 解析 OPF 获取 spine 顺序
-            val opfContent = zip.getInputStream(opfEntry).bufferedReader().readText()
+            val opfContent = zip.getInputStream(opfEntry).bufferedReader().use { it.readText() }
             val spineIds = extractSpineIds(opfContent)
             val manifestItems = extractManifestItems(opfContent)
 
@@ -54,7 +55,7 @@ class EpubParser @Inject constructor() {
                     .filter { it.name.endsWith(href) || it.name.endsWith("$href.xhtml") || it.name.endsWith("$href.html") }
                     .firstOrNull() ?: continue
 
-                val html = zip.getInputStream(entry).bufferedReader().readText()
+                val html = zip.getInputStream(entry).bufferedReader().use { it.readText() }
                 paragraphs.addAll(extractParagraphsFromHtml(html))
             }
         }
@@ -89,18 +90,26 @@ class EpubParser @Inject constructor() {
         var text = html.replace(Regex("<script[^>]*>[\\s\\S]*?</script>"), "")
         text = text.replace(Regex("<style[^>]*>[\\s\\S]*?</style>"), "")
 
-        // 移除所有 HTML 标签
-        text = text.replace(Regex("<[^>]+>"), " ")
+        // 优先按 <p> 标签分割段落（EPUB 最常见的段落标签）
+        val pTagRegex = Regex("<p[^>]*>(.*?)</p>", RegexOption.DOT_MATCHES_ALL)
+        val pParagraphs = pTagRegex.findAll(text).map { it.groupValues[1] }.toList()
 
-        // 解码 HTML 实体
-        text = decodeHtmlEntities(text)
+        val rawParagraphs = if (pParagraphs.isNotEmpty()) {
+            pParagraphs
+        } else {
+            // 回退：按 <br> 或块级标签分割
+            text.split(Regex("<br\\s*/?>|</(?:div|section|article|p)>"))
+        }
 
-        // 清理空白字符
-        text = text.replace(Regex("\\s+"), " ").trim()
-
-        // 按段落分割（两个以上换行符）
-        return text.split(Regex("\\n\\s*\\n"))
-            .map { it.trim() }
+        return rawParagraphs
+            .map { para ->
+                // 移除剩余 HTML 标签
+                var cleaned = para.replace(Regex("<[^>]+>"), " ")
+                // 解码 HTML 实体
+                cleaned = decodeHtmlEntities(cleaned)
+                // 压缩空白并 trim
+                cleaned.replace(Regex("\\s+"), " ").trim()
+            }
             .filter { it.length > 10 }
     }
 
@@ -115,15 +124,4 @@ class EpubParser @Inject constructor() {
             .replace("&#39;", "'")
             .replace(Regex("&#(\\d+);")) { it.groupValues[1].toInt().toChar().toString() }
     }
-
-    /**
-     * 示例段落（当文件不存在时使用）
-     */
-    private fun getSampleParagraphs(): List<String> = listOf(
-        "The quick brown fox jumps over the lazy dog. This pangram contains every letter of the English alphabet at least once.",
-        "Reading is a gateway to knowledge and imagination. Through books, we can travel to distant lands, meet fascinating characters, and explore ideas that expand our understanding of the world.",
-        "Effective reading requires both speed and comprehension. Skilled readers develop the ability to process text quickly while retaining key information and meaning.",
-        "Building vocabulary is essential for reading fluency. Each new word learned opens additional pathways for understanding and communication.",
-        "Practice makes progress. Consistent daily reading builds the neural connections that make fluent reading feel natural and effortless.",
-    )
 }

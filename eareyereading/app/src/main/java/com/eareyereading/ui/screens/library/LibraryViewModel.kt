@@ -17,8 +17,10 @@ import com.eareyereading.util.ArticleParser
 import com.eareyereading.util.RssParser
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
@@ -287,20 +289,28 @@ class LibraryViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 val feed = if (source.isRss) {
-                    rssParser.parse(source.url)
+                    withContext(Dispatchers.IO) { rssParser.parse(source.url) }
                 } else {
                     // 非 RSS 源：抓取首页，尝试从中提取文章链接
                     fetchArticleLinks(source)
                 }
                 if (feed != null && feed.items.isNotEmpty()) {
+                    // 去重：同一篇 feed 中可能出现重复的 (link, title) 组合，
+                    // LazyColumn 的 key 必须唯一，否则触发 IllegalArgumentException 崩溃。
+                    val uniqueArticles = feed.items.distinctBy { it.link to it.title }
                     _uiState.update { it.copy(
-                        articles = feed.items,
+                        articles = uniqueArticles,
                         articlesLoading = false,
+                    ) }
+                } else if (feed == null) {
+                    _uiState.update { it.copy(
+                        articlesLoading = false,
+                        articlesError = "加载失败：无法读取该源（网络异常或 RSS 格式异常）",
                     ) }
                 } else {
                     _uiState.update { it.copy(
                         articlesLoading = false,
-                        articlesError = "该源暂无文章，请稍后再试",
+                        articlesError = "该源暂无文章",
                     ) }
                 }
             } catch (e: java.io.IOException) {
@@ -308,19 +318,50 @@ class LibraryViewModel @Inject constructor(
                     articlesLoading = false,
                     articlesError = "加载失败: 网络错误",
                 ) }
-            } catch (e: java.lang.RuntimeException) {
+            } catch (e: org.xmlpull.v1.XmlPullParserException) {
                 _uiState.update { it.copy(
                     articlesLoading = false,
-                    articlesError = "加载失败: ${e.message}",
+                    articlesError = "加载失败: RSS 格式错误",
+                ) }
+            } catch (e: java.lang.RuntimeException) {
+                val msg = e.message ?: e.javaClass.simpleName
+                _uiState.update { it.copy(
+                    articlesLoading = false,
+                    articlesError = "加载失败: $msg",
+                ) }
+            } catch (e: Exception) {
+                _uiState.update { it.copy(
+                    articlesLoading = false,
+                    articlesError = "加载失败: ${e.javaClass.simpleName}",
                 ) }
             }
         }
     }
 
     private suspend fun fetchArticleLinks(source: ArticleSource): RssParser.RssFeed? {
-        // 对非 RSS 源，尝试抓取首页提取 article 链接
+        // 非 RSS 源：先尝试提取真实文章链接
+        val linkResult = articleParser.parseArticleLinks(source.url)
+        if (linkResult != null && linkResult.links.isNotEmpty()) {
+            val articles = linkResult.links.map { link ->
+                RssParser.RssArticle(
+                    title = link.title,
+                    link = resolveUrl(source.url, link.url),
+                    description = null,
+                    pubDate = null,
+                    pubTimestamp = System.currentTimeMillis(),
+                )
+            }
+            return RssParser.RssFeed(
+                title = linkResult.title,
+                description = null,
+                link = source.url,
+                items = articles,
+            )
+        }
+        // 回退：从首页提取段落内容
         val result = articleParser.parseFromUrl(source.url) ?: return null
-        val articles = result.paragraphs.take(10).mapIndexed { i, p ->
+        if (result.paragraphs.isEmpty()) return null
+        val articles = result.paragraphs.take(10).map { p ->
             RssParser.RssArticle(
                 title = p.take(80),
                 link = source.url,
@@ -337,6 +378,15 @@ class LibraryViewModel @Inject constructor(
         )
     }
 
+    private fun resolveUrl(base: String, relative: String): String {
+        if (relative.startsWith("http://") || relative.startsWith("https://")) return relative
+        if (relative.startsWith("/")) {
+            val prefix = base.substringBefore("://") + "://" + base.substringAfter("://").substringBefore("/")
+            return prefix + relative
+        }
+        return base.substringBeforeLast("/") + "/" + relative
+    }
+
     fun clearSelectedSource() {
         _uiState.update { it.copy(
             selectedSource = null,
@@ -346,14 +396,18 @@ class LibraryViewModel @Inject constructor(
     }
 
     fun addArticleToLibrary(article: RssParser.RssArticle) {
+        if (article.link.isBlank()) {
+            _uiState.update { it.copy(isLoading = false, loadingMessage = "文章链接无效，无法导入") }
+            return
+        }
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, loadingMessage = "正在导入文章...") }
             try {
                 val result = articleParser.parseFromUrl(article.link)
-                if (result != null) {
+                if (result != null && result.paragraphs.isNotEmpty()) {
                     val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
                     val book = Book(
-                        title = article.title,
+                        title = article.title.ifBlank { "Web Article" },
                         author = extractDomain(article.link),
                         filePath = "",
                         content = result.paragraphs.joinToString("\n\n"),
@@ -363,15 +417,16 @@ class LibraryViewModel @Inject constructor(
                     _uiState.update { it.copy(
                         isLoading = false,
                         loadingMessage = "「${article.title.take(20)}...」已加入书库！",
-                        selectedTab = 0,   // 切回书库
+                        selectedTab = 0,
                     ) }
                 } else {
-                    _uiState.update { it.copy(isLoading = false, loadingMessage = "抓取失败，请重试") }
+                    _uiState.update { it.copy(isLoading = false, loadingMessage = "抓取失败：无法解析文章内容") }
                 }
             } catch (e: java.io.IOException) {
                 _uiState.update { it.copy(isLoading = false, loadingMessage = "导入失败: 网络错误") }
             } catch (e: java.lang.RuntimeException) {
-                _uiState.update { it.copy(isLoading = false, loadingMessage = "导入失败: ${e.message}") }
+                val msg = e.message ?: e.javaClass.simpleName
+                _uiState.update { it.copy(isLoading = false, loadingMessage = "导入失败: $msg") }
             }
         }
     }

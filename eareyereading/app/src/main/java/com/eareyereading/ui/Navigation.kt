@@ -1,12 +1,19 @@
 package com.eareyereading.ui
 
-import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
@@ -66,39 +73,47 @@ fun AppNavigation(
             if (showBottomBar) {
                 NavigationBar(
                     containerColor = MaterialTheme.colorScheme.surface,
-                    tonalElevation = androidx.compose.ui.unit.dp.times(0),
+                    tonalElevation = 0.dp,
                 ) {
                     bottomNavItems.forEach { item ->
                         val selected = currentDestination?.hierarchy?.any { it.route == item.screen.route } == true
-                        NavigationBarItem(
-                            selected = selected,
-                            onClick = {
-                                navController.navigate(item.screen.route) {
-                                    popUpTo(navController.graph.findStartDestination().id) {
-                                        saveState = true
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight()
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(
+                                    if (selected) MaterialTheme.colorScheme.primary else Color.Transparent
+                                )
+                                .clickable {
+                                    navController.navigate(item.screen.route) {
+                                        popUpTo(navController.graph.findStartDestination().id) {
+                                            saveState = true
+                                        }
+                                        launchSingleTop = true
+                                        restoreState = true
                                     }
-                                    launchSingleTop = true
-                                    restoreState = true
                                 }
-                            },
-                            icon = {
+                                .padding(vertical = 6.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                            ) {
                                 Icon(
                                     if (selected) item.selectedIcon else item.unselectedIcon,
                                     contentDescription = item.label,
+                                    tint = if (selected) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(24.dp),
                                 )
-                            },
-                            label = {
+                                Spacer(modifier = Modifier.height(2.dp))
                                 Text(
                                     item.label,
                                     style = MaterialTheme.typography.labelSmall,
+                                    color = if (selected) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
-                            },
-                            colors = NavigationBarItemDefaults.colors(
-                                selectedIconColor = MaterialTheme.colorScheme.primary,
-                                selectedTextColor = MaterialTheme.colorScheme.primary,
-                                indicatorColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.1f),
-                            ),
-                        )
+                            }
+                        }
                     }
                 }
             }

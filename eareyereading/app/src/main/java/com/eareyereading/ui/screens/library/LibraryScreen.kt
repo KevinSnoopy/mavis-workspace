@@ -8,6 +8,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -286,7 +287,7 @@ fun BookCard(
             .clickable(onClick = onClick),
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.5.dp),
+
     ) {
         Row(
             modifier = Modifier
@@ -331,7 +332,7 @@ fun BookCard(
                 // 进度条
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     LinearProgressIndicator(
-                        progress = { book.readProgress },
+                        progress = book.readProgress,
                         modifier = Modifier
                             .weight(1f)
                             .height(4.dp)
@@ -489,7 +490,7 @@ fun ArticleSquareScreen(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 IconButton(onClick = onBackFromSource) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回")
+                    Icon(Icons.Default.ArrowBack, "返回")
                 }
                 Text(
                     text = selectedSource.name,
@@ -546,7 +547,11 @@ fun ArticleSquareScreen(
                         contentPadding = PaddingValues(horizontal = 24.dp, vertical = 8.dp),
                         verticalArrangement = Arrangement.spacedBy(14.dp),
                     ) {
-                        items(articles, key = { it.link + it.title }) { article ->
+                        itemsIndexed(articles, key = { index, article ->
+                            // 复合 key：index + link + title，确保唯一性
+                            // 即使 ViewModel 去重遗漏，index 维度也能兜底防崩溃
+                            "$index:${article.link}:${article.title}"
+                        }) { index, article ->
                             ArticleItemCard(
                                 article = article,
                                 sourceName = selectedSource.name,
@@ -604,7 +609,7 @@ fun ArticleSourceCard(
             .clickable(onClick = onClick),
         shape = RoundedCornerShape(14.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.5.dp),
+
     ) {
         Row(
             modifier = Modifier.padding(18.dp),
@@ -612,7 +617,13 @@ fun ArticleSourceCard(
         ) {
             Surface(
                 shape = RoundedCornerShape(12.dp),
-                color = Color(source.color).copy(alpha = 0.15f),
+                color = when (source.category) {
+                    com.eareyereading.domain.model.SourceCategory.NEWS -> Color(0xFF5B7FFF)
+                    com.eareyereading.domain.model.SourceCategory.TECH -> Color(0xFF00C853)
+                    com.eareyereading.domain.model.SourceCategory.SCIENCE -> Color(0xFFFF9800)
+                    com.eareyereading.domain.model.SourceCategory.CULTURE -> Color(0xFFE91E63)
+                    else -> Color(0xFF9E9E9E)
+                }.copy(alpha = 0.15f),
                 modifier = Modifier.size(48.dp),
             ) {
                 Box(contentAlignment = Alignment.Center) {
@@ -676,7 +687,7 @@ fun ArticleItemCard(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(14.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.5.dp),
+
     ) {
         Column(modifier = Modifier.padding(18.dp)) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {

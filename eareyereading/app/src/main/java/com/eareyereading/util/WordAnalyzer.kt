@@ -14,6 +14,7 @@ data class ClozeWord(
 data class FuzzyWord(
     val text: String,
     val isBlurred: Boolean,
+    val isWord: Boolean = true,
 )
 
 /**
@@ -51,7 +52,7 @@ class WordAnalyzer @Inject constructor() {
     fun calculateWordFrequencies(text: String): Map<String, Int> {
         val words = extractWords(text)
         return words
-            .filter { it.length > 2 && it !in stopWords }
+            .filter { it.length > 2 && it.lowercase() !in stopWords }
             .groupingBy { it.lowercase() }
             .eachCount()
     }
@@ -155,23 +156,23 @@ class WordAnalyzer @Inject constructor() {
             // 使用忽略大小写的搜索
             val start = text.indexOf(word, pos, ignoreCase = true)
             if (start == -1) {
-                result.add(FuzzyWord(word, isBlurred = true))
+                result.add(FuzzyWord(word, isBlurred = true, isWord = true))
                 pos += word.length
                 continue
             }
 
             if (start > pos) {
-                result.add(FuzzyWord(text.substring(pos, start), isBlurred = true))
+                result.add(FuzzyWord(text.substring(pos, start), isBlurred = true, isWord = false))
             }
 
             // 随机决定是否模糊
             val isBlurred = kotlin.random.Random.nextFloat() > visibleRatio
-            result.add(FuzzyWord(word, isBlurred = isBlurred))
+            result.add(FuzzyWord(word, isBlurred = isBlurred, isWord = true))
             pos = start + word.length
         }
 
         if (pos < text.length) {
-            result.add(FuzzyWord(text.substring(pos), isBlurred = true))
+            result.add(FuzzyWord(text.substring(pos), isBlurred = true, isWord = false))
         }
 
         return result

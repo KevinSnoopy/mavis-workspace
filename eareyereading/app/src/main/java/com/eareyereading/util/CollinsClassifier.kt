@@ -38,8 +38,9 @@ class CollinsClassifier @Inject constructor() {
         UNKNOWN("未分级", 0, "数字、标点或未知词");
     }
 
+    companion object {
     // ── Collins COBUILD 1星核心词汇（约300个最常用词）───────────────
-    private val collinsOne = setOf(
+    private val collinsOne: Set<String> by lazy { setOf(
         // 冠词/代词/介词
         "a", "an", "the", "i", "you", "he", "she", "it", "we", "they",
         "me", "him", "her", "us", "them", "my", "your", "his", "its",
@@ -136,10 +137,10 @@ class CollinsClassifier @Inject constructor() {
         "rather", "quite", "soon", "already", "still", "perhaps",
         "likely", "recently", "finally", "completely", "certainly",
         "especially", "exactly", "immediately", "constantly"
-    )
+    ) }
 
     // ── Collins 2星常用词汇（约600词）────────────────────────────────
-    private val collinsTwo = setOf(
+    private val collinsTwo: Set<String> by lazy { setOf(
         "ability", "able", "about", "above", "accept", "according",
         "account", "across", "action", "activity", "actually", "add",
         "address", "administration", "affect", "after", "again", "against",
@@ -289,10 +290,10 @@ class CollinsClassifier @Inject constructor() {
         "wood", "word", "work", "worker", "world", "worry", "would",
         "write", "writer", "wrong", "yard", "yeah", "year", "yes",
         "yet", "you", "young", "your", "yourself", "zero"
-    )
+    ) }
 
     // ── Collins 3星中等词汇（约500词）────────────────────────────────
-    private val collinsThree = setOf(
+    private val collinsThree: Set<String> by lazy { setOf(
         "abandon", "ability", "able", "abortion", "absence", "absolute",
         "absolutely", "absorb", "abstract", "abuse", "academic", "accept",
         "access", "accident", "accompany", "accomplish", "according",
@@ -984,11 +985,11 @@ class CollinsClassifier @Inject constructor() {
         "yard", "yeah", "year", "yell", "yellow", "yes", "yesterday",
         "yet", "yield", "you", "young", "youngster", "your", "yours",
         "yourself", "youth", "zero"
-    )
+    ) }
 
     // ── Collins 4星高阶词汇（约400词）────────────────────────────────
     // 包括学术词汇、专业术语、抽象概念
-    private val collinsFour = setOf(
+    private val collinsFour: Set<String> by lazy { setOf(
         "abandon", "abandonment", "abortion", "absence", "absolute", "absolutely",
         "absorb", "abstract", "abuse", "academic", "accelerate", "accept", "access",
         "accident", "accommodate", "accompany", "accomplish", "account", "accurate",
@@ -1270,10 +1271,10 @@ class CollinsClassifier @Inject constructor() {
         "shower", "shrink", "shrug", "shuttle", "sibling", "sickness", "sideways",
         "siege", "sigh", "sight", "sigma", "signal", "signature", "significance",
         "significant", "silence", "silk", "silly", "silver", "similar", "simulate",
-    )
+    ) }
 
     // ── Collins 5星学术词汇（约500词）────────────────────────────────
-    private val collinsFive = setOf(
+    private val collinsFive: Set<String> by lazy { setOf(
         "abstraction", "acclaim", "accommodation", "accomplishment", "accountability",
         "accountant", "accreditation", "accumulate", "acknowledgment", "acquisition",
         "acquaintance", "acquisition", "adaptation", "addiction", "adherence",
@@ -2228,7 +2229,9 @@ class CollinsClassifier @Inject constructor() {
         "passive", "passivity", "passkey", "passport", "password", "past",
         "pasta", "paste", "pasteboard", "pastel", "pastern", "pasteurize",
         "pastiche", "pastille", "pastime",
-    )
+    ) }
+
+    } // companion object
 
     /**
      * 判断单词所属等级

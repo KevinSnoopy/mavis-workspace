@@ -323,7 +323,7 @@ private fun WeeklyChart(
         modifier = modifier,
         shape = RoundedCornerShape(16.dp),
         color = MaterialTheme.colorScheme.surface,
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.5.dp),
+
     ) {
         Row(
             modifier = Modifier
@@ -379,7 +379,7 @@ private fun RecentBookCard(
             .clickable(onClick = onClick),
         shape = RoundedCornerShape(14.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.5.dp),
+
     ) {
         Column(modifier = Modifier.padding(14.dp)) {
             Box(
@@ -407,7 +407,7 @@ private fun RecentBookCard(
             )
             Spacer(modifier = Modifier.height(6.dp))
             LinearProgressIndicator(
-                progress = { book.readProgress },
+                progress = book.readProgress,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(3.dp)
@@ -440,7 +440,7 @@ private fun QuickActionCard(
             .clickable(onClick = onClick),
         shape = RoundedCornerShape(14.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.5.dp),
+
     ) {
         Row(
             modifier = Modifier.padding(16.dp),

@@ -2,11 +2,12 @@ package com.eareyereading.ui.screens.settings
 
 import android.content.Context
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -26,6 +27,7 @@ import com.eareyereading.domain.repository.SettingsRepository
 import com.eareyereading.domain.repository.VocabularyRepository
 import com.eareyereading.ui.theme.*
 import com.eareyereading.util.NotificationHelper
+import com.eareyereading.tts.EmbeddedTtsEngine
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.*
@@ -48,6 +50,13 @@ data class SettingsUiState(
     val isImporting: Boolean = false,
     val isClearing: Boolean = false,
     val snackbarMessage: String? = null,
+    // 内置 TTS（sherpa-onnx）状态
+    val embeddedModelName: String = "",
+    val embeddedModelSizeText: String = "",
+    val embeddedModelDownloaded: Boolean = false,
+    val embeddedDownloading: Boolean = false,
+    val embeddedDownloadProgress: Float = 0f,  // 0..1
+    val embeddedReady: Boolean = false,         // 引擎已加载就绪
 )
 
 @HiltViewModel
@@ -56,6 +65,7 @@ class SettingsViewModel @Inject constructor(
     private val vocabularyRepository: VocabularyRepository,
     private val readingStatsDao: ReadingStatsDao,
     private val vocabularyDao: VocabularyDao,
+    private val embeddedTts: EmbeddedTtsEngine,
     @ApplicationContext private val context: Context,
 ) : ViewModel() {
 
@@ -104,6 +114,95 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             vocabularyRepository.getTotalCount().collect { count ->
                 _uiState.update { it.copy(totalWords = count) }
+            }
+        }
+
+        // 内置 TTS 状态：模型信息 + 下载进度 + 引擎状态
+        viewModelScope.launch {
+            embeddedTts.state.collect { state ->
+                _uiState.update {
+                    it.copy(
+                        embeddedReady = state is EmbeddedTtsEngine.EngineState.READY,
+                    )
+                }
+            }
+        }
+        viewModelScope.launch {
+            embeddedTts.downloadProgress.collect { progress ->
+                _uiState.update {
+                    it.copy(
+                        embeddedDownloading = progress != null,
+                        embeddedDownloadProgress = progress ?: 0f,
+                    )
+                }
+            }
+        }
+        refreshEmbeddedStatus()
+    }
+
+    private fun refreshEmbeddedStatus() {
+        viewModelScope.launch {
+            val model = embeddedTts.getCurrentModelInfo()
+            val downloaded = embeddedTts.isModelDownloaded(model)
+            _uiState.update {
+                it.copy(
+                    embeddedModelName = model.displayName,
+                    embeddedModelSizeText = formatBytes(model.sizeBytes),
+                    embeddedModelDownloaded = downloaded,
+                )
+            }
+        }
+    }
+
+    private fun formatBytes(bytes: Long): String {
+        if (bytes < 1024) return "$bytes B"
+        val kb = bytes / 1024.0
+        if (kb < 1024) return "%.1f KB".format(kb)
+        return "%.0f MB".format(kb / 1024.0)
+    }
+
+    /** 下载内置 TTS 模型（带进度），下载完成后自动初始化。 */
+    fun downloadEmbeddedTts() {
+        if (_uiState.value.embeddedDownloading) return
+        viewModelScope.launch {
+            val model = embeddedTts.getCurrentModelInfo()
+            _uiState.update { it.copy(embeddedDownloading = true, embeddedDownloadProgress = 0f) }
+            val ok = embeddedTts.downloadModel(model) { progress ->
+                _uiState.update { it.copy(embeddedDownloadProgress = progress) }
+            }
+            if (ok) {
+                val initOk = embeddedTts.initialize(model)
+                embeddedTts.cancelDownloadNotification()
+                _uiState.update {
+                    it.copy(
+                        embeddedDownloading = false,
+                        embeddedDownloadProgress = 0f,
+                        embeddedModelDownloaded = true,
+                        embeddedReady = initOk,
+                        snackbarMessage = if (initOk) "内置语音已下载并启用" else "下载完成但初始化失败",
+                    )
+                }
+            } else {
+                _uiState.update {
+                    it.copy(
+                        embeddedDownloading = false,
+                        embeddedDownloadProgress = 0f,
+                        snackbarMessage = "下载失败，请检查网络后重试（已下载部分下次会续传）",
+                    )
+                }
+            }
+            refreshEmbeddedStatus()
+        }
+    }
+
+    /** 删除已下载的内置 TTS 模型（释放空间）。 */
+    fun deleteEmbeddedTts() {
+        viewModelScope.launch {
+            embeddedTts.deleteModel()
+            embeddedTts.release()
+            refreshEmbeddedStatus()
+            _uiState.update {
+                it.copy(embeddedReady = false, snackbarMessage = "已删除内置语音模型")
             }
         }
     }
@@ -284,7 +383,7 @@ fun SettingsScreen(
         if (granted) {
             viewModel.setNotifications(true)
         } else {
-            snackbarHostState.showSnackbar("通知权限被拒绝，无法发送提醒")
+            scope.launch { snackbarHostState.showSnackbar("通知权限被拒绝，无法发送提醒") }
         }
     }
 
@@ -305,7 +404,7 @@ fun SettingsScreen(
 
     LaunchedEffect(uiState.snackbarMessage) {
         uiState.snackbarMessage?.let {
-            snackbarHostState.showSnackbar(it)
+            scope.launch { snackbarHostState.showSnackbar(it) }
             viewModel.dismissSnackbar()
         }
     }
@@ -322,7 +421,7 @@ fun SettingsScreen(
                 },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回")
+                        Icon(Icons.Default.ArrowBack, "返回")
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -376,7 +475,7 @@ fun SettingsScreen(
                         )
                     }
 
-                    HorizontalDivider(modifier = Modifier.padding(horizontal = 20.dp))
+                    Divider(modifier = Modifier.padding(horizontal = 20.dp))
 
                     SettingRow(
                         icon = Icons.Default.VolumeUp,
@@ -398,7 +497,7 @@ fun SettingsScreen(
                         )
                     }
 
-                    HorizontalDivider(modifier = Modifier.padding(horizontal = 20.dp))
+                    Divider(modifier = Modifier.padding(horizontal = 20.dp))
 
                     SettingRow(
                         icon = Icons.Default.Visibility,
@@ -429,6 +528,92 @@ fun SettingsScreen(
                 Spacer(modifier = Modifier.height(20.dp))
             }
 
+            // ── 语音 ──────────────────────────────────
+            // 内置 TTS（sherpa-onnx）下载/管理入口。
+            // 国产手机系统 TTS 不可用时，这是唯一可用路径，必须在设置里暴露独立入口。
+            item {
+                SettingsSectionTitle("语音")
+            }
+            item {
+                SettingsListCard {
+                    SettingRow(
+                        icon = Icons.Default.RecordVoiceOver,
+                        iconBg = PrimaryLight,
+                        iconColor = Primary,
+                        title = "内置语音引擎",
+                        subtitle = uiState.embeddedModelName,
+                    )
+                    Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp)) {
+                        when {
+                            uiState.embeddedDownloading -> {
+                                LinearProgressIndicator(
+                                    progress = uiState.embeddedDownloadProgress,
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = "下载中 ${(uiState.embeddedDownloadProgress * 100).toInt()}%",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            uiState.embeddedModelDownloaded && uiState.embeddedReady -> {
+                                Text(
+                                    text = "✅ 已下载并启用",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            uiState.embeddedModelDownloaded -> {
+                                Text(
+                                    text = "已下载（未启用）",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            else -> {
+                                Text(
+                                    text = "未下载（约 ${uiState.embeddedModelSizeText}）",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
+
+                    Divider(modifier = Modifier.padding(horizontal = 20.dp))
+
+                    if (uiState.embeddedDownloading) {
+                        SettingRow(
+                            icon = Icons.Default.Downloading,
+                            iconBg = SurfaceSecondary,
+                            iconColor = OnSurfaceTertiary,
+                            title = "正在下载...",
+                            subtitle = "请保持网络连接",
+                        )
+                    } else if (!uiState.embeddedModelDownloaded) {
+                        SettingRowClickable(
+                            icon = Icons.Default.Download,
+                            iconBg = PrimaryLight,
+                            iconColor = Primary,
+                            title = "下载内置语音模型",
+                            subtitle = "完全离线，不依赖系统 TTS",
+                            onClick = { viewModel.downloadEmbeddedTts() },
+                        )
+                    } else {
+                        SettingRowClickable(
+                            icon = Icons.Default.Delete,
+                            iconBg = SurfaceSecondary,
+                            iconColor = OnSurfaceTertiary,
+                            title = "删除语音模型",
+                            subtitle = "释放 ${uiState.embeddedModelSizeText} 空间",
+                            onClick = { viewModel.deleteEmbeddedTts() },
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(20.dp))
+            }
+
             // ── 学习 ──────────────────────────────────
             item {
                 SettingsSectionTitle("学习")
@@ -452,7 +637,7 @@ fun SettingsScreen(
                             viewModel.setNotifications(enabled)
                         },
                     )
-                    HorizontalDivider(modifier = Modifier.padding(horizontal = 20.dp))
+                    Divider(modifier = Modifier.padding(horizontal = 20.dp))
                     SettingRowToggle(
                         icon = Icons.Default.LocalFireDepartment,
                         iconBg = WarningBg,
@@ -479,7 +664,7 @@ fun SettingsScreen(
                         checked = uiState.darkMode,
                         onCheckedChange = viewModel::setDarkMode,
                     )
-                    HorizontalDivider(modifier = Modifier.padding(horizontal = 20.dp))
+                    Divider(modifier = Modifier.padding(horizontal = 20.dp))
                     SettingRowToggle(
                         icon = Icons.Default.Highlight,
                         iconBg = WarningBg,
@@ -506,7 +691,7 @@ fun SettingsScreen(
                         subtitle = if (uiState.isExporting) "导出中..." else "导出词汇和阅读数据",
                         onClick = { viewModel.exportData() },
                     )
-                    HorizontalDivider(modifier = Modifier.padding(horizontal = 20.dp))
+                    Divider(modifier = Modifier.padding(horizontal = 20.dp))
                     SettingRowClickable(
                         icon = Icons.Default.Upload,
                         iconBg = PrimaryLight,
@@ -515,7 +700,7 @@ fun SettingsScreen(
                         subtitle = if (uiState.isImporting) "导入中..." else "从备份文件导入词汇",
                         onClick = { importFilePicker.launch(arrayOf("application/json", "text/plain", "*/*")) },
                     )
-                    HorizontalDivider(modifier = Modifier.padding(horizontal = 20.dp))
+                    Divider(modifier = Modifier.padding(horizontal = 20.dp))
                     SettingRowClickable(
                         icon = Icons.Default.Delete,
                         iconBg = SurfaceSecondary,

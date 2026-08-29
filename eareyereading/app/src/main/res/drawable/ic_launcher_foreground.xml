@@ -6,23 +6,23 @@
     <!-- Book body - left page -->
     <path
         android:fillColor="#8B7355"
-        android:pathData="M54,82 L54,72 Q54,68 50,67 L28,68 Q22,68.5 21,73 L20,82 Q20,86 24,87 L50,87 Q53,87 54,85 Z"/>
+        android:pathData="M54,70.5L54,63L54,60L51,59.25L34.5,60L30,60.38L29.25,63.75L28.5,70.5L28.5,73.5L31.5,74.25L51,74.25L53.25,74.25L54,72.75Z"/>
 
     <!-- Book body - right page -->
     <path
         android:fillColor="#A08568"
-        android:pathData="M54,82 L54,72 Q54,68 58,67 L80,68 Q86,68.5 87,73 L88,82 Q88,86 84,87 L58,87 Q55,87 54,85 Z"/>
+        android:pathData="M54,70.5L54,63L54,60L57,59.25L73.5,60L78,60.38L78.75,63.75L79.5,70.5L79.5,73.5L76.5,74.25L57,74.25L54.75,74.25L54,72.75Z"/>
 
     <!-- Book spine shadow -->
     <path
         android:fillColor="#6B5745"
-        android:pathData="M53,67 L55,67 L55,88 L53,88 Z"/>
+        android:pathData="M53.25,59.25L54.75,59.25L54.75,75L53.25,75Z"/>
 
     <!-- Book page lines - left -->
     <path
         android:fillColor="#FAF8F5"
         android:fillAlpha="0.5"
-        android:pathData="M30,74 L48,74.5 M30,77 L46,77.5 M30,80 L44,80.5"
+        android:pathData="M36,64.5L49.5,64.88L36,66.75L48,67.12L36,69L46.5,69.38"
         android:strokeWidth="1.2"
         android:strokeColor="#FAF8F5"
         android:strokeAlpha="0.5"/>
@@ -31,7 +31,7 @@
     <path
         android:fillColor="#FAF8F5"
         android:fillAlpha="0.5"
-        android:pathData="M60,74.5 L78,74 M62,77.5 L78,77 M64,80.5 L78,80"
+        android:pathData="M58.5,64.88L72,64.5L60,67.12L72,66.75L61.5,69.38L72,69"
         android:strokeWidth="1.2"
         android:strokeColor="#FAF8F5"
         android:strokeAlpha="0.5"/>
@@ -39,25 +39,25 @@
     <!-- Eye outline - outer shape -->
     <path
         android:fillColor="#C4956A"
-        android:pathData="M54,42 C54,42 72,32 74,42 C76,52 68,60 54,60 C40,60 32,52 34,42 C36,32 54,42 54,42 Z"/>
+        android:pathData="M54,40.5L54,40.5L67.5,33L69,40.5L70.5,48L64.5,54L54,54L43.5,54L37.5,48L39,40.5L40.5,33L54,40.5Z"/>
 
     <!-- Eye iris -->
     <path
         android:fillColor="#8B7355"
-        android:pathData="M54,44 C54,44 65,36 66,44 C67,52 61,58 54,58 C47,58 41,52 42,44 C43,36 54,44 54,44 Z"/>
+        android:pathData="M54,42L54,42L62.25,36L63,42L63.75,48L59.25,52.5L54,52.5L48.75,52.5L44.25,48L45,42L45.75,36L54,42Z"/>
 
     <!-- Eye pupil -->
     <path
         android:fillColor="#FAF8F5"
-        android:pathData="M54,46 C54,46 60,40 61,46 C62,52 58,57 54,57 C50,57 46,52 47,46 C48,40 54,46 54,46 Z"/>
+        android:pathData="M54,43.5L54,43.5L58.5,39L59.25,43.5L60,48L57,51.75L54,51.75L51,51.75L48,48L48.75,43.5L49.5,39L54,43.5Z"/>
 
     <!-- Eye highlight -->
     <path
         android:fillColor="#FFFFFF"
-        android:pathData="M56,47 A1.5,1.5 0 1,1 56,50 A1.5,1.5 0 1,1 56,47 Z"/>
+        android:pathData="M55.5,44.25 A1.12,1.12 0 1,1 55.5,46.5 A1.12,1.12 0 1,1 55.5,44.25 Z"/>
 
     <!-- Connecting dots (decorative) -->
     <path
         android:fillColor="#C4956A"
-        android:pathData="M54,63 L54,67"/>
+        android:pathData="M54,56.25L54,59.25"/>
 </vector>

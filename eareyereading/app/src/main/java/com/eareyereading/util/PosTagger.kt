@@ -131,7 +131,7 @@ enum class PosTag {
     PREPOSITION, CONJUNCTION, NUMERAL, OTHER,
 }
 
-enum class PosColor(val label: String, val hex: Long) {
+enum class PosColor(val hex: String) {
     NOUN("#5B7FFF"),       // 蓝色 - 名词
     VERB("#E91E63"),      // 粉色 - 动词
     ADJECTIVE("#FF9800"), // 橙色 - 形容词

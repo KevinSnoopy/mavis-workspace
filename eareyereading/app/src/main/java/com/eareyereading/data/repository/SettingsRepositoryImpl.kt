@@ -25,6 +25,7 @@ class SettingsRepositoryImpl @Inject constructor(
         val DARK_MODE = booleanPreferencesKey("dark_mode")
         val NOTIFICATIONS = booleanPreferencesKey("notifications_enabled")
         val COLLINS_HIGHLIGHT = booleanPreferencesKey("collins_highlight")
+        val TTS_SPEED = floatPreferencesKey("tts_speed")
     }
 
     override fun getRsvpSpeed(): Flow<Int> =
@@ -84,6 +85,9 @@ class SettingsRepositoryImpl @Inject constructor(
     override fun getCollinsHighlight(): Flow<Boolean> =
         dataStore.data.map { it[COLLINS_HIGHLIGHT] ?: true }
 
+    override fun getTtsSpeed(): Flow<Float> =
+        dataStore.data.map { it[TTS_SPEED] ?: 1.0f }
+
     override suspend fun setDarkMode(enabled: Boolean) {
         dataStore.edit { it[DARK_MODE] = enabled }
     }
@@ -94,6 +98,11 @@ class SettingsRepositoryImpl @Inject constructor(
 
     override suspend fun setCollinsHighlight(enabled: Boolean) {
         dataStore.edit { it[COLLINS_HIGHLIGHT] = enabled }
+    }
+
+    override suspend fun setTtsSpeed(speed: Float) {
+        // 限幅：0.5x - 2.0x，避免 TTS 引擎收到极端值导致崩溃或无输出
+        dataStore.edit { it[TTS_SPEED] = speed.coerceIn(0.5f, 2.0f) }
     }
 
     override suspend fun clearAll() {

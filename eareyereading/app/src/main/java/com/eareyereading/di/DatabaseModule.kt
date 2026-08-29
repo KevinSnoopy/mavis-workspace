@@ -1,5 +1,6 @@
-package com.eareyereading.di
 @file:Suppress("WildcardImport", "FunctionNaming", "UnusedParameter", "MatchingDeclarationName")
+
+package com.eareyereading.di
 
 import android.content.Context
 import androidx.datastore.core.DataStore

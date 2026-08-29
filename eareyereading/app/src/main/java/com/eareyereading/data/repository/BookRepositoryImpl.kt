@@ -1,11 +1,13 @@
 package com.eareyereading.data.repository
 
 import android.util.Log
+import androidx.room.withTransaction
 import com.eareyereading.data.local.dao.BookDao
 import com.eareyereading.data.local.dao.BookmarkDao
 import com.eareyereading.data.local.dao.HighlightDao
 import com.eareyereading.data.local.dao.ReadingStateDao
 import com.eareyereading.data.local.dao.WordFrequencyDao
+import com.eareyereading.data.local.database.AppDatabase
 import com.eareyereading.data.local.entity.BookEntity
 import com.eareyereading.domain.model.Book
 import com.eareyereading.domain.repository.BookRepository
@@ -23,6 +25,7 @@ class BookRepositoryImpl @Inject constructor(
     private val highlightDao: HighlightDao,
     private val readingStateDao: ReadingStateDao,
     private val wordFrequencyDao: WordFrequencyDao,
+    private val database: AppDatabase,
 ) : BookRepository {
 
     override fun getAllBooks(): Flow<List<Book>> =
@@ -57,7 +60,7 @@ class BookRepositoryImpl @Inject constructor(
         val entity = book.toEntity().copy(
             totalWords = totalWords,
             content = contentToSave,
-            addedAt = book.addedAt.ifBlank { "" },
+            addedAt = book.addedAt,
         )
         return bookDao.insert(entity)
     }
@@ -75,12 +78,14 @@ class BookRepositoryImpl @Inject constructor(
     }
 
     override suspend fun deleteBook(bookId: Long) {
-        // 级联删除：单步失败不影响其余步骤的清理
-        try { bookmarkDao.deleteAllForBook(bookId) } catch (e: Exception) { Log.w("BookRepository", "bookmark cascade failed", e) }
-        try { highlightDao.deleteAllForBook(bookId) } catch (e: Exception) { Log.w("BookRepository", "highlight cascade failed", e) }
-        try { readingStateDao.deleteForBook(bookId) } catch (e: Exception) { Log.w("BookRepository", "readingState cascade failed", e) }
-        try { wordFrequencyDao.deleteForBook(bookId) } catch (e: Exception) { Log.w("BookRepository", "wordFreq cascade failed", e) }
-        bookDao.getBookById(bookId)?.let { try { bookDao.delete(it) } catch (e: Exception) { Log.e("BookRepository", "book delete failed", e) } }
+        // 在单个事务中级联删除，保证原子性：要么全部成功，要么全部回滚
+        database.withTransaction {
+            bookmarkDao.deleteAllForBook(bookId)
+            highlightDao.deleteAllForBook(bookId)
+            readingStateDao.deleteForBook(bookId)
+            wordFrequencyDao.deleteForBook(bookId)
+            bookDao.getBookById(bookId)?.let { bookDao.delete(it) }
+        }
     }
 
     override fun searchBooks(query: String): Flow<List<Book>> =

@@ -2,6 +2,8 @@
 
 package com.eareyereading.util
 
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.net.HttpURLConnection
@@ -22,29 +24,38 @@ class ArticleParser @Inject constructor() {
         private val STYLE_TAG = Regex("<style[^>]*>.*?</style>", RegexOption.DOT_MATCHES_ALL)
         private val COMMENT_TAG = Regex("<!--.*?-->", RegexOption.DOT_MATCHES_ALL)
         private val HTML_TAG = Regex("<[^>]+>")
+
+        // 网络请求参数
+        private const val CONNECT_TIMEOUT_MS = 15000
+        private const val READ_TIMEOUT_MS = 15000
+        private const val USER_AGENT = "Mozilla/5.0 (compatible; EareyeReader/1.0)"
+        private const val ACCEPT_HEADER = "text/html,application/xhtml+xml"
+        private const val DEFAULT_CHARSET = "UTF-8"
     }
 
     /**
-     * 从 URL 抓取文章
+     * 从 URL 抓取文章（挂起函数，自动切换到 IO 调度器执行网络请求）
      * @param urlStr 文章 URL
      * @return Pair(标题, 正文段落列表)，失败返回 null
      */
-    fun parseFromUrl(urlStr: String): ArticleResult? {
-        val url = URL(urlStr)
-        val conn = url.openConnection() as HttpURLConnection
-        conn.apply {
-            requestMethod = "GET"
-            setRequestProperty("User-Agent", "Mozilla/5.0 (compatible; EareyeReader/1.0)")
-            setRequestProperty("Accept", "text/html,application/xhtml+xml")
-            connectTimeout = 15000
-            readTimeout = 15000
-        }
+    suspend fun parseFromUrl(urlStr: String): ArticleResult? = withContext(Dispatchers.IO) {
+        try {
+            val url = URL(urlStr)
+            val conn = url.openConnection() as HttpURLConnection
+            conn.apply {
+                requestMethod = "GET"
+                setRequestProperty("User-Agent", USER_AGENT)
+                setRequestProperty("Accept", ACCEPT_HEADER)
+                connectTimeout = CONNECT_TIMEOUT_MS
+                readTimeout = READ_TIMEOUT_MS
+            }
 
-        return try {
-            conn.use {
-                val charset = detectCharset(conn) ?: "UTF-8"
-                val html = BufferedReader(InputStreamReader(conn.inputStream, charset)).readText()
+            try {
+                val charset = detectCharset(conn) ?: DEFAULT_CHARSET
+                val html = BufferedReader(InputStreamReader(conn.inputStream, charset)).use { it.readText() }
                 extractArticle(html)
+            } finally {
+                conn.disconnect()
             }
         } catch (e: java.net.MalformedURLException) {
             android.util.Log.e("ArticleParser", "Invalid URL: ${urlStr}", e)
@@ -56,6 +67,77 @@ class ArticleParser @Inject constructor() {
             android.util.Log.e("ArticleParser", "IO error fetching article: ${urlStr}", e)
             null
         }
+    }
+
+    /**
+     * 从页面提取文章链接（适用于列表页 / 首页）
+     */
+    suspend fun parseArticleLinks(urlStr: String): ArticleLinkResult? = withContext(Dispatchers.IO) {
+        try {
+            val url = URL(urlStr)
+            val conn = url.openConnection() as HttpURLConnection
+            conn.apply {
+                requestMethod = "GET"
+                setRequestProperty("User-Agent", USER_AGENT)
+                setRequestProperty("Accept", ACCEPT_HEADER)
+                connectTimeout = CONNECT_TIMEOUT_MS
+                readTimeout = READ_TIMEOUT_MS
+            }
+            try {
+                val charset = detectCharset(conn) ?: DEFAULT_CHARSET
+                val html = BufferedReader(InputStreamReader(conn.inputStream, charset)).use { it.readText() }
+                extractLinksFromHtml(html)
+            } finally {
+                conn.disconnect()
+            }
+        } catch (e: java.net.MalformedURLException) {
+            android.util.Log.e("ArticleParser", "Invalid URL: ${urlStr}", e)
+            null
+        } catch (e: java.net.SocketTimeoutException) {
+            android.util.Log.e("ArticleParser", "Timeout for URL: ${urlStr}", e)
+            null
+        } catch (e: java.io.IOException) {
+            android.util.Log.e("ArticleParser", "IO error: ${urlStr}", e)
+            null
+        } catch (e: Exception) {
+            android.util.Log.e("ArticleParser", "Unexpected error: ${urlStr}", e)
+            null
+        }
+    }
+
+    private fun extractLinksFromHtml(html: String): ArticleLinkResult? {
+        val title = extractTitle(html)
+        // 过滤规则：排除导航、登录、注册等非文章链接
+        val excludePattern = Regex("""(login|sign[-]?in|sign[-]?up|register|about|contact|privacy|terms|category|tag|author|profile|feed|rss|xml|sitemap|css|js|png|jpg|gif|svg|ico|pdf|zip)""", RegexOption.IGNORE_CASE)
+
+        val anchorRegex = Regex("""<a[^>]+href=["']([^"']+)["'][^>]*>([^<]+)</a>""", RegexOption.DOT_MATCHES_ALL)
+        val seen = mutableSetOf<String>()
+        val links = mutableListOf<ArticleLink>()
+
+        for (match in anchorRegex.findAll(html)) {
+            val href = match.groupValues[1].trim()
+            val text = match.groupValues[2].trim()
+
+            // 过滤：URL 必须有效、非排除项、文本有内容
+            if (href.isBlank() || text.isBlank()) continue
+            if (excludePattern.containsMatchIn(href) || excludePattern.containsMatchIn(text)) continue
+            if (href.startsWith("#") || href.startsWith("javascript:")) continue
+            if (seen.contains(href)) continue
+
+            // 补全相对 URL
+            val absoluteUrl = if (href.startsWith("http")) href else href
+            seen.add(href)
+
+            links.add(ArticleLink(
+                title = text.take(120),
+                url = absoluteUrl,
+            ))
+
+            if (links.size >= 30) break
+        }
+
+        return if (links.isEmpty()) null
+        else ArticleLinkResult(title = title, links = links)
     }
 
     /**
@@ -184,4 +266,14 @@ class ArticleParser @Inject constructor() {
 data class ArticleResult(
     val title: String,
     val paragraphs: List<String>,
+)
+
+data class ArticleLinkResult(
+    val title: String,
+    val links: List<ArticleLink>,
+)
+
+data class ArticleLink(
+    val title: String,
+    val url: String,
 )

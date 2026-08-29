@@ -1,5 +1,6 @@
 package com.eareyereading.ui.screens.reader
 
+import android.widget.Toast
 import androidx.compose.animation.*
 import androidx.compose.foundation.*
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -10,31 +11,33 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.NavigateBefore
-import androidx.compose.material.icons.automirrored.filled.NavigateNext
 import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.outlined.Translate
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.Modifier.size
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.eareyereading.domain.model.ReadingMode
@@ -61,6 +64,22 @@ fun ReaderScreen(
         viewModel.loadBook(bookId)
     }
 
+    // 收集 ViewModel 的一次性提示（TTS 初始化失败等）
+    val context = LocalContext.current
+    LaunchedEffect(viewModel) {
+        viewModel.toastMessage.collect { msg ->
+            Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    // 收集 TTS 引擎引导弹窗事件
+    var ttsPrompt by remember { mutableStateOf<com.eareyereading.ui.screens.reader.TtsInstallPrompt?>(null) }
+    LaunchedEffect(viewModel) {
+        viewModel.ttsInstallPrompt.collect { prompt ->
+            ttsPrompt = prompt
+        }
+    }
+
     DisposableEffect(Unit) {
         onDispose { viewModel.cleanup() }
     }
@@ -80,24 +99,19 @@ fun ReaderScreen(
         topBar = {
             TopAppBar(
                 title = {
-                    Column {
-                        Text(
-                            text = uiState.book?.title ?: "加载中...",
-                            style = MaterialTheme.typography.titleMedium,
-                            maxLines = 1,
-                        )
-                        Text(
-                            text = "${uiState.currentParagraphIndex + 1} / ${uiState.paragraphs.size}",
-                            style = MaterialTheme.typography.labelSmall,
-                        )
-                    }
+                    Text(
+                        text = uiState.book?.title ?: "加载中...",
+                        style = MaterialTheme.typography.titleLarge,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
                 },
                 navigationIcon = {
                     IconButton(onClick = {
                         viewModel.saveProgress()
                         onBack()
                     }) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回")
+                        Icon(Icons.Default.ArrowBack, "返回")
                     }
                 },
                 actions = {
@@ -118,52 +132,21 @@ fun ReaderScreen(
                             )
                         } else {
                             Icon(
-                                if (uiState.showTranslation) Icons.Default.Translate else Icons.Default.Translate,
+                                if (uiState.showTranslation) Icons.Default.Translate else Icons.Outlined.Translate,
                                 "翻译",
                                 tint = if (uiState.showTranslation) Primary else LocalContentColor.current,
                             )
                         }
                     }
+                    // 播放 / 暂停（NORMAL 模式下等价于从当前段开始自动朗读）
                     IconButton(onClick = { viewModel.togglePlay() }) {
                         Icon(
-                            if (uiState.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                            "播放"
+                            if (uiState.isPlaying || uiState.isAutoReading)
+                                Icons.Default.Pause else Icons.Default.PlayArrow,
+                            "播放",
                         )
                     }
-                    // 自动全文朗读
-                    IconButton(onClick = viewModel::toggleAutoRead) {
-                        if (uiState.isAutoReading) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(22.dp),
-                                strokeWidth = 2.dp,
-                                color = Primary,
-                            )
-                        } else {
-                            Icon(
-                                Icons.Default.Headphones,
-                                "自动朗读",
-                                tint = Primary,
-                            )
-                        }
-                    }
-                    IconButton(onClick = viewModel::toggleChapterNav) {
-                        Icon(Icons.Default.List, "目录")
-                    }
-                    IconButton(onClick = viewModel::toggleWordLevelColors) {
-                        Icon(
-                            Icons.Default.ColorLens,
-                            "词频颜色",
-                            tint = if (uiState.showWordLevelColors) Primary else LocalContentColor.current,
-                        )
-                    }
-                    IconButton(onClick = viewModel::toggleKnownWordsHighlight) {
-                        Icon(
-                            Icons.Default.AutoAwesome,
-                            "生词高亮",
-                            tint = if (uiState.showKnownWordsHighlight) Success else LocalContentColor.current,
-                        )
-                    }
-                    // 书签按钮
+                    // 书签
                     IconButton(
                         onClick = { viewModel.toggleBookmark(uiState.currentParagraphIndex) },
                     ) {
@@ -175,11 +158,71 @@ fun ReaderScreen(
                                 Secondary else LocalContentColor.current,
                         )
                     }
+                    // 阅读模式
                     IconButton(onClick = viewModel::showModeSelector) {
                         Icon(Icons.Default.MenuBook, "阅读模式")
                     }
-                    IconButton(onClick = viewModel::toggleSettings) {
-                        Icon(Icons.Default.Settings, "设置")
+                    // 更多（溢出菜单）
+                    var showOverflowMenu by remember { mutableStateOf(false) }
+                    Box {
+                        IconButton(onClick = { showOverflowMenu = true }) {
+                            Icon(Icons.Default.MoreVert, "更多")
+                        }
+                        DropdownMenu(
+                            expanded = showOverflowMenu,
+                            onDismissRequest = { showOverflowMenu = false },
+                        ) {
+                            DropdownMenuItem(
+                                text = {
+                                    Text(if (uiState.isAutoReading) "停止自动朗读" else "自动朗读")
+                                },
+                                leadingIcon = { Icon(Icons.Default.Headphones, null) },
+                                onClick = {
+                                    showOverflowMenu = false
+                                    viewModel.toggleAutoRead()
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("目录") },
+                                leadingIcon = { Icon(Icons.Default.List, null) },
+                                onClick = {
+                                    showOverflowMenu = false
+                                    viewModel.toggleChapterNav()
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        if (uiState.showWordLevelColors) "关闭词频颜色" else "开启词频颜色"
+                                    )
+                                },
+                                leadingIcon = { Icon(Icons.Default.ColorLens, null) },
+                                onClick = {
+                                    showOverflowMenu = false
+                                    viewModel.toggleWordLevelColors()
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        if (uiState.showKnownWordsHighlight) "关闭生词高亮" else "开启生词高亮"
+                                    )
+                                },
+                                leadingIcon = { Icon(Icons.Default.AutoAwesome, null) },
+                                onClick = {
+                                    showOverflowMenu = false
+                                    viewModel.toggleKnownWordsHighlight()
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("设置") },
+                                leadingIcon = { Icon(Icons.Default.Settings, null) },
+                                onClick = {
+                                    showOverflowMenu = false
+                                    viewModel.toggleSettings()
+                                },
+                            )
+                        }
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -296,20 +339,8 @@ fun ReaderScreen(
                     )
                 }
             }
-        },
-        // 词汇栏：点击单词后底部显示释义
-        bottomBar = {
-            if (uiState.selectedVocab != null && !uiState.showWordDialog) {
-                VocabularyBar(
-                    word = uiState.selectedVocab!!.word,
-                    definition = uiState.wordDefinition,
-                    wordLevel = uiState.selectedWordLevel,
-                    onAddToVocabulary = { viewModel.addToVocabulary(uiState.selectedVocab!!.word, null) },
-                    onClose = viewModel::dismissWordDialog,
-                )
-            }
-        },
-    )
+        }
+    }
 
     // 模式选择弹窗
     if (uiState.showModeSelector) {
@@ -373,6 +404,399 @@ fun ReaderScreen(
             onDismiss = viewModel::dismissSentenceTranslation,
         )
     }
+
+    // TTS 引擎引导弹窗
+    ttsPrompt?.let { prompt ->
+        TtsInstallDialog(
+            prompt = prompt,
+            onAction = { action ->
+                viewModel.onTtsInstallAction(action)
+                ttsPrompt = null
+            },
+            onDismiss = {
+                viewModel.onTtsInstallAction(com.eareyereading.ui.screens.reader.TtsInstallAction.Dismiss)
+                ttsPrompt = null
+            },
+        )
+    }
+}
+
+// ── TTS 引擎引导弹窗 ───────────────────────────
+@Composable
+private fun TtsInstallDialog(
+    prompt: com.eareyereading.ui.screens.reader.TtsInstallPrompt,
+    onAction: (com.eareyereading.ui.screens.reader.TtsInstallAction) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val isChineseDevice = remember { com.eareyereading.util.TtsEngineHelper.isChineseDevice() }
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val friendlyHint = remember(context) { com.eareyereading.util.TtsEngineHelper.getFriendlyHint(context) }
+
+    // 派生标题：基于 scenario
+    val title = when (prompt.scenario) {
+        TtsInstallPrompt.DialogScenario.HAS_DISCOVERED_ENGINES -> "选择 TTS 引擎"
+        TtsInstallPrompt.DialogScenario.SYSTEM_DEFAULT_INSTALLED_BUT_UNREACHABLE -> "检测到 TTS 引擎但连接失败"
+        TtsInstallPrompt.DialogScenario.NO_ENGINE ->
+            if (prompt.isPhantomDefaultState) "系统 TTS 引擎不可用" else "TTS 引擎不可用"
+    }
+
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            androidx.compose.material3.Text(
+                text = title,
+                fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+            )
+        },
+        text = {
+            androidx.compose.foundation.layout.Column(
+                modifier = androidx.compose.ui.Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 400.dp)
+                    .verticalScroll(androidx.compose.foundation.rememberScrollState()),
+            ) {
+                // 顶部：失败原因（始终显示）
+                androidx.compose.material3.Text(
+                    text = prompt.reason.userMessage,
+                    style = androidx.compose.material3.MaterialTheme.typography.bodyMedium,
+                )
+
+                // ============================================================
+                // Scenario A: 已发现可用引擎 — 展示列表 + 提示用户选哪个
+                // ============================================================
+                if (prompt.scenario == TtsInstallPrompt.DialogScenario.HAS_DISCOVERED_ENGINES) {
+                    androidx.compose.foundation.layout.Spacer(modifier = androidx.compose.ui.Modifier.height(12.dp))
+                    androidx.compose.material3.Text(
+                        text = "🎯 已扫描到 ${prompt.discoveredEngines.size} 个真实可用的 TTS 引擎（按推荐顺序）：",
+                        style = androidx.compose.material3.MaterialTheme.typography.labelMedium,
+                        fontWeight = androidx.compose.ui.text.font.FontWeight.Medium,
+                        color = androidx.compose.material3.MaterialTheme.colorScheme.primary,
+                    )
+                    androidx.compose.foundation.layout.Spacer(modifier = androidx.compose.ui.Modifier.height(4.dp))
+                    prompt.discoveredEngines.forEach { engine ->
+                        androidx.compose.foundation.layout.Row(
+                            modifier = androidx.compose.ui.Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp),
+                            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                        ) {
+                            androidx.compose.foundation.layout.Column(modifier = androidx.compose.ui.Modifier.weight(1f)) {
+                                androidx.compose.material3.Text(
+                                    text = engine.displayName,
+                                    style = androidx.compose.material3.MaterialTheme.typography.bodyMedium,
+                                    fontWeight = androidx.compose.ui.text.font.FontWeight.Medium,
+                                )
+                                androidx.compose.material3.Text(
+                                    text = engine.packageName,
+                                    style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
+                                    color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            if (!engine.isEnabled) {
+                                androidx.compose.material3.Text(
+                                    text = "(未启用)",
+                                    style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
+                                    color = androidx.compose.material3.MaterialTheme.colorScheme.error,
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // ============================================================
+                // Scenario B: 系统设置指向已知引擎，但缓存未刷新
+                // 典型场景：用户刚装好 Google TTS，MIUI TTS service 还没识别
+                // ============================================================
+                if (prompt.scenario == TtsInstallPrompt.DialogScenario.SYSTEM_DEFAULT_INSTALLED_BUT_UNREACHABLE) {
+                    val pkg = prompt.systemDefaultEnginePackage
+                    val friendlyName = pkg?.let { com.eareyereading.util.TtsEngineHelper.friendlyEngineName(it) } ?: "未知引擎"
+                    androidx.compose.foundation.layout.Spacer(modifier = androidx.compose.ui.Modifier.height(12.dp))
+                    androidx.compose.material3.Text(
+                        text = "💡 系统设置里的 TTS 引擎：\n「$friendlyName」（$pkg）",
+                        style = androidx.compose.material3.MaterialTheme.typography.bodyMedium,
+                        color = androidx.compose.material3.MaterialTheme.colorScheme.primary,
+                    )
+                    androidx.compose.foundation.layout.Spacer(modifier = androidx.compose.ui.Modifier.height(8.dp))
+                    androidx.compose.material3.Text(
+                        text = "已自动尝试连接该引擎，但 MIUI 系统的 TTS 服务缓存可能还没刷新。\n" +
+                            "你可以：\n" +
+                            "• 点下方「重试连接」按钮再次尝试\n" +
+                            "• 关闭 app 然后重新打开（让系统重新扫描）\n" +
+                            "• 重启手机（最彻底）",
+                        style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+                        color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+
+                // ============================================================
+                // 通用补充：fallback engine 状态（仅当 applicable）
+                // ============================================================
+                val fallbackEngine = prompt.fallbackEnginePackage?.let { pkg ->
+                    prompt.availableEngines.firstOrNull { it.packageName == pkg }
+                        ?: prompt.discoveredEngines.firstOrNull { it.packageName == pkg }
+                }
+                if (fallbackEngine != null &&
+                    prompt.scenario != TtsInstallPrompt.DialogScenario.HAS_DISCOVERED_ENGINES
+                ) {
+                    androidx.compose.foundation.layout.Spacer(modifier = androidx.compose.ui.Modifier.height(8.dp))
+                    androidx.compose.material3.Text(
+                        text = "已自动尝试「${fallbackEngine.displayName}」但仍未成功。\n请检查系统 TTS 设置中该引擎是否已启用并下载了语音数据。",
+                        style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+                        color = androidx.compose.material3.MaterialTheme.colorScheme.primary,
+                    )
+                }
+
+                // 幽灵默认状态说明
+                if (prompt.isPhantomDefaultState) {
+                    androidx.compose.foundation.layout.Spacer(modifier = androidx.compose.ui.Modifier.height(8.dp))
+                    androidx.compose.material3.Text(
+                        text = "💡 系统设置里选了「${prompt.fallbackEnginePackage ?: "某个引擎"}」，但该引擎的 TTS 服务不对第三方 app 开放。\n" +
+                            "解决办法：使用下方扫描到的第三方引擎，或安装新引擎。",
+                        style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+                        color = androidx.compose.material3.MaterialTheme.colorScheme.primary,
+                    )
+                }
+
+                // 国产手机友好提示
+                if (isChineseDevice && !prompt.isPhantomDefaultState &&
+                    prompt.scenario == TtsInstallPrompt.DialogScenario.NO_ENGINE
+                ) {
+                    androidx.compose.foundation.layout.Spacer(modifier = androidx.compose.ui.Modifier.height(8.dp))
+                    androidx.compose.material3.Text(
+                        text = friendlyHint,
+                        style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+                        color = androidx.compose.material3.MaterialTheme.colorScheme.primary,
+                    )
+                }
+
+                // ============================================================
+                // 推荐未安装的第三方 TTS app（仅 NO_ENGINE 场景）
+                // ============================================================
+                if (prompt.uninstalledThirdPartyTtsApps.isNotEmpty() &&
+                    prompt.scenario == TtsInstallPrompt.DialogScenario.NO_ENGINE
+                ) {
+                    androidx.compose.foundation.layout.Spacer(modifier = androidx.compose.ui.Modifier.height(12.dp))
+                    androidx.compose.material3.Text(
+                        text = "推荐安装以下应用（自带可被第三方 app 使用的 TTS 引擎）：",
+                        style = androidx.compose.material3.MaterialTheme.typography.labelMedium,
+                        fontWeight = androidx.compose.ui.text.font.FontWeight.Medium,
+                    )
+                    androidx.compose.foundation.layout.Spacer(modifier = androidx.compose.ui.Modifier.height(4.dp))
+                    prompt.uninstalledThirdPartyTtsApps.forEach { app ->
+                        androidx.compose.foundation.layout.Column(
+                            modifier = androidx.compose.ui.Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp),
+                        ) {
+                            androidx.compose.material3.Text(
+                                text = app.displayName,
+                                style = androidx.compose.material3.MaterialTheme.typography.bodyMedium,
+                                fontWeight = androidx.compose.ui.text.font.FontWeight.Medium,
+                            )
+                            androidx.compose.material3.Text(
+                                text = app.description,
+                                style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+                                color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            androidx.compose.material3.TextButton(
+                                onClick = {
+                                    onAction(com.eareyereading.ui.screens.reader.TtsInstallAction.InstallThirdPartyTtsApp(app))
+                                },
+                                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 0.dp, vertical = 0.dp),
+                            ) {
+                                androidx.compose.material3.Text(
+                                    text = if (prompt.hasGooglePlay) "在 Play 商店下载" else "前往下载页",
+                                    style = androidx.compose.material3.MaterialTheme.typography.labelMedium,
+                                    color = androidx.compose.material3.MaterialTheme.colorScheme.primary,
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // ============================================================
+                // 完整安装指南（仅 NO_ENGINE 场景）
+                // ============================================================
+                if (prompt.installGuideSteps.isNotEmpty()) {
+                    androidx.compose.foundation.layout.Spacer(modifier = androidx.compose.ui.Modifier.height(12.dp))
+                    androidx.compose.material3.Text(
+                        text = "📖 安装指南：",
+                        style = androidx.compose.material3.MaterialTheme.typography.labelMedium,
+                        fontWeight = androidx.compose.ui.text.font.FontWeight.Medium,
+                        color = androidx.compose.material3.MaterialTheme.colorScheme.primary,
+                    )
+                    androidx.compose.foundation.layout.Spacer(modifier = androidx.compose.ui.Modifier.height(4.dp))
+                    prompt.installGuideSteps.forEach { step ->
+                        androidx.compose.material3.Text(
+                            text = step,
+                            style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+                            modifier = androidx.compose.ui.Modifier.padding(vertical = 2.dp),
+                        )
+                    }
+                    // 没有 Play 商店时，引导开启"未知来源"
+                    if (!prompt.hasGooglePlay) {
+                        androidx.compose.material3.TextButton(
+                            onClick = {
+                                onAction(com.eareyereading.ui.screens.reader.TtsInstallAction.OpenUnknownSourcesSettings)
+                            },
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 0.dp, vertical = 0.dp),
+                        ) {
+                            androidx.compose.material3.Text(
+                                text = "🔓 前往开启「未知来源应用」",
+                                style = androidx.compose.material3.MaterialTheme.typography.labelMedium,
+                                color = androidx.compose.material3.MaterialTheme.colorScheme.primary,
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            androidx.compose.foundation.layout.Column {
+                when (prompt.scenario) {
+                    // ============================================================
+                    // Scenario A: 已发现可用引擎 — 主要按钮是"使用XX"
+                    // ============================================================
+                    TtsInstallPrompt.DialogScenario.HAS_DISCOVERED_ENGINES -> {
+                        prompt.discoveredEngines.forEach { engine ->
+                            androidx.compose.material3.Button(
+                                onClick = {
+                                    onAction(com.eareyereading.ui.screens.reader.TtsInstallAction.RetryWithEngine(engine.packageName))
+                                },
+                                modifier = androidx.compose.ui.Modifier.fillMaxWidth(),
+                            ) {
+                                androidx.compose.material3.Text("使用「${engine.displayName}」")
+                            }
+                        }
+                    }
+                    // ============================================================
+                    // Scenario B: 系统设置指向已知引擎 — 主要按钮是"重试连接"
+                    // ============================================================
+                    TtsInstallPrompt.DialogScenario.SYSTEM_DEFAULT_INSTALLED_BUT_UNREACHABLE -> {
+                        val pkg = prompt.systemDefaultEnginePackage
+                        if (pkg != null) {
+                            androidx.compose.material3.Button(
+                                onClick = {
+                                    onAction(com.eareyereading.ui.screens.reader.TtsInstallAction.RetryWithEngine(pkg))
+                                },
+                                modifier = androidx.compose.ui.Modifier.fillMaxWidth(),
+                            ) {
+                                androidx.compose.material3.Text(
+                                    text = "🔄 重试连接${com.eareyereading.util.TtsEngineHelper.friendlyEngineName(pkg)}"
+                                )
+                            }
+                            androidx.compose.material3.Text(
+                                text = "（包名：$pkg）",
+                                style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
+                                color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = androidx.compose.ui.Modifier.padding(top = 2.dp),
+                            )
+                        }
+                        // 重试连接在 MIUI/HyperOS 等 OS 层拒绝 bind 的设备上无效，
+                        // 提供内置 TTS 作为可靠备选（与 Scenario C 一致）。
+                        androidx.compose.foundation.layout.Spacer(
+                            modifier = androidx.compose.ui.Modifier.height(8.dp),
+                        )
+                        if (prompt.embeddedModelDownloaded) {
+                            androidx.compose.material3.Button(
+                                onClick = {
+                                    onAction(com.eareyereading.ui.screens.reader.TtsInstallAction.RetryWithEngine("__EMBEDDED__"))
+                                },
+                                modifier = androidx.compose.ui.Modifier.fillMaxWidth(),
+                            ) {
+                                androidx.compose.material3.Text("✅ 启用内置 TTS（已下载）")
+                            }
+                        } else {
+                            androidx.compose.material3.Button(
+                                onClick = {
+                                    onAction(com.eareyereading.ui.screens.reader.TtsInstallAction.DownloadEmbeddedTts)
+                                },
+                                modifier = androidx.compose.ui.Modifier.fillMaxWidth(),
+                            ) {
+                                androidx.compose.material3.Text(
+                                    text = "🚀 下载内置 TTS（${prompt.embeddedModelDisplayName}，${prompt.embeddedModelSizeText}）"
+                                )
+                            }
+                            androidx.compose.material3.Text(
+                                text = "若重试无效，可下载内置 TTS：完全离线、不依赖系统服务",
+                                style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
+                                color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = androidx.compose.ui.Modifier.padding(top = 2.dp),
+                            )
+                        }
+                    }
+                    // ============================================================
+                    // Scenario C: 完全没有引擎 — 主要按钮是"下载内置 TTS"或"下载 Google TTS"
+                    // ============================================================
+                    TtsInstallPrompt.DialogScenario.NO_ENGINE -> {
+                        if (prompt.embeddedModelDownloaded) {
+                            // 模型已下载，激活内置 TTS
+                            androidx.compose.material3.Button(
+                                onClick = {
+                                    onAction(com.eareyereading.ui.screens.reader.TtsInstallAction.RetryWithEngine("__EMBEDDED__"))
+                                },
+                                modifier = androidx.compose.ui.Modifier.fillMaxWidth(),
+                            ) {
+                                androidx.compose.material3.Text("✅ 启用内置 TTS（已下载）")
+                            }
+                        } else {
+                            // 模型未下载，提供一键下载按钮（推荐方案）
+                            androidx.compose.material3.Button(
+                                onClick = {
+                                    onAction(com.eareyereading.ui.screens.reader.TtsInstallAction.DownloadEmbeddedTts)
+                                },
+                                modifier = androidx.compose.ui.Modifier.fillMaxWidth(),
+                            ) {
+                                androidx.compose.material3.Text(
+                                    text = "🚀 下载内置 TTS（${prompt.embeddedModelDisplayName}，${prompt.embeddedModelSizeText}）"
+                                )
+                            }
+                            androidx.compose.material3.Text(
+                                text = "内置 TTS 完全离线、不依赖系统服务，能彻底解决国产手机无法朗读的问题",
+                                style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
+                                color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = androidx.compose.ui.Modifier.padding(top = 2.dp),
+                            )
+                        }
+                        // 备用：下载 Google TTS
+                        androidx.compose.material3.TextButton(
+                            onClick = {
+                                onAction(com.eareyereading.ui.screens.reader.TtsInstallAction.InstallGoogleTts)
+                            },
+                        ) {
+                            androidx.compose.material3.Text(
+                                text = if (prompt.hasGooglePlay) "下载 Google 文字转语音（备用）" else "下载 Google TTS APK（备用）"
+                            )
+                        }
+                        if (!prompt.hasGooglePlay) {
+                            androidx.compose.material3.TextButton(
+                                onClick = {
+                                    onAction(com.eareyereading.ui.screens.reader.TtsInstallAction.OpenUnknownSourcesSettings)
+                                },
+                            ) {
+                                androidx.compose.material3.Text("🔓 开启「未知来源应用」权限")
+                            }
+                        }
+                    }
+                }
+                // ============================================================
+                // 通用次要按钮：跳转到系统 TTS 设置（让用户检查）
+                // ============================================================
+                androidx.compose.material3.TextButton(
+                    onClick = {
+                        onAction(com.eareyereading.ui.screens.reader.TtsInstallAction.OpenEngineSettings(null))
+                    },
+                ) {
+                    androidx.compose.material3.Text("前往系统 TTS 设置")
+                }
+            }
+        },
+        dismissButton = {
+            androidx.compose.material3.TextButton(onClick = onDismiss) {
+                androidx.compose.material3.Text("取消")
+            }
+        },
+    )
 }
 
 // ── 普通阅读视图 ───────────────────────────────
@@ -404,7 +828,7 @@ fun NormalReadingView(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(vertical = 16.dp),
+            .padding(vertical = 8.dp),
     ) {
         paragraphs.forEachIndexed { index, para ->
             val isCurrent = index == currentIndex
@@ -433,7 +857,7 @@ fun NormalReadingView(
                         tint = Secondary,
                     )
                     Spacer(modifier = Modifier.width(4.dp))
-                    HorizontalDivider(
+                    Divider(
                         modifier = Modifier.weight(1f),
                         thickness = 1.dp,
                         color = Secondary.copy(alpha = 0.3f),
@@ -485,11 +909,11 @@ fun NormalReadingView(
                                                 WordLevel.UPPER_INTERMEDIATE -> WordLevelUpper
                                                 WordLevel.ADVANCED -> WordLevelAdv
                                                 WordLevel.RARE -> WordLevelRare
-                                                WordLevel.UNKNOWN -> textColor.copy(alpha = sAlpha * 0.5)
+                                                WordLevel.UNKNOWN -> textColor.copy(alpha = sAlpha * 0.5f)
                                             }
                                             withStyle(SpanStyle(color = color.copy(alpha = sAlpha))) { append(word) }
                                         } else {
-                                            withStyle(SpanStyle(color = textColor.copy(alpha = sAlpha * 0.6))) { append(word) }
+                                            withStyle(SpanStyle(color = textColor.copy(alpha = sAlpha * 0.6f))) { append(word) }
                                         }
                                     }
                                 },
@@ -515,7 +939,7 @@ fun NormalReadingView(
             } else {
                 // Collins 词频色彩（非朗读中）
                 if (showWordLevelColors) {
-                    Text(
+                    TappableParagraphText(
                         text = buildAnnotatedString {
                             val words = Regex("([a-zA-Z]+)|([^a-zA-Z]+)").findAll(para)
                             words.forEach { match ->
@@ -532,23 +956,19 @@ fun NormalReadingView(
                                             WordLevel.UPPER_INTERMEDIATE -> WordLevelUpper
                                             WordLevel.ADVANCED -> WordLevelAdv
                                             WordLevel.RARE -> WordLevelRare
-                                            WordLevel.UNKNOWN -> textColor.copy(alpha = alpha * 0.5)
+                                            WordLevel.UNKNOWN -> textColor.copy(alpha = alpha * 0.5f)
                                         }.let { it.copy(alpha = alpha) }
                                     }
                                     withStyle(SpanStyle(color = color)) { append(word) }
                                 } else {
-                                    withStyle(SpanStyle(color = textColor.copy(alpha = alpha * 0.6))) { append(word) }
+                                    withStyle(SpanStyle(color = textColor.copy(alpha = alpha * 0.6f))) { append(word) }
                                 }
                             }
                         },
-                        modifier = Modifier
-                            .padding(vertical = 6.dp)
-                            .pointerInput(Unit) {
-                                detectTapGestures(
-                                    onTap = { onWordClick(para) },
-                                    onDoubleTap = { onSentenceDoubleTap(para) },
-                                )
-                            },
+                        paragraph = para,
+                        onWordClick = onWordClick,
+                        onSentenceDoubleTap = onSentenceDoubleTap,
+                        modifier = Modifier.padding(vertical = 6.dp),
                         style = TextStyle(
                             fontSize = fontSize.sp,
                             lineHeight = (fontSize * 1.8).sp,
@@ -569,20 +989,16 @@ fun NormalReadingView(
                                 }
                                 withStyle(SpanStyle(color = color)) { append(word) }
                             } else {
-                                withStyle(SpanStyle(color = textColor.copy(alpha = alpha * 0.6))) { append(word) }
+                                withStyle(SpanStyle(color = textColor.copy(alpha = alpha * 0.6f))) { append(word) }
                             }
                         }
                     }
-                    Text(
+                    TappableParagraphText(
                         text = annotatedText,
-                        modifier = Modifier
-                            .padding(vertical = 6.dp)
-                            .pointerInput(Unit) {
-                                detectTapGestures(
-                                    onTap = { onWordClick(para) },
-                                    onDoubleTap = { onSentenceDoubleTap(para) },
-                                )
-                            },
+                        paragraph = para,
+                        onWordClick = onWordClick,
+                        onSentenceDoubleTap = onSentenceDoubleTap,
+                        modifier = Modifier.padding(vertical = 6.dp),
                         style = TextStyle(
                             fontSize = fontSize.sp,
                             lineHeight = (fontSize * 1.8).sp,
@@ -619,16 +1035,12 @@ fun NormalReadingView(
                             }
                         }
                     }
-                    Text(
+                    TappableParagraphText(
                         text = annotatedText,
-                        modifier = Modifier
-                            .padding(vertical = 6.dp)
-                            .pointerInput(Unit) {
-                                detectTapGestures(
-                                    onTap = { onWordClick(para) },
-                                    onDoubleTap = { onSentenceDoubleTap(para) },
-                                )
-                            },
+                        paragraph = para,
+                        onWordClick = onWordClick,
+                        onSentenceDoubleTap = onSentenceDoubleTap,
+                        modifier = Modifier.padding(vertical = 6.dp),
                         style = TextStyle(
                             fontSize = fontSize.sp,
                             lineHeight = (fontSize * 1.8).sp,
@@ -707,7 +1119,7 @@ fun RsvpReadingView(
         }
         Spacer(modifier = Modifier.height(24.dp))
         LinearProgressIndicator(
-            progress = { if (words.isNotEmpty()) currentWordIndex.toFloat() / words.size else 0f },
+            progress = if (words.isNotEmpty()) currentWordIndex.toFloat() / words.size else 0f,
             modifier = Modifier.width(200.dp),
         )
         Text(
@@ -756,7 +1168,7 @@ fun ClozeReadingView(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(vertical = 16.dp),
+            .padding(vertical = 8.dp),
     ) {
         clozeWords.forEach { clozeWord ->
             if (clozeWord.isWord) {
@@ -828,7 +1240,7 @@ fun FuzzyReadingView(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(vertical = 16.dp),
+            .padding(vertical = 8.dp),
     ) {
         fuzzyWords.forEach { fuzzyWord ->
             Text(
@@ -863,7 +1275,7 @@ fun SplitReadingView(
                 .weight(1f)
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
-                .padding(vertical = 16.dp),
+                .padding(vertical = 8.dp),
         ) {
             Text(
                 "原文",
@@ -874,11 +1286,12 @@ fun SplitReadingView(
             Spacer(modifier = Modifier.height(8.dp))
             paragraphs.forEachIndexed { index, para ->
                 val alpha = if (index == currentIndex) 1f else 0.5f
-                Text(
-                    text = para,
-                    modifier = Modifier
-                        .padding(vertical = 4.dp)
-                        .clickable { onWordClick(para) },
+                TappableParagraphText(
+                    text = AnnotatedString(para),
+                    paragraph = para,
+                    onWordClick = onWordClick,
+                    onSentenceDoubleTap = {},
+                    modifier = Modifier.padding(vertical = 4.dp),
                     style = TextStyle(
                         fontSize = fontSize.sp,
                         color = textColor.copy(alpha = alpha),
@@ -886,7 +1299,7 @@ fun SplitReadingView(
                     ),
                 )
                 if (index < paragraphs.lastIndex) {
-                    HorizontalDivider(
+                    Divider(
                         modifier = Modifier.padding(vertical = 8.dp),
                         color = textColor.copy(alpha = 0.1f),
                     )
@@ -895,7 +1308,7 @@ fun SplitReadingView(
         }
 
         // 中间分隔线
-        VerticalDivider(
+        Divider(
             modifier = Modifier.fillMaxHeight(),
             thickness = 1.dp,
             color = textColor.copy(alpha = 0.2f),
@@ -907,7 +1320,7 @@ fun SplitReadingView(
                 .weight(1f)
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
-                .padding(vertical = 16.dp),
+                .padding(vertical = 8.dp),
         ) {
             Text(
                 "译文",
@@ -929,7 +1342,7 @@ fun SplitReadingView(
                     ),
                 )
                 if (index < paragraphs.lastIndex) {
-                    HorizontalDivider(
+                    Divider(
                         modifier = Modifier.padding(vertical = 8.dp),
                         color = textColor.copy(alpha = 0.1f),
                     )
@@ -946,29 +1359,30 @@ fun PosAnalysisView(
     currentIndex: Int,
     fontSize: Int,
     onWordClick: (String) -> Unit,
-    posTagger: PosTagger = remember { PosTagger() },
 ) {
+    val posTagger = remember { PosTagger() }
+    val surfaceColor = MaterialTheme.colorScheme.onSurface
     // POS 颜色映射（文具风暖调）
     fun posColor(tag: PosTag): Color = when (tag) {
         PosTag.NOUN -> Info      // 青灰 - 名词
         PosTag.VERB -> Error     // 赤褐 - 动词
         PosTag.ADJECTIVE -> Warning // 暖金 - 形容词
         PosTag.ADVERB -> Primary  // 暖棕 - 副词
-        else -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.85f)
+        else -> surfaceColor.copy(alpha = 0.85f)
     }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(vertical = 16.dp),
+            .padding(vertical = 8.dp),
     ) {
         paragraphs.forEachIndexed { index, para ->
             val isCurrent = index == currentIndex
             val alpha = if (isCurrent) 1f else 0.5f
 
             // 词性着色文本
-            Text(
+            TappableParagraphText(
                 text = buildAnnotatedString {
                     val allMatches = Regex("([a-zA-Z]+)|([^a-zA-Z]+)").findAll(para).toList()
                     allMatches.forEach { match ->
@@ -985,14 +1399,15 @@ fun PosAnalysisView(
                         }
                     }
                 },
-                modifier = Modifier
-                    .padding(vertical = 6.dp, horizontal = 4.dp)
-                    .clickable { onWordClick(para) },
+                paragraph = para,
+                onWordClick = onWordClick,
+                onSentenceDoubleTap = {},
+                modifier = Modifier.padding(vertical = 6.dp, horizontal = 4.dp),
                 style = TextStyle(fontSize = fontSize.sp, lineHeight = (fontSize * 1.8).sp),
             )
 
             if (index < paragraphs.lastIndex) {
-                HorizontalDivider(
+                Divider(
                     modifier = Modifier.padding(vertical = 8.dp),
                     color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
                 )
@@ -1001,7 +1416,7 @@ fun PosAnalysisView(
 
         // 底部图例
         Spacer(modifier = Modifier.height(16.dp))
-        HorizontalDivider()
+        Divider()
         Spacer(modifier = Modifier.height(8.dp))
         Row(
             modifier = Modifier
@@ -1165,7 +1580,7 @@ fun BackTranslationView(
                         ),
                     )
                     if (index < paragraphs.lastIndex) {
-                        HorizontalDivider(
+                        Divider(
                             modifier = Modifier.padding(vertical = 6.dp),
                             color = textColor.copy(alpha = 0.1f),
                         )
@@ -1215,7 +1630,7 @@ fun BackTranslationView(
                         ),
                     )
                     if (index < paragraphs.lastIndex) {
-                        HorizontalDivider(
+                        Divider(
                             modifier = Modifier.padding(vertical = 6.dp),
                             color = textColor.copy(alpha = 0.1f),
                         )
@@ -1234,7 +1649,7 @@ fun DictationReadingView(
     fontSize: Int,
     textColor: Color,
     paragraph: String,
-    onReveal: (String) -> Unit,
+    onReveal: () -> Unit,
     onStartDictation: () -> Unit,
 ) {
     Column(
@@ -1317,7 +1732,7 @@ fun DictationReadingView(
                 Spacer(modifier = Modifier.height(12.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FilledTonalButton(onClick = {
-                        hiddenWords.firstOrNull()?.let { onReveal(it) }
+                        hiddenWords.firstOrNull()?.let { onReveal() }
                         inputWord = ""
                     }) {
                         Text("查看答案")
@@ -1378,7 +1793,7 @@ fun ReadingBottomBar(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 IconButton(onClick = onPrev, enabled = uiState.currentParagraphIndex > 0) {
-                    Icon(Icons.AutoMirrored.Filled.NavigateBefore, "上一段")
+                    Icon(Icons.Default.NavigateBefore, "上一段")
                 }
                 Text(
                     text = "${uiState.readingMode.displayName} · " +
@@ -1386,7 +1801,7 @@ fun ReadingBottomBar(
                     style = MaterialTheme.typography.labelMedium,
                 )
                 IconButton(onClick = onNext, enabled = uiState.currentParagraphIndex < uiState.paragraphs.size - 1) {
-                    Icon(Icons.AutoMirrored.Filled.NavigateNext, "下一段")
+                    Icon(Icons.Default.NavigateNext, "下一段")
                 }
             }
         }
@@ -1801,4 +2216,67 @@ fun VocabularyBar(
             }
         }
     }
+}
+
+// ── 段落点击辅助：把点击位置解析为单词 / 句子 ──────────────
+private val WordRegex = Regex("[a-zA-Z]+")
+private val SentenceEndRegex = Regex("[.!?]")
+
+/**
+ * 根据 TextLayoutResult 把点击位置反查成段落中命中位置的单词。
+ * 若点击位置落在标点 / 空白，返回 null。
+ */
+private fun findWordAtOffset(paragraph: String, offset: Offset, layout: TextLayoutResult): String? {
+    val charIndex = layout.getOffsetForPosition(offset)
+    return WordRegex.findAll(paragraph).find { it.range.contains(charIndex) }?.value
+}
+
+/**
+ * 根据 TextLayoutResult 把点击位置反查成包含该位置的句子。
+ * 若无句子边界，返回整段。
+ */
+private fun findSentenceAtOffset(paragraph: String, offset: Offset, layout: TextLayoutResult): String {
+    val charIndex = layout.getOffsetForPosition(offset)
+    val matches = SentenceEndRegex.findAll(paragraph).toList()
+    val start = matches.lastOrNull { it.range.first < charIndex }?.range?.last?.plus(1) ?: 0
+    val end = matches.firstOrNull { charIndex < it.range.first }?.range?.first?.plus(1)
+        ?: paragraph.length
+    return paragraph.substring(start, end).trim()
+}
+
+/**
+ * 支持"点击单词查释义 / 双击句子翻译"的段落 Text。
+ * 使用 TextLayoutResult 反查命中位置，避免把整段当成一个单词。
+ */
+@Composable
+private fun TappableParagraphText(
+    text: AnnotatedString,
+    paragraph: String,
+    onWordClick: (String) -> Unit,
+    onSentenceDoubleTap: (String) -> Unit,
+    modifier: Modifier = Modifier,
+    style: TextStyle = TextStyle(),
+) {
+    val textLayoutResult = remember { mutableStateOf<TextLayoutResult?>(null) }
+    Text(
+        text = text,
+        modifier = modifier
+            .pointerInput(paragraph) {
+                detectTapGestures(
+                    onTap = { offset ->
+                        textLayoutResult.value?.let { layout ->
+                            findWordAtOffset(paragraph, offset, layout)?.let { onWordClick(it) }
+                        }
+                    },
+                    onDoubleTap = { offset ->
+                        textLayoutResult.value?.let { layout ->
+                            val sentence = findSentenceAtOffset(paragraph, offset, layout)
+                            if (sentence.isNotBlank()) onSentenceDoubleTap(sentence)
+                        }
+                    },
+                )
+            },
+        style = style,
+        onTextLayout = { textLayoutResult.value = it },
+    )
 }
