@@ -369,6 +369,7 @@ class SettingsViewModel @Inject constructor(
 @Composable
 fun SettingsScreen(
     onBack: () -> Unit,
+    onNavigateToDictionaryManager: () -> Unit = {},
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
     val uiState by viewModel.uiState.collectAsState()
@@ -524,6 +525,17 @@ fun SettingsScreen(
                             }
                         }
                     }
+
+                    Divider(modifier = Modifier.padding(horizontal = 20.dp))
+
+                    SettingRowClickable(
+                        icon = Icons.Default.LibraryBooks,
+                        iconBg = PrimaryLight,
+                        iconColor = Primary,
+                        title = "词典管理",
+                        subtitle = "下载分级词典（四级/六级/考研/托福/GRE/雅思）",
+                        onClick = onNavigateToDictionaryManager,
+                    )
                 }
                 Spacer(modifier = Modifier.height(20.dp))
             }

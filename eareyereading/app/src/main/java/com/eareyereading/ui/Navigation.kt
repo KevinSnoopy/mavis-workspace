@@ -40,6 +40,7 @@ sealed class Screen(val route: String) {
     data object Vocabulary : Screen("vocabulary")
     data object Review : Screen("review")
     data object Settings : Screen("settings")
+    data object DictionaryManager : Screen("dictionary_manager")
 }
 
 data class BottomNavItem(
@@ -165,7 +166,16 @@ fun AppNavigation(
             }
 
             composable(Screen.Settings.route) {
-                SettingsScreen(onBack = { navController.popBackStack() })
+                SettingsScreen(
+                    onBack = { navController.popBackStack() },
+                    onNavigateToDictionaryManager = { navController.navigate(Screen.DictionaryManager.route) },
+                )
+            }
+
+            composable(Screen.DictionaryManager.route) {
+                com.eareyereading.ui.screens.dictionary.DictionaryManagerScreen(
+                    onBack = { navController.popBackStack() },
+                )
             }
         }
     }

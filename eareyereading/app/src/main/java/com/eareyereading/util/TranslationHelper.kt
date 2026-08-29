@@ -24,6 +24,7 @@ import kotlin.coroutines.resume
 @Singleton
 class TranslationHelper @Inject constructor(
     @ApplicationContext private val context: Context,
+    private val dictionaryManager: DictionaryManager,
 ) {
     @Volatile
     private var mlkitTranslator: com.google.mlkit.nl.translate.Translator? = null
@@ -34,10 +35,10 @@ class TranslationHelper @Inject constructor(
     @Volatile
     private var mlkitReadyDeferred: CompletableDeferred<Boolean>? = null
 
-    // 本地词典：从 assets/dictionary.txt 加载（word|translation 格式）
-    private val localDict: Map<String, String> by lazy { loadLocalDict() }
+    // 内置词典：从 assets/dictionary.txt 加载（word|translation 格式），作为兜底
+    private val builtinDict: Map<String, String> by lazy { loadBuiltinDict() }
 
-    private fun loadLocalDict(): Map<String, String> {
+    private fun loadBuiltinDict(): Map<String, String> {
         return try {
             context.assets.open("dictionary.txt")
                 .bufferedReader()
@@ -53,12 +54,12 @@ class TranslationHelper @Inject constructor(
                     }
                     android.util.Log.i(
                         "TranslationHelper",
-                        "Loaded ${map.size} entries from dictionary.txt"
+                        "Loaded ${map.size} entries from builtin dictionary.txt"
                     )
                     map
                 }
         } catch (e: Exception) {
-            android.util.Log.e("TranslationHelper", "Failed to load dictionary.txt", e)
+            android.util.Log.e("TranslationHelper", "Failed to load builtin dictionary.txt", e)
             emptyMap()
         }
     }
@@ -127,15 +128,17 @@ class TranslationHelper @Inject constructor(
             android.util.Log.d("TranslationHelper", "ML Kit not ready, using dict fallback")
             return lookupLocalDict(text)
         }
-        return suspendCancellableCoroutine { cont ->
+        // ML Kit 翻译；失败时回退到本地词典
+        val mlkitResult = suspendCancellableCoroutine { cont ->
             mlkitTranslator?.translate(text)
                 ?.addOnSuccessListener { translated -> cont.resume(translated) }
                 ?.addOnFailureListener {
                     android.util.Log.w("TranslationHelper", "ML Kit translate failed: ${it.message}")
-                    cont.resume(lookupLocalDict(text))
+                    cont.resume(null)
                 }
-                ?: cont.resume(lookupLocalDict(text))
+                ?: cont.resume(null)
         }
+        return mlkitResult ?: lookupLocalDict(text)
     }
 
     // ── 主入口 ───────────────────────────────────
@@ -158,11 +161,14 @@ class TranslationHelper @Inject constructor(
     suspend fun translateContext(sentence: String): String? = translateEnToZh(sentence)
     suspend fun translateSentence(sentence: String): String? = translateEnToZh(sentence)
 
-    // ── 本地词典（1000 高频词）───────────────────
-    private fun lookupLocalDict(text: String): String? {
+    // ── 本地词典（用户下载的分级词典 + 内置兜底）───────────
+    private suspend fun lookupLocalDict(text: String): String? {
         val clean = text.trim().lowercase().replace(Regex("[^a-z]"), "")
         if (clean.length < 2) return null
-        return localDict[clean]
+        // 优先查用户选中的下载词典
+        dictionaryManager.lookup(clean)?.let { return it }
+        // 回退到内置词典
+        return builtinDict[clean]
     }
 
     fun close() {

@@ -1,0 +1,59 @@
+{
+  "version": 1,
+  "dictionaries": [
+    {
+      "id": "cet4",
+      "name": "四级核心词典",
+      "description": "大学英语四级核心词汇",
+      "entryCount": 3837,
+      "sizeBytes": 312339,
+      "fileName": "cet4.txt",
+      "downloadUrl": "https://cdn.jsdelivr.net/gh/KevinSnoopy/mavis-workspace@eareyereading/eareyereading/scripts/out/dictionaries/cet4.txt"
+    },
+    {
+      "id": "cet6",
+      "name": "六级核心词典",
+      "description": "大学英语六级核心词汇",
+      "entryCount": 5396,
+      "sizeBytes": 426386,
+      "fileName": "cet6.txt",
+      "downloadUrl": "https://cdn.jsdelivr.net/gh/KevinSnoopy/mavis-workspace@eareyereading/eareyereading/scripts/out/dictionaries/cet6.txt"
+    },
+    {
+      "id": "kaoyan",
+      "name": "考研词汇词典",
+      "description": "全国硕士研究生入学考试词汇",
+      "entryCount": 4801,
+      "sizeBytes": 386722,
+      "fileName": "kaoyan.txt",
+      "downloadUrl": "https://cdn.jsdelivr.net/gh/KevinSnoopy/mavis-workspace@eareyereading/eareyereading/scripts/out/dictionaries/kaoyan.txt"
+    },
+    {
+      "id": "toefl",
+      "name": "托福词汇词典",
+      "description": "TOEFL 托福核心词汇",
+      "entryCount": 6951,
+      "sizeBytes": 517890,
+      "fileName": "toefl.txt",
+      "downloadUrl": "https://cdn.jsdelivr.net/gh/KevinSnoopy/mavis-workspace@eareyereading/eareyereading/scripts/out/dictionaries/toefl.txt"
+    },
+    {
+      "id": "ielts",
+      "name": "雅思词汇词典",
+      "description": "IELTS 雅思核心词汇",
+      "entryCount": 5013,
+      "sizeBytes": 401867,
+      "fileName": "ielts.txt",
+      "downloadUrl": "https://cdn.jsdelivr.net/gh/KevinSnoopy/mavis-workspace@eareyereading/eareyereading/scripts/out/dictionaries/ielts.txt"
+    },
+    {
+      "id": "gre",
+      "name": "GRE 词汇词典",
+      "description": "GRE 研究生入学考试词汇",
+      "entryCount": 7479,
+      "sizeBytes": 533203,
+      "fileName": "gre.txt",
+      "downloadUrl": "https://cdn.jsdelivr.net/gh/KevinSnoopy/mavis-workspace@eareyereading/eareyereading/scripts/out/dictionaries/gre.txt"
+    }
+  ]
+}
