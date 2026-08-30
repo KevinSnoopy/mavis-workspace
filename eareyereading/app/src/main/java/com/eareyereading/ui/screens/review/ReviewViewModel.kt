@@ -40,13 +40,19 @@ class ReviewViewModel @Inject constructor(
     private val _uiState = MutableStateFlow(ReviewUiState())
     val uiState: StateFlow<ReviewUiState> = _uiState.asStateFlow()
 
-    val dueCount: StateFlow<Int> = reviewRecordDao
-        .getDueReviewCount(System.currentTimeMillis())
+    // 到期数的查询基准时间不能冻结在 ViewModel 构造时刻：
+    // 长会话中陆续到期的卡片要能被计入。每次加载/重开/答题后刷新时间戳，
+    // flatMapLatest 用新时间戳重新起流
+    private val dueCountTimestamp = MutableStateFlow(System.currentTimeMillis())
+    val dueCount: StateFlow<Int> = dueCountTimestamp
+        .flatMapLatest { now -> reviewRecordDao.getDueReviewCount(now) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
 
     fun loadDueReviews() {
         viewModelScope.launch {
             try {
+                // 刷新到期数的基准时间（见 dueCount 说明）
+                dueCountTimestamp.value = System.currentTimeMillis()
                 // 用 first() 而非 collect() — 一次拉取，不持续监听 DB 变化
                 // answerCard() 会直接更新 _uiState，不依赖 Flow 重拉
                 val records = reviewRecordDao.getDueReviews(System.currentTimeMillis(), 50).first()

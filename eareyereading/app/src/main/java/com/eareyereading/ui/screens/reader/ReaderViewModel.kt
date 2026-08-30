@@ -598,6 +598,10 @@ class ReaderViewModel @Inject constructor(
                         isLoading = false,
                     )
                 }
+                // 字符统计的高水位从"恢复后的位置"起算，而不是 -1：
+                // 否则退出时 doSaveProgress 会把 0..恢复位置 的整段前缀当成本次新读，
+                // 累计写库后每次重开同一本书今日字数都会虚增一截
+                lastRecordedParagraphIndex = (state?.currentParagraph ?: 0).coerceIn(0, maxIdx)
 
                 // 初始化 TTS
                 if (!_uiState.value.ttsInitialized) {
@@ -1302,6 +1306,7 @@ class ReaderViewModel @Inject constructor(
         ttsInitJob?.cancel()
         downloadJob?.cancel()
         saveJob?.cancel()
+        bookmarkToggleJob?.cancel()
         vocabJob?.cancel()
         bookmarksJob?.cancel()
         highlightsJob?.cancel()

@@ -614,16 +614,15 @@ private fun splitSentences(text: String): List<String> {
                 break
             }
             val ok = downloadFileWithResume(url, tarballFile) { bytesRead ->
-                val progress = if (totalSize > 0) {
-                    (tarballFile.length().toFloat() / totalSize.toFloat())
-                } else 0f
-                val pClamped = min(progress, 1f)
-                _downloadProgress.value = pClamped
-                onProgress(pClamped)
+                // sizeBytes 是解压后大小，而此阶段下载的是压缩后的 tar.bz2，
+                // 拿它当分母进度会卡在 ~60% 再跳到"解压中"。
+                // 压缩前后大小无可靠元数据，直接按不确定进度展示
+                _downloadProgress.value = null
+                onProgress(0f)
                 val now = System.currentTimeMillis()
                 if (now - lastNotifyMs > 500) {
                     lastNotifyMs = now
-                    showDownloadNotification(pClamped, "下载中 ${(pClamped * 100).toInt()}%")
+                    showDownloadNotification(null, "下载中（${tarballFile.length() / 1_000_000}MB）")
                 }
             }
             if (ok && tarballFile.length() > 0) {
@@ -1106,12 +1105,18 @@ private fun splitSentences(text: String): List<String> {
 
     /**
      * 释放所有资源。
+     *
+     * suspend：native 实例的释放必须与 generate() 互斥（与 initialize() 同理）——
+     * stop() 只是协作式取消，正在 JNI 里的 generate() 无法被打断；
+     * 不持 speakMutex 就 release 会释放仍在被使用的指针（use-after-free）
      */
-    fun release() {
+    suspend fun release() {
         stop()
-        synchronized(this) {
-            tts?.let { try { it.release() } catch (_: Exception) {} }
-            tts = null
+        speakMutex.withLock {
+            synchronized(this) {
+                tts?.let { try { it.release() } catch (_: Exception) {} }
+                tts = null
+            }
         }
     }
 

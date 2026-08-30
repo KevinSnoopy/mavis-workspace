@@ -23,7 +23,6 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
@@ -58,7 +57,6 @@ fun ReaderScreen(
     viewModel: ReaderViewModel = hiltViewModel(),
 ) {
     val uiState by viewModel.uiState.collectAsState()
-    val scrollState = rememberScrollState()
 
     LaunchedEffect(bookId) {
         viewModel.loadBook(bookId)
@@ -828,13 +826,27 @@ fun NormalReadingView(
     onRemoveHighlight: (Long) -> Unit = {},
     classifier: CollinsClassifier = remember { CollinsClassifier() },
 ) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(vertical = 8.dp),
+    // LazyColumn：只布局可见段落。原实现整书 eager Column + 每次重组全文重排版，
+    // 播放时每个句子 tick 都是 O(book) 开销。
+    // LaunchedEffect 让视口跟随当前段落：滑杆/章节/上下段跳转与自动朗读推进
+    // 都会滚动到目标段（此前跳转只改索引，视口从不移动）
+    val listState = rememberLazyListState()
+    LaunchedEffect(currentIndex) {
+        if (currentIndex in paragraphs.indices) {
+            listState.animateScrollToItem(currentIndex)
+        }
+    }
+
+    LazyColumn(
+        state = listState,
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(vertical = 8.dp),
     ) {
-        paragraphs.forEachIndexed { index, para ->
+        itemsIndexed(
+            items = paragraphs,
+            key = { index, _ -> index }, // 段落按书加载后不可变，index 是稳定身份
+        ) { index, para ->
+            Column(modifier = Modifier.fillMaxWidth()) {
             val isCurrent = index == currentIndex
             val isBookmarked = index in bookmarkedParagraphs
             val paraHighlights = highlights[index] ?: emptyList()
@@ -943,8 +955,9 @@ fun NormalReadingView(
             } else {
                 // Collins 词频色彩（非朗读中）
                 if (showWordLevelColors) {
-                    TappableParagraphText(
-                        text = buildAnnotatedString {
+                    // 排版结果按真正影响产物的键缓存：播放句级状态变化不再重切全部可见段落
+                    val annotatedText = remember(para, alpha, textColor, showKnownWordsHighlight, knownWords) {
+                        buildAnnotatedString {
                             val words = Regex("([a-zA-Z]+)|([^a-zA-Z]+)").findAll(para)
                             words.forEach { match ->
                                 val word = match.value
@@ -968,7 +981,10 @@ fun NormalReadingView(
                                     withStyle(SpanStyle(color = textColor.copy(alpha = alpha * 0.6f))) { append(word) }
                                 }
                             }
-                        },
+                        }
+                    }
+                    TappableParagraphText(
+                        text = annotatedText,
                         paragraph = para,
                         onWordClick = onWordClick,
                         onSentenceDoubleTap = onSentenceDoubleTap,
@@ -980,20 +996,22 @@ fun NormalReadingView(
                     )
                 } else if (showKnownWordsHighlight && knownWords.isNotEmpty()) {
                     // 生词本高亮模式（Collins 关）
-                    val annotatedText = buildAnnotatedString {
-                        val words = Regex("([a-zA-Z]+)|([^a-zA-Z]+)").findAll(para)
-                        words.forEach { match ->
-                            val word = match.value
-                            if (Regex("^[a-zA-Z]+$").matches(word)) {
-                                val lower = word.lowercase()
-                                val color = when {
-                                    lower in knownWords -> Success.copy(alpha = alpha)
-                                    lower in learnedWords -> KnownWord.copy(alpha = alpha)
-                                    else -> textColor.copy(alpha = alpha)
+                    val annotatedText = remember(para, alpha, textColor, knownWords, learnedWords) {
+                        buildAnnotatedString {
+                            val words = Regex("([a-zA-Z]+)|([^a-zA-Z]+)").findAll(para)
+                            words.forEach { match ->
+                                val word = match.value
+                                if (Regex("^[a-zA-Z]+$").matches(word)) {
+                                    val lower = word.lowercase()
+                                    val color = when {
+                                        lower in knownWords -> Success.copy(alpha = alpha)
+                                        lower in learnedWords -> KnownWord.copy(alpha = alpha)
+                                        else -> textColor.copy(alpha = alpha)
+                                    }
+                                    withStyle(SpanStyle(color = color)) { append(word) }
+                                } else {
+                                    withStyle(SpanStyle(color = textColor.copy(alpha = alpha * 0.6f))) { append(word) }
                                 }
-                                withStyle(SpanStyle(color = color)) { append(word) }
-                            } else {
-                                withStyle(SpanStyle(color = textColor.copy(alpha = alpha * 0.6f))) { append(word) }
                             }
                         }
                     }
@@ -1010,36 +1028,38 @@ fun NormalReadingView(
                     )
                 } else {
                     // 普通模式 + 高亮渲染
-                    val annotatedText = buildAnnotatedString {
-                        var cursor = 0
-                        // 按 offset 顺序处理高亮区域；对每条高亮按当前 cursor 收敛：
-                        // 重叠高亮不再重复输出重叠段，负值/反向/越界的脏数据
-                        // （startOffset > endOffset、endOffset > 段落长）也不会让
-                        // substring 抛 IllegalArgumentException
-                        val sortedHighlights = paraHighlights.sortedBy { it.startOffset }
-                        for (highlight in sortedHighlights) {
-                            val start = highlight.startOffset.coerceAtLeast(cursor)
-                            val end = highlight.endOffset.coerceIn(start, para.length)
-                            if (end <= start) continue
-                            // 插入高亮前的文本
-                            if (cursor < start) {
-                                withStyle(SpanStyle(color = textColor.copy(alpha = alpha * 0.8f))) {
-                                    append(para.substring(cursor, start))
+                    val annotatedText = remember(para, alpha, textColor, paraHighlights) {
+                        buildAnnotatedString {
+                            var cursor = 0
+                            // 按 offset 顺序处理高亮区域；对每条高亮按当前 cursor 收敛：
+                            // 重叠高亮不再重复输出重叠段，负值/反向/越界的脏数据
+                            // （startOffset > endOffset、endOffset > 段落长）也不会让
+                            // substring 抛 IllegalArgumentException
+                            val sortedHighlights = paraHighlights.sortedBy { it.startOffset }
+                            for (highlight in sortedHighlights) {
+                                val start = highlight.startOffset.coerceAtLeast(cursor)
+                                val end = highlight.endOffset.coerceIn(start, para.length)
+                                if (end <= start) continue
+                                // 插入高亮前的文本
+                                if (cursor < start) {
+                                    withStyle(SpanStyle(color = textColor.copy(alpha = alpha * 0.8f))) {
+                                        append(para.substring(cursor, start))
+                                    }
                                 }
+                                // 高亮文本
+                                withStyle(SpanStyle(
+                                    background = highlight.color.copy(alpha = 0.25f),
+                                    color = highlight.color,
+                                )) {
+                                    append(para.substring(start, end))
+                                }
+                                cursor = end
                             }
-                            // 高亮文本
-                            withStyle(SpanStyle(
-                                background = highlight.color.copy(alpha = 0.25f),
-                                color = highlight.color,
-                            )) {
-                                append(para.substring(start, end))
-                            }
-                            cursor = end
-                        }
-                        // 剩余文本
-                        if (cursor < para.length) {
-                            withStyle(SpanStyle(color = textColor.copy(alpha = alpha * 0.8f))) {
-                                append(para.substring(cursor))
+                            // 剩余文本
+                            if (cursor < para.length) {
+                                withStyle(SpanStyle(color = textColor.copy(alpha = alpha * 0.8f))) {
+                                    append(para.substring(cursor))
+                                }
                             }
                         }
                     }
@@ -1073,6 +1093,7 @@ fun NormalReadingView(
                     )
                 }
                 Spacer(modifier = Modifier.height(12.dp))
+            }
             }
         }
     }

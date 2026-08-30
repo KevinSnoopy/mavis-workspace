@@ -280,6 +280,8 @@ fun BookCard(
     onArchive: () -> Unit,
 ) {
     var showMenu by remember { mutableStateOf(false) }
+    // 删除是永久操作（级联清书签/高亮/进度/统计）：二次确认防误触
+    var showDeleteConfirm by remember { mutableStateOf(false) }
 
     Card(
         modifier = Modifier
@@ -378,12 +380,28 @@ fun BookCard(
                     )
                     DropdownMenuItem(
                         text = { Text("删除") },
-                        onClick = { onDelete(); showMenu = false },
+                        onClick = { showMenu = false; showDeleteConfirm = true },
                         leadingIcon = { Icon(Icons.Default.Delete, null, tint = MaterialTheme.colorScheme.error) },
                     )
                 }
             }
         }
+    }
+
+    if (showDeleteConfirm) {
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirm = false },
+            title = { Text("删除《${book.title}》？") },
+            text = { Text("将同时删除该书的书签、高亮、阅读进度和统计，且无法恢复。") },
+            confirmButton = {
+                TextButton(onClick = { showDeleteConfirm = false; onDelete() }) {
+                    Text("删除", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteConfirm = false }) { Text("取消") }
+            },
+        )
     }
 }
 

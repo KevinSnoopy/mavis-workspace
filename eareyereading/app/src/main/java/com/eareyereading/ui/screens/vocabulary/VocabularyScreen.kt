@@ -306,6 +306,8 @@ fun WordCard(
 ) {
     var expanded by remember { mutableStateOf(false) }
     var showNoteDialog by remember { mutableStateOf(false) }
+    // 删词是永久操作（连同复习记录一起删）：二次确认防误触
+    var showDeleteConfirm by remember { mutableStateOf(false) }
     // 带上数据键：单词的笔记/例句被外部路径更新后，对话框不再显示陈旧初值
     var noteText by remember(vocabulary.id, vocabulary.note) { mutableStateOf(vocabulary.note ?: "") }
     var exampleText by remember(vocabulary.id, vocabulary.example) { mutableStateOf(vocabulary.example ?: "") }
@@ -514,11 +516,27 @@ fun WordCard(
                         Text("复习")
                     }
                     Spacer(modifier = Modifier.width(8.dp))
-                    IconButton(onClick = onDelete) {
+                    IconButton(onClick = { showDeleteConfirm = true }) {
                         Icon(Icons.Default.Delete, "删除", tint = MaterialTheme.colorScheme.error)
                     }
                 }
             }
         }
+    }
+
+    if (showDeleteConfirm) {
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirm = false },
+            title = { Text("删除「${vocabulary.word}」？") },
+            text = { Text("删除后无法恢复，该词的复习进度也会一并删除。") },
+            confirmButton = {
+                TextButton(onClick = { showDeleteConfirm = false; onDelete() }) {
+                    Text("删除", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteConfirm = false }) { Text("取消") }
+            },
+        )
     }
 }

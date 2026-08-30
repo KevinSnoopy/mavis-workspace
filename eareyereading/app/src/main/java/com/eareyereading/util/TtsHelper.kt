@@ -88,7 +88,7 @@ class TtsHelper @Inject constructor(
      * 切换 TTS 模式，同时更新 @Volatile 字段和 StateFlow。
      * 所有内部 ttsMode 赋值都必须走这个方法，保证两个视图一致。
      */
-    private fun updateTtsMode(mode: TtsMode) {
+    private suspend fun updateTtsMode(mode: TtsMode) {
         ttsMode = mode
         _ttsModeState.value = mode
         if (mode == TtsMode.SYSTEM) {
