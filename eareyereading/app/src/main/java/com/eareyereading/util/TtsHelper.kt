@@ -235,21 +235,20 @@ class TtsHelper @Inject constructor(
         // 让第三方 app bind 到任何 TTS 引擎。这是 OS 层限制，应用层无法绕过。
         // 此时唯一可用的方案就是内置的 sherpa-onnx TTS。
         android.util.Log.w(TAG, "All system TTS engines failed. Falling back to embedded TTS (sherpa-onnx)")
-        return initializeEmbedded()
+        return initializeEmbedded(language)
     }
 
     /**
      * 初始化内置 TTS 引擎（sherpa-onnx）。
      *
-     * 如果模型已下载，立即初始化；如果没下载，返回 false（调用方应引导用户下载）。
+     * 按语言路由模型：英文书优先纯英文模型（默认的中英双语模型实为中文说话人，
+     * 读英文语调平、数字带中文音）；中文书用中英双语模型。
+     * 如果没有任何模型下载，返回 false（调用方应引导用户下载）。
      */
-    private suspend fun initializeEmbedded(): Boolean {
-        val modelInfo = embeddedTts.getCurrentModelInfo()
-        if (!embeddedTts.isModelDownloaded(modelInfo)) {
-            android.util.Log.w(
-                TAG,
-                "Embedded TTS model not downloaded: ${modelInfo.id} (${modelInfo.sizeBytes / 1_000_000}MB)"
-            )
+    private suspend fun initializeEmbedded(language: String?): Boolean {
+        val modelInfo = embeddedTts.modelForInitialize(language)
+        if (modelInfo == null) {
+            android.util.Log.w(TAG, "Embedded TTS: no model downloaded")
             lastFailureReason = InitFailureReason.NO_ENGINE
             return false
         }
@@ -258,7 +257,7 @@ class TtsHelper @Inject constructor(
             updateTtsMode(TtsMode.EMBEDDED)
             isInitialized = true
             currentLocale = Locale.US
-            android.util.Log.i(TAG, "Switched to embedded TTS mode: ${modelInfo.id}")
+            android.util.Log.i(TAG, "Switched to embedded TTS mode: ${modelInfo.id} (language=$language)")
         }
         return ok
     }
@@ -266,10 +265,10 @@ class TtsHelper @Inject constructor(
     /**
      * 显式初始化内置 TTS（无论系统 TTS 状态如何）。
      * 用于用户从设置中选择"使用内置 TTS"或模型下载完成后。
+     * language 用于模型路由（同 [initializeEmbedded]）。
      */
-    suspend fun initializeEmbeddedForced(): Boolean {
-        val modelInfo = embeddedTts.getCurrentModelInfo()
-        if (!embeddedTts.isModelDownloaded(modelInfo)) return false
+    suspend fun initializeEmbeddedForced(language: String? = null): Boolean {
+        val modelInfo = embeddedTts.modelForInitialize(language) ?: return false
         val ok = embeddedTts.initialize(modelInfo)
         if (ok) {
             updateTtsMode(TtsMode.EMBEDDED)
@@ -279,6 +278,25 @@ class TtsHelper @Inject constructor(
             try { tts?.stop(); tts?.shutdown(); tts = null } catch (_: Exception) {}
         }
         return ok
+    }
+
+    /**
+     * 换书后若已加载的内置模型与新书语言不匹配（如英文书→中文书），
+     * 且匹配模型已下载，则重新初始化切换。已匹配或无对应模型时为 no-op。
+     * 防止英文声读中文书（无声）/中文声读英文书（中文口音）跨书串声。
+     */
+    suspend fun switchEmbeddedModelIfNeeded(language: String?) {
+        if (ttsMode != TtsMode.EMBEDDED || !isInitialized) return
+        val current = embeddedTts.getCurrentModelInfo()
+        val target = embeddedTts.modelForInitialize(language) ?: return
+        if (target.id == current.id) return
+        android.util.Log.i(TAG, "Switching embedded model for language $language: ${current.id} -> ${target.id}")
+        // initialize 内部在 speakMutex 下替换实例；失败时旧模型仍存活
+        // （状态回退旧模型 READY），保持当前可用不降级
+        val ok = embeddedTts.initialize(target)
+        if (ok) {
+            isInitialized = true
+        }
     }
 
     private suspend fun initializeCore(language: String, enginePackage: String?): Boolean =

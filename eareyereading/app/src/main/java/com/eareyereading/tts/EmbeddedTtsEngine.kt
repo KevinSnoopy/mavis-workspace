@@ -200,9 +200,12 @@ class EmbeddedTtsEngine @Inject constructor(
 
         /**
          * 内置可用模型列表。
-         * 用户在 UI 中可以选择用哪个。
          *
-         * 默认推荐 MeloTTS-zh_en：中英双语，最适合本 app 的双语阅读场景。
+         * 默认推荐 MeloTTS-zh_en：中英双语，最适合中文书/混合场景。
+         * 注意：vits-melo-tts-zh_en 由 MeloTTS-Chinese 导出、只有 1 个中文说话人
+         * （官方文档明确），用它读英文口音重、语调平，英文数字词会被读出
+         * 中文音——纯英文书应路由到 language="en" 的纯英文模型
+         * （见 resolveModelForLanguage）。
          */
         val AVAILABLE_MODELS = listOf(
             ModelInfo(
@@ -247,16 +250,19 @@ class EmbeddedTtsEngine @Inject constructor(
             ),
             ModelInfo(
                 id = "vits-ljs",
-                displayName = "VITS LJS 英文女声（约 109MB）",
+                displayName = "VITS LJS 纯英文女声（约 109MB）",
                 language = "en",
                 sizeBytes = 109_000_000L,
                 tarballUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-ljs.tar.bz2",
                 files = listOf(
+                    // 注意：HF 仓库只有 int8 量化版（vits-ljs.int8.onnx），
+                    // fp32 版只在 GitHub tarball 里。逐文件回退下载 int8 存为
+                    // model.onnx——sherpa-onnx 两种精度都能加载
                     ModelFile(
                         "vits-ljs/model.onnx",
-                        url = "https://hf-mirror.com/csukuangfj/vits-ljs/resolve/main/model.onnx",
+                        url = "https://hf-mirror.com/csukuangfj/vits-ljs/resolve/main/vits-ljs.int8.onnx",
                         mirrorUrls = listOf(
-                            "https://huggingface.co/csukuangfj/vits-ljs/resolve/main/model.onnx",
+                            "https://huggingface.co/csukuangfj/vits-ljs/resolve/main/vits-ljs.int8.onnx",
                         ),
                     ),
                     ModelFile(
@@ -524,6 +530,31 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
         return AVAILABLE_MODELS.firstOrNull { it.id == currentModelName }
             ?: AVAILABLE_MODELS.firstOrNull { it.id == getSelectedModelId() }
             ?: AVAILABLE_MODELS.first()
+    }
+
+    /**
+     * 按书籍语言解析理想模型（不保证已下载）：
+     * 纯英文书优先纯英文模型——默认的中英双语模型实际是中文说话人
+     * （MeloTTS-Chinese 导出），读英文语调平、数字词带中文音；
+     * 中文/其他语言用当前选择/默认的中英双语模型。
+     * 引导弹窗/下载入口用它决定给用户推荐哪个模型。
+     */
+    fun resolveModelForLanguage(language: String?): ModelInfo {
+        if (language?.lowercase(java.util.Locale.ROOT)?.startsWith("en") == true) {
+            AVAILABLE_MODELS.firstOrNull { it.language == "en" }?.let { return it }
+        }
+        return getCurrentModelInfo()
+    }
+
+    /**
+     * 初始化时实际可加载的模型：语言对应的理想模型已下载则用它，
+     * 否则退回用户选择/默认模型（已下载时），都不可用返回 null。
+     */
+    fun modelForInitialize(language: String?): ModelInfo? {
+        val ideal = resolveModelForLanguage(language)
+        if (isModelDownloaded(ideal)) return ideal
+        val fallback = getCurrentModelInfo()
+        return if (isModelDownloaded(fallback)) fallback else null
     }
 
     /**

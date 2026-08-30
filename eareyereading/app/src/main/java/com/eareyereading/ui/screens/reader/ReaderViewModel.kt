@@ -13,6 +13,7 @@ import com.eareyereading.data.local.entity.BookmarkEntity
 import com.eareyereading.data.local.entity.HighlightEntity
 import com.eareyereading.domain.model.*
 import com.eareyereading.domain.repository.*
+import com.eareyereading.tts.EmbeddedTtsEngine
 import com.eareyereading.ui.theme.*
 import com.eareyereading.util.*
 import com.eareyereading.util.CollinsClassifier.WordLevel
@@ -200,8 +201,12 @@ class ReaderViewModel @Inject constructor(
         // 防抖：本会话内已经弹过则不再弹。
         // 例外：当完全没有系统 TTS 引擎且内置模型未下载时，弹窗是用户触达"下载内置 TTS"
         // 的唯一入口，必须允许每次点击朗读都重新弹出，否则用户关掉一次就再也找不到下载按钮。
+        // "未下载"按全部可用模型判断：初始化会退回任意已下载模型，
+        // 只要还有一个已下载，内置朗读就可用，不算 critical
         val embeddedEngine = ttsHelper.getEmbeddedEngine()
-        val embeddedNotDownloaded = !embeddedEngine.isModelDownloaded()
+        val embeddedNotDownloaded = EmbeddedTtsEngine.AVAILABLE_MODELS.none {
+            embeddedEngine.isModelDownloaded(it)
+        }
         val isNoEngineCritical = reason == TtsHelper.InitFailureReason.NO_ENGINE && embeddedNotDownloaded
         if (!force && !isNoEngineCritical && ttsPromptShownThisSession) {
             android.util.Log.d("ReaderViewModel", "TTS install prompt suppressed (already shown this session)")
@@ -228,9 +233,12 @@ class ReaderViewModel @Inject constructor(
         // withContext 里赋值的 var 不能智能转换：取本地快照供下方判断
         val sdPkg = systemDefaultPkg
 
-        // 内置 TTS 状态（embeddedEngine 已在上方防抖判断时获取，此处复用）
-        val embeddedDownloaded = embeddedEngine.isModelDownloaded()
-        val embeddedModelInfo = embeddedEngine.getCurrentModelInfo()
+        // 内置 TTS 状态（embeddedEngine 已在上方防抖判断时获取，此处复用）。
+        // 按本书语言推荐模型：英文书给纯英文模型（默认中英双语模型实为中文说话人，
+        // 读英文语调平、数字带中文音）；此时"已下载"也按推荐模型判定，
+        // 让弹窗正确给出"下载英文语音"入口
+        val embeddedModelInfo = embeddedEngine.resolveModelForLanguage(_uiState.value.book?.language)
+        val embeddedDownloaded = embeddedEngine.isModelDownloaded(embeddedModelInfo)
         val embeddedSizeText = formatBytes(embeddedModelInfo.sizeBytes)
 
         // 决定场景
@@ -365,7 +373,9 @@ class ReaderViewModel @Inject constructor(
             return
         }
         val embeddedEngine = ttsHelper.getEmbeddedEngine()
-        val modelInfo = embeddedEngine.getCurrentModelInfo()
+        // 按本书语言下载对应模型：英文书下纯英文模型，中文书下中英双语模型
+        val bookLanguage = _uiState.value.book?.language
+        val modelInfo = embeddedEngine.resolveModelForLanguage(bookLanguage)
         showToast("开始下载内置 TTS 模型（约 ${modelInfo.sizeBytes / 1_000_000}MB），请保持网络...")
         downloadJob = viewModelScope.launch {
             // 页内进度可见：引擎的 downloadProgress 流镜像进 uiState，
@@ -387,7 +397,7 @@ class ReaderViewModel @Inject constructor(
                 }
                 if (ok) {
                     showToast("下载完成，正在启用内置 TTS...")
-                    val initOk = ttsHelper.initializeEmbeddedForced()
+                    val initOk = ttsHelper.initializeEmbeddedForced(bookLanguage)
                     if (initOk) {
                         showToast("✅ 内置 TTS 已启用！现在可以朗读了")
                     } else {
@@ -414,12 +424,12 @@ class ReaderViewModel @Inject constructor(
         ttsInitJob?.cancel()
         ttsInitJob = viewModelScope.launch {
             val ok = if (enginePackage == "__EMBEDDED__") {
-                // 特殊值：激活内置 TTS。
+                // 特殊值：激活内置 TTS（按本书语言路由模型：英文书→纯英文模型）。
                 // CancellationException 必须重抛：cleanup()/stopAllPlayback() 取消本 job 后，
                 // 若被这里的 catch (Exception) 吞掉，协程会继续往下写 uiState、
                 // 甚至在用户已离开后弹引导窗（迟到状态写入）
                 try {
-                    ttsHelper.initializeEmbeddedForced()
+                    ttsHelper.initializeEmbeddedForced(_uiState.value.book?.language)
                 } catch (e: kotlinx.coroutines.CancellationException) {
                     throw e
                 } catch (e: Exception) {
@@ -466,7 +476,7 @@ class ReaderViewModel @Inject constructor(
         val embeddedNotDownloaded = !ttsHelper.getEmbeddedEngine().isModelDownloaded()
         val message = when {
             reason == TtsHelper.InitFailureReason.NO_ENGINE && embeddedNotDownloaded ->
-                "$prefix：系统 TTS 不可用，需下载内置语音模型（约 ${ttsHelper.getEmbeddedEngine().getCurrentModelInfo().sizeBytes / 1_000_000}MB）"
+                "$prefix：系统 TTS 不可用，需下载内置语音模型（约 ${ttsHelper.getEmbeddedEngine().resolveModelForLanguage(_uiState.value.book?.language).sizeBytes / 1_000_000}MB）"
             reason == null -> "$prefix：设备未安装 TTS 引擎"
             TtsEngineHelper.isChineseDevice() -> {
                 // 国产手机：附加品牌专属提示
@@ -851,6 +861,10 @@ class ReaderViewModel @Inject constructor(
                     return@launch
                 }
             }
+            // 内置模型与本书语言不匹配时先切换（英文书→纯英文模型），
+            // 已匹配/无对应模型时为 no-op
+            ttsHelper.switchEmbeddedModelIfNeeded(_uiState.value.book?.language)
+            hintEmbeddedVoiceMismatchIfNeeded()
             doStartAutoRead(paragraphs)
         }
     }
@@ -866,6 +880,23 @@ class ReaderViewModel @Inject constructor(
         val hasCjk = text.any { it in '\u4e00'..'\u9fff' }
         val perCharMs = if (hasCjk) 350L else 120L
         return maxOf(90_000L, text.length * perCharMs)
+    }
+
+    /**
+     * 英文书但内置引擎回退到了中英双语声（纯英文模型未下载）时给一次性提示：
+     * 双语模型实为中文说话人，读英文口音重、数字带中文音，
+     * 提示用户去设置下载纯英文语音。会话内只提示一次。
+     */
+    private var embeddedVoiceMismatchHintShown = false
+    private fun hintEmbeddedVoiceMismatchIfNeeded() {
+        if (embeddedVoiceMismatchHintShown) return
+        if (ttsHelper.ttsMode != TtsHelper.TtsMode.EMBEDDED) return
+        val bookLang = _uiState.value.book?.language ?: "en"
+        val model = ttsHelper.getEmbeddedEngine().getCurrentModelInfo()
+        if (bookLang.lowercase(java.util.Locale.ROOT).startsWith("en") && model.language != "en") {
+            embeddedVoiceMismatchHintShown = true
+            showToast("当前用中英双语语音朗读英文，音色偏中文；可在「设置」下载纯英文语音模型改善")
+        }
     }
 
     private fun doStartAutoRead(paragraphs: List<String>) {
@@ -1056,6 +1087,9 @@ class ReaderViewModel @Inject constructor(
                         return@launch
                     }
                 }
+                // 内置模型与本书语言不匹配时先切换，已匹配时为 no-op
+                ttsHelper.switchEmbeddedModelIfNeeded(_uiState.value.book?.language)
+                hintEmbeddedVoiceMismatchIfNeeded()
                 startRsvp()
             }
         }
@@ -1115,6 +1149,9 @@ class ReaderViewModel @Inject constructor(
                         return@launch
                     }
                 }
+                // 内置模型与本书语言不匹配时先切换，已匹配时为 no-op
+                ttsHelper.switchEmbeddedModelIfNeeded(_uiState.value.book?.language)
+                hintEmbeddedVoiceMismatchIfNeeded()
                 startSpeed()
             }
         }
@@ -1231,6 +1268,7 @@ class ReaderViewModel @Inject constructor(
                     }
                     _uiState.update { it.copy(ttsInitialized = ok) }
                     if (ok) {
+                        hintEmbeddedVoiceMismatchIfNeeded()
                         // 初始化窗口内用户可能已启动别的播放形态（或被停止）：
                         // 复查状态，避免迟到的初始化回调在新生播放之上叠一层单段朗读
                         val s = _uiState.value
@@ -1243,7 +1281,18 @@ class ReaderViewModel @Inject constructor(
                 }
                 return
             }
-            doToggleTts()
+            // 已初始化但内置模型可能与本书语言不匹配（换了书）：
+            // 播放前复查并切换（已匹配/无对应模型时是廉价 no-op）。
+            // 纳入被追踪的 ttsInitJob：切换窗口内用户改主意可被仲裁取消
+            ttsInitJob?.cancel()
+            ttsInitJob = viewModelScope.launch {
+                ttsHelper.switchEmbeddedModelIfNeeded(_uiState.value.book?.language)
+                hintEmbeddedVoiceMismatchIfNeeded()
+                val s = _uiState.value
+                if (!s.isPlaying && !s.isAutoReading && !s.isTtsPlaying) {
+                    doToggleTts()
+                }
+            }
         }
     }
 
