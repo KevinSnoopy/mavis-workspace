@@ -1,6 +1,5 @@
 package com.eareyereading.ui.screens.home
 
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -17,10 +16,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -34,7 +30,6 @@ import java.util.*
 @Composable
 fun HomeScreen(
     onNavigateToLibrary: () -> Unit,
-    onNavigateToVocabulary: () -> Unit,
     onNavigateToReview: () -> Unit,
     onNavigateToSettings: () -> Unit,
     onBookClick: (Long) -> Unit,
@@ -78,7 +73,8 @@ fun HomeScreen(
                 .fillMaxSize()
                 .background(MaterialTheme.colorScheme.background)
                 .padding(padding),
-            contentPadding = PaddingValues(bottom = 100.dp),
+            // Scaffold 的 padding 已包含底部导航栏高度，不再叠加 100dp 魔法值
+            contentPadding = PaddingValues(bottom = 16.dp),
         ) {
             // 今日统计卡片
             item {
@@ -86,7 +82,7 @@ fun HomeScreen(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 24.dp),
+                        .padding(horizontal = 16.dp),
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     StatCard(
@@ -123,7 +119,7 @@ fun HomeScreen(
                     ReviewReminderBanner(
                         count = uiState.dueReviewCount,
                         onReview = onNavigateToReview,
-                        modifier = Modifier.padding(horizontal = 24.dp),
+                        modifier = Modifier.padding(horizontal = 16.dp),
                     )
                 }
             }
@@ -134,7 +130,7 @@ fun HomeScreen(
                 Text(
                     "本周阅读",
                     style = SectionTitle,
-                    modifier = Modifier.padding(horizontal = 24.dp),
+                    modifier = Modifier.padding(horizontal = 16.dp),
                 )
                 Spacer(modifier = Modifier.height(12.dp))
                 WeeklyChart(
@@ -142,7 +138,7 @@ fun HomeScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(160.dp)
-                        .padding(horizontal = 24.dp),
+                        .padding(horizontal = 16.dp),
                 )
             }
 
@@ -153,7 +149,7 @@ fun HomeScreen(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 24.dp),
+                            .padding(horizontal = 16.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
@@ -166,7 +162,7 @@ fun HomeScreen(
                 }
                 item {
                     LazyRow(
-                        contentPadding = PaddingValues(horizontal = 24.dp),
+                        contentPadding = PaddingValues(horizontal = 16.dp),
                         horizontalArrangement = Arrangement.spacedBy(14.dp),
                     ) {
                         items(uiState.recentBooks, key = { it.id }) { book ->
@@ -179,45 +175,8 @@ fun HomeScreen(
                 }
             }
 
-            // 快捷入口
-            item {
-                Spacer(modifier = Modifier.height(28.dp))
-                Text(
-                    "快捷入口",
-                    style = SectionTitle,
-                    modifier = Modifier.padding(horizontal = 24.dp),
-                )
-                Spacer(modifier = Modifier.height(12.dp))
-                Column(
-                    modifier = Modifier.padding(horizontal = 24.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    QuickActionCard(
-                        icon = Icons.Default.LibraryBooks,
-                        title = "我的书库",
-                        subtitle = "管理书籍和文章",
-                        color = Primary,
-                        onClick = onNavigateToLibrary,
-                    )
-                    QuickActionCard(
-                        icon = Icons.Default.School,
-                        title = "生词本",
-                        subtitle = "查看和管理词汇",
-                        color = Accent,
-                        onClick = onNavigateToVocabulary,
-                    )
-                    if (uiState.dueReviewCount > 0) {
-                        QuickActionCard(
-                            icon = Icons.Default.Replay,
-                            title = "复习 ${uiState.dueReviewCount} 个生词",
-                            subtitle = "SM-2 遗忘曲线复习",
-                            color = Warning,
-                            onClick = onNavigateToReview,
-                        )
-                    }
-                }
-            }
-
+            // 快捷入口已移除：与底部导航完全重复的 web 仪表盘式链接区。
+            // 书库/生词本/复习都在底部导航栏一步直达
             item { Spacer(modifier = Modifier.height(20.dp)) }
         }
     }
@@ -428,54 +387,4 @@ private fun RecentBookCard(
     }
 }
 
-// ── 快捷入口卡片 ──────────────────────────────────
-@Composable
-private fun QuickActionCard(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    title: String,
-    subtitle: String,
-    color: Color,
-    onClick: () -> Unit,
-) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick),
-        shape = RoundedCornerShape(14.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
 
-    ) {
-        Row(
-            modifier = Modifier.padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(44.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(color.copy(alpha = 0.12f)),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(icon, null, tint = color, modifier = Modifier.size(22.dp))
-            }
-            Spacer(modifier = Modifier.width(14.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                )
-                Text(
-                    text = subtitle,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            Icon(
-                Icons.Default.ChevronRight,
-                null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
-            )
-        }
-    }
-}

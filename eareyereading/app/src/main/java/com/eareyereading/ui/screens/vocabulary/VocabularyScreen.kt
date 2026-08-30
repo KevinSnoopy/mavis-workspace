@@ -58,13 +58,13 @@ fun VocabularyScreen(
                 .background(MaterialTheme.colorScheme.background)
                 .padding(padding),
         ) {
-            // 搜索
+            // 搜索：M3 OutlinedTextField 默认样式（可见描边），不再做无边胶囊
             OutlinedTextField(
                 value = uiState.searchQuery,
                 onValueChange = viewModel::onSearch,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 24.dp, vertical = 8.dp),
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
                 placeholder = {
                     Text("搜索单词...", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 },
@@ -77,13 +77,6 @@ fun VocabularyScreen(
                     )
                 },
                 singleLine = true,
-                shape = RoundedCornerShape(12.dp),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedContainerColor = MaterialTheme.colorScheme.surface,
-                    unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
-                    focusedBorderColor = Color.Transparent,
-                    unfocusedBorderColor = Color.Transparent,
-                ),
             )
 
             Spacer(modifier = Modifier.height(8.dp))
@@ -93,12 +86,12 @@ fun VocabularyScreen(
                 Text(
                     "学习概览",
                     style = SectionTitle,
-                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 12.dp),
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
                 )
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 24.dp),
+                        .padding(horizontal = 16.dp),
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                     StatMiniCard(
@@ -123,13 +116,13 @@ fun VocabularyScreen(
                 Text(
                     "难度分布",
                     style = SectionTitle,
-                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 12.dp),
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
                 )
                 Spacer(modifier = Modifier.height(4.dp))
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 24.dp),
+                        .padding(horizontal = 16.dp),
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                     for (i in 1..5) {
@@ -140,13 +133,9 @@ fun VocabularyScreen(
             }
             Spacer(modifier = Modifier.height(20.dp))
 
-            // Tab
+            // Tab：标准 M3 TabRow（与书库页统一；原透明胶囊无指示器是 web 风格）
             TabRow(
                 selectedTabIndex = uiState.selectedTab,
-                modifier = Modifier.padding(horizontal = 24.dp),
-                indicator = {},
-                divider = {},
-                containerColor = Color.Transparent,
             ) {
                 Tab(
                     selected = uiState.selectedTab == 0,
@@ -177,7 +166,7 @@ fun VocabularyScreen(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 24.dp),
+                    .padding(horizontal = 16.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -218,7 +207,7 @@ fun VocabularyScreen(
             } else {
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(horizontal = 24.dp, vertical = 8.dp),
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
                     verticalArrangement = Arrangement.spacedBy(14.dp),
                 ) {
                     items(displayed, key = { it.id }) { word ->

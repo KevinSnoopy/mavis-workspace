@@ -1,19 +1,12 @@
 package com.eareyereading.ui
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.unit.dp
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
@@ -86,43 +79,23 @@ fun AppNavigation(
     Scaffold(
         bottomBar = {
             if (showBottomBar) {
-                NavigationBar(
-                    containerColor = MaterialTheme.colorScheme.surface,
-                    tonalElevation = 0.dp,
-                ) {
+                // 标准 M3 NavigationBarItem：图标药丸指示器 + 主题色令牌。
+                // 原实现是自绘 Box（选中整块填充主色 + 白字），是 web 标签页
+                // 风格，且绕过了涟漪/无障碍/状态层的默认行为
+                NavigationBar {
                     bottomNavItems.forEach { item ->
                         val selected = currentDestination?.hierarchy?.any { it.route == item.screen.route } == true
-                        Box(
-                            modifier = Modifier
-                                .weight(1f)
-                                .fillMaxHeight()
-                                .clip(RoundedCornerShape(16.dp))
-                                .background(
-                                    if (selected) MaterialTheme.colorScheme.primary else Color.Transparent
-                                )
-                                .clickable {
-                                    navController.navigateToTopLevel(item.screen.route)
-                                }
-                                .padding(vertical = 6.dp),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                            ) {
+                        NavigationBarItem(
+                            selected = selected,
+                            onClick = { navController.navigateToTopLevel(item.screen.route) },
+                            icon = {
                                 Icon(
                                     if (selected) item.selectedIcon else item.unselectedIcon,
                                     contentDescription = item.label,
-                                    tint = if (selected) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.size(24.dp),
                                 )
-                                Spacer(modifier = Modifier.height(2.dp))
-                                Text(
-                                    item.label,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = if (selected) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                        }
+                            },
+                            label = { Text(item.label) },
+                        )
                     }
                 }
             }
@@ -138,7 +111,6 @@ fun AppNavigation(
                     // 与底部导航栏同一套导航选项：连续点击不再堆叠重复路由，
                     // 返回键不会穿过一串相同页面
                     onNavigateToLibrary = { navController.navigateToTopLevel(Screen.Library.route) },
-                    onNavigateToVocabulary = { navController.navigateToTopLevel(Screen.Vocabulary.route) },
                     onNavigateToReview = { navController.navigateToTopLevel(Screen.Review.route) },
                     onNavigateToSettings = { navController.navigateToTopLevel(Screen.Settings.route) },
                     onBookClick = { bookId ->

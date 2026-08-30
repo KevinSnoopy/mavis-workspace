@@ -84,13 +84,14 @@ fun LibraryScreen(
                 .background(MaterialTheme.colorScheme.background)
                 .padding(padding),
         ) {
-            // 搜索栏
+            // 搜索栏：用 M3 OutlinedTextField 默认样式（可见描边、涟漪、
+            // 主题色令牌）。原实现抹掉边框做成无边胶囊搜索框，是 web 风格
             OutlinedTextField(
                 value = uiState.searchQuery,
                 onValueChange = viewModel::onSearchQueryChange,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 24.dp, vertical = 8.dp),
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
                 placeholder = {
                     Text("搜索书籍...", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 },
@@ -110,22 +111,12 @@ fun LibraryScreen(
                     }
                 },
                 singleLine = true,
-                shape = RoundedCornerShape(12.dp),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedContainerColor = MaterialTheme.colorScheme.surface,
-                    unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
-                    focusedBorderColor = Color.Transparent,
-                    unfocusedBorderColor = Color.Transparent,
-                ),
             )
 
-            // Tab 切换 - Apple 风格 pill tabs
+            // Tab 切换：标准 M3 TabRow（下划线指示器 + 分隔线）。
+            // 原实现抹掉指示器/分隔线做成透明胶囊，是 iOS/web 分段控件风格
             TabRow(
                 selectedTabIndex = uiState.selectedTab,
-                modifier = Modifier.padding(horizontal = 24.dp),
-                indicator = {},
-                divider = {},
-                containerColor = Color.Transparent,
             ) {
                 Tab(
                     selected = uiState.selectedTab == 0,
@@ -151,7 +142,7 @@ fun LibraryScreen(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 24.dp),
+                        .padding(horizontal = 16.dp),
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     StatCard(
@@ -183,7 +174,7 @@ fun LibraryScreen(
                 Text(
                     "我的书籍",
                     style = SectionTitle,
-                    modifier = Modifier.padding(horizontal = 24.dp),
+                    modifier = Modifier.padding(horizontal = 16.dp),
                 )
 
                 Spacer(modifier = Modifier.height(14.dp))
@@ -206,7 +197,7 @@ fun LibraryScreen(
                 } else {
                     LazyColumn(
                         modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(horizontal = 24.dp, vertical = 8.dp),
+                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
                         verticalArrangement = Arrangement.spacedBy(14.dp),
                     ) {
                         items(uiState.books, key = { it.id }) { book ->
@@ -436,7 +427,7 @@ fun EmptyLibrary(
             onClick = onImport,
             colors = ButtonDefaults.buttonColors(containerColor = Primary),
             shape = RoundedCornerShape(12.dp),
-            contentPadding = PaddingValues(horizontal = 24.dp, vertical = 14.dp),
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
         ) {
             Icon(Icons.Default.Add, null, modifier = Modifier.size(18.dp))
             Spacer(modifier = Modifier.width(8.dp))
@@ -561,10 +552,10 @@ fun ArticleSquareScreen(
                     Text(
                         "文章列表",
                         style = SectionTitle,
-                        modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                     )
                     LazyColumn(
-                        contentPadding = PaddingValues(horizontal = 24.dp, vertical = 8.dp),
+                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
                         verticalArrangement = Arrangement.spacedBy(14.dp),
                     ) {
                         itemsIndexed(articles, key = { index, article ->
@@ -590,10 +581,10 @@ fun ArticleSquareScreen(
             Text(
                 "订阅源",
                 style = SectionTitle,
-                modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
             )
             LazyColumn(
-                contentPadding = PaddingValues(horizontal = 24.dp, vertical = 8.dp),
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
                 val grouped = sources.groupBy { it.category }
