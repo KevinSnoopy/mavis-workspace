@@ -221,7 +221,12 @@ class EmbeddedTtsEngine @Inject constructor(
                 displayName = "Piper 英文男声·自然语调（约 66MB）",
                 language = "en",
                 sizeBytes = 66_000_000L,
-                tarballUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_US-lessac-medium.tar.bz2",
+                // 主源用 ghfast.top 镜像（国内可达性更稳），保留 GitHub release 作 fallback。
+                // 镜像失效时回退到原 URL；都不是 .tar.bz2 会被 tarballAllUrls() 过滤掉。
+                tarballUrl = "https://ghfast.top/https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_US-lessac-medium.tar.bz2",
+                tarballMirrorUrls = listOf(
+                    "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_US-lessac-medium.tar.bz2",
+                ),
                 usesEspeakNg = true,
                 // URL 留空 = 仅归档下载：espeak-ng-data 含数百个小文件，
                 // 逐文件路径不可行；归档失败时由下载逻辑直接报失败
@@ -883,8 +888,10 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
         return try {
             val existingLen = if (target.exists()) target.length() else 0L
             conn = URL(url).openConnection() as HttpURLConnection
-            conn.connectTimeout = 15_000
-            conn.readTimeout = 30_000
+            // 国内网络对 GitHub / 镜像单次 TCP 握手偶尔超 15s；66MB 模型任意单次
+            // 读流超 30s 即失败，给到 30s/120s 更稳。
+            conn.connectTimeout = 30_000
+            conn.readTimeout = 120_000
             conn.doInput = true
             conn.instanceFollowRedirects = true
             if (existingLen > 0) {
