@@ -1,3 +1,7 @@
+// 本文件是 OEM TTS 引擎探测代码：NameNotFound 等异常是预期信号
+// （"该包未安装/该组件不存在"），不是需要上报的错误，按文件级抑制
+@file:Suppress("SwallowedException")
+
 package com.eareyereading.util
 
 import android.content.Context

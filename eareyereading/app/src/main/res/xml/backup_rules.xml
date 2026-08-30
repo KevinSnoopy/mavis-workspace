@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- API 30 及以下的全量备份规则。
+     只排除可重新下载的大体积资产（内置语音模型 ~167MB、分级词典）；
+     用户数据（Room 库、设置、导入的 books/）全部保留 -->
+<full-backup-content>
+    <exclude domain="file" path="sherpa_tts_models/" />
+    <exclude domain="file" path="dictionaries/" />
+</full-backup-content>

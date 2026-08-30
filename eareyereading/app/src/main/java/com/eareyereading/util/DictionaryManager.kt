@@ -135,6 +135,8 @@ class DictionaryManager @Inject constructor(
         return try {
             gson.fromJson(manifestFile.readText(), DictionaryManifest::class.java)
         } catch (e: Exception) {
+            // manifest 损坏/半截写入时降级为无列表，但要留痕便于排查
+            android.util.Log.w("DictionaryManager", "parse manifest failed", e)
             null
         }
     }

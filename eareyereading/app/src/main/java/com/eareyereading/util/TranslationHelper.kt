@@ -121,7 +121,7 @@ class TranslationHelper @Inject constructor(
         return try {
             withTimeout(timeoutMs) { deferred.await() }
         } catch (e: TimeoutCancellationException) {
-            android.util.Log.w("TranslationHelper", "ML Kit init timed out after ${timeoutMs}ms")
+            android.util.Log.w("TranslationHelper", "ML Kit init timed out after ${timeoutMs}ms", e)
             false
         }
     }

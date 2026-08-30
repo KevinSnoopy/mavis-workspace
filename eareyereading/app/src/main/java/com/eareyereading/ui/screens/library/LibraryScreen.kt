@@ -227,6 +227,7 @@ fun LibraryScreen(
                     articles = uiState.articles,
                     articlesLoading = uiState.articlesLoading,
                     articlesError = uiState.articlesError,
+                    addedLinks = viewModel.addedArticleLinks.collectAsState().value,
                     onSourceClick = viewModel::selectSource,
                     onBackFromSource = viewModel::clearSelectedSource,
                     onAddArticle = viewModel::addArticleToLibrary,
@@ -493,6 +494,7 @@ fun ArticleSquareScreen(
     articles: List<RssParser.RssArticle>,
     articlesLoading: Boolean,
     articlesError: String?,
+    addedLinks: Set<String> = emptySet(),
     onSourceClick: (ArticleSource) -> Unit,
     onBackFromSource: () -> Unit,
     onAddArticle: (RssParser.RssArticle) -> Unit,
@@ -573,6 +575,7 @@ fun ArticleSquareScreen(
                             ArticleItemCard(
                                 article = article,
                                 sourceName = selectedSource.name,
+                                isAdded = article.link in addedLinks,
                                 onAdd = { onAddArticle(article) },
                             )
                         }
@@ -697,10 +700,9 @@ fun ArticleSourceCard(
 fun ArticleItemCard(
     article: RssParser.RssArticle,
     sourceName: String,
+    isAdded: Boolean,
     onAdd: () -> Unit,
 ) {
-    var added by remember { mutableStateOf(false) }
-
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(14.dp),
@@ -743,7 +745,7 @@ fun ArticleItemCard(
             }
             Spacer(modifier = Modifier.height(12.dp))
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                if (added) {
+                if (isAdded) {
                     AssistChip(
                         onClick = {},
                         label = { Text("已添加", style = MaterialTheme.typography.labelSmall) },
@@ -757,10 +759,7 @@ fun ArticleItemCard(
                     )
                 } else {
                     Button(
-                        onClick = {
-                            onAdd()
-                            added = true
-                        },
+                        onClick = { onAdd() },
                         colors = ButtonDefaults.buttonColors(containerColor = Primary),
                         shape = RoundedCornerShape(10.dp),
                         contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),

@@ -72,6 +72,14 @@ class LibraryViewModel @Inject constructor(
 
     private val searchQuery = MutableStateFlow("")
 
+    /**
+     * 已成功加入书库的文章链接集合。
+     * 旧实现在点击瞬间乐观置"已添加"，异步抓取失败后卡片永远卡在已添加态
+     * 且无法重试；现在只有导入真正成功才标记
+     */
+    private val _addedArticleLinks = MutableStateFlow<Set<String>>(emptySet())
+    val addedArticleLinks: StateFlow<Set<String>> = _addedArticleLinks.asStateFlow()
+
     init {
         viewModelScope.launch {
             try {
@@ -435,6 +443,8 @@ class LibraryViewModel @Inject constructor(
             _uiState.update { it.copy(isLoading = false, loadingMessage = "文章链接无效，无法导入") }
             return
         }
+        // 已成功的导入不重复抓取入库
+        if (article.link in _addedArticleLinks.value) return
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, loadingMessage = "正在导入文章...") }
             try {
@@ -449,6 +459,8 @@ class LibraryViewModel @Inject constructor(
                         addedAt = dateFormat.format(Date()),
                     )
                     bookRepository.addBook(book)
+                    // 成功后才标记"已添加"：失败时卡片保持可重试状态
+                    _addedArticleLinks.update { it + article.link }
                     _uiState.update { it.copy(
                         isLoading = false,
                         loadingMessage = "「${article.title.take(20)}...」已加入书库！",

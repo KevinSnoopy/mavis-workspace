@@ -764,7 +764,7 @@ fun SettingsScreen(
                         iconColor = OnSurfaceTertiary,
                         title = "清除缓存",
                         subtitle = if (uiState.isClearing) "清除中..." else {
-                            String.format("%.1f MB", uiState.cacheSizeMb)
+                            String.format(java.util.Locale.getDefault(), "%.1f MB", uiState.cacheSizeMb)
                         },
                         onClick = { viewModel.clearCache() },
                     )

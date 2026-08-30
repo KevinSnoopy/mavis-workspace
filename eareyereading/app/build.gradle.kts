@@ -160,7 +160,11 @@ dependencies {
 
 detekt {
     toolVersion = "1.23.4"
-    buildUponDefaultConfig = false
+    // Round 5 灰度：改为叠加官方默认规则集，detekt.yml 作为覆盖层
+    // （style/complexity/performance/naming 仍按 ruleset 级关闭，
+    // potential-bugs/coroutines/exceptions/empty-blocks/comments 生效）。
+    // 此前 =false 时全仓实际只跑 2 条规则
+    buildUponDefaultConfig = true
     allRules = false
     config.setFrom(file("$rootDir/detekt.yml"))
 }

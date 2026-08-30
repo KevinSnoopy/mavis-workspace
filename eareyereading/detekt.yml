@@ -1,5 +1,7 @@
-# Detekt configuration - replaces default config (buildUponDefaultConfig=false)
-# Only potential-bugs rules enabled (catches real bugs)
+# Detekt configuration — Round 5 起作为官方默认规则集的覆盖层
+# （app/build.gradle.kts: buildUponDefaultConfig = true）。
+# 默认生效的 ruleset 中，style/complexity/performance/naming 仍按下关闭；
+# potential-bugs/coroutines/exceptions/empty-blocks/comments 生效。
 
 build:
   maxIssues: 0
@@ -10,6 +12,24 @@ potential-bugs:
     active: true
   UnsafeCast:
     active: true
+
+exceptions:
+  active: true
+  # 项目约定（Round 3 起）：所有异步边界（viewModelScope collect / IO 工具）
+  # 统一 catch (Exception) 兜底 + 先重抛 CancellationException + 记日志，
+  # 防止数据层异常经未捕获处理器崩 App。逐文件加 @file:Suppress 噪音太大，
+  # 在此集中关闭该规则；真正有害的"静默吞异常"仍由 SwallowedException 把关
+  TooGenericExceptionCaught:
+    active: false
+  SwallowedException:
+    active: true
+
+empty-blocks:
+  active: true
+  EmptyFunctionBlock:
+    active: true
+    # 重写来的空实现（如 UtteranceProgressListener.onStart）是正常监听器桩
+    ignoreOverridden: true
 
 # All style/complexity rules disabled
 style:
