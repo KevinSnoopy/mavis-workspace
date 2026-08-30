@@ -29,8 +29,10 @@ class NotificationHelper @Inject constructor(
         const val REQUEST_CODE = 1001
     }
 
-    private val alarmManager: AlarmManager by lazy {
-        context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+    // P1 修复: getSystemService 在系统服务被禁用/移除时返回 null(罕见但会发生,
+    // 如 Device Owner 策略/企业 MDM),`as` 会抛 ClassCastException。这里改 `as?` 防御性返回 null。
+    private val alarmManager: AlarmManager? by lazy {
+        context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager
     }
 
     /**
@@ -46,7 +48,11 @@ class NotificationHelper @Inject constructor(
                 description = "每日复习提醒，帮助你保持学习连胜"
                 enableVibration(true)
             }
-            val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+                ?: run {
+                    android.util.Log.w("NotificationHelper", "NotificationManager not available, skip channel create")
+                    return
+                }
             notificationManager.createNotificationChannel(channel)
         }
     }
@@ -76,17 +82,22 @@ class NotificationHelper @Inject constructor(
             }
         }
 
+        // P1 修复: alarmManager 可能为 null(见 lazy 声明的注释),早返回避免 NPE
+        val am = alarmManager ?: run {
+            android.util.Log.w("NotificationHelper", "AlarmManager not available, cannot schedule reminder")
+            return
+        }
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                if (alarmManager.canScheduleExactAlarms()) {
-                    alarmManager.setExactAndAllowWhileIdle(
+                if (am.canScheduleExactAlarms()) {
+                    am.setExactAndAllowWhileIdle(
                         AlarmManager.RTC_WAKEUP,
                         calendar.timeInMillis,
                         pendingIntent,
                     )
                 } else {
                     // 无法获取精确闹钟权限，降级为每日重复闹钟
-                    alarmManager.setInexactRepeating(
+                    am.setInexactRepeating(
                         AlarmManager.RTC_WAKEUP,
                         calendar.timeInMillis,
                         AlarmManager.INTERVAL_DAY,
@@ -94,7 +105,7 @@ class NotificationHelper @Inject constructor(
                     )
                 }
             } else {
-                alarmManager.setExactAndAllowWhileIdle(
+                am.setExactAndAllowWhileIdle(
                     AlarmManager.RTC_WAKEUP,
                     calendar.timeInMillis,
                     pendingIntent,
@@ -105,13 +116,15 @@ class NotificationHelper @Inject constructor(
             android.util.Log.w("NotificationHelper", "Cannot schedule exact alarm: ${e.message}")
             // 降级
             try {
-                alarmManager.setInexactRepeating(
+                am.setInexactRepeating(
                     AlarmManager.RTC_WAKEUP,
                     calendar.timeInMillis,
                     AlarmManager.INTERVAL_DAY,
                     pendingIntent,
                 )
-            } catch (_: Exception) { }
+            } catch (e: Exception) {
+                android.util.Log.w("NotificationHelper", "Fallback inexactRepeating also failed: ${e.message}")
+            }
         }
     }
 
@@ -126,7 +139,13 @@ class NotificationHelper @Inject constructor(
             intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
-        alarmManager.cancel(pendingIntent)
+        // P1 修复: 同上
+        val am = alarmManager
+        if (am != null) {
+            am.cancel(pendingIntent)
+        } else {
+            android.util.Log.w("NotificationHelper", "AlarmManager not available, cannot cancel reminder")
+        }
         android.util.Log.d("NotificationHelper", "Reminder cancelled")
     }
 }

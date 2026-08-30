@@ -383,24 +383,29 @@ fun ReaderScreen(
     }
 
     // 单词弹窗
-    if (uiState.showWordDialog && uiState.selectedVocab != null) {
-        WordDetailDialog(
-            word = uiState.selectedVocab!!.word,
-            definition = uiState.wordDefinition,
-            wordLevel = uiState.selectedWordLevel,
-            onAddToVocabulary = { viewModel.addToVocabulary(uiState.selectedVocab!!.word, null) },
-            onDismiss = viewModel::dismissWordDialog,
-        )
+    // P0 修复: 用 ?.let { } 替代 !! —— Compose lambda 内编译器看不到 smart cast,
+    // 当时序在 null 检查与 lambda 执行之间变化(罕见但理论上存在)会 NPE。
+    uiState.selectedVocab?.let { vocab ->
+        if (uiState.showWordDialog) {
+            WordDetailDialog(
+                word = vocab.word,
+                definition = uiState.wordDefinition,
+                wordLevel = uiState.selectedWordLevel,
+                onAddToVocabulary = { viewModel.addToVocabulary(vocab.word, null) },
+                onDismiss = viewModel::dismissWordDialog,
+            )
+        }
     }
 
     // 选句翻译弹窗
     val selectedSentence by viewModel.selectedSentence.collectAsState()
     val sentenceTranslation by viewModel.sentenceTranslation.collectAsState()
-    if (selectedSentence != null) {
+    // P0 修复: 同上,避免 !! 在 by 委托后丢失智能转换
+    selectedSentence?.let { sentence ->
         SentenceTranslationDialog(
-            sentence = selectedSentence!!,
+            sentence = sentence,
             translation = sentenceTranslation,
-            isLoading = sentenceTranslation == null && selectedSentence != null,
+            isLoading = sentenceTranslation == null,
             onDismiss = viewModel::dismissSentenceTranslation,
         )
     }

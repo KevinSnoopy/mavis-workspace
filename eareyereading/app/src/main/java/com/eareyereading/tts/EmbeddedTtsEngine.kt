@@ -1070,15 +1070,18 @@ private fun splitSentences(text: String): List<String> {
     fun isPlaying(): Boolean = isPlaying.get()
 
     // ── 下载通知（保活 + 进度可见）──────────────────────
-    private val notificationManager: NotificationManager by lazy {
-        context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+    // P1 修复: getSystemService 在系统服务被禁用/移除时返回 null,改 `as?` 防御
+    private val notificationManager: NotificationManager? by lazy {
+        context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
     }
 
     private fun ensureDownloadChannel() {
+        // P1 修复: 同上,服务不可用时跳过 channel 创建(不阻塞 TTS 下载逻辑)
+        val nm = notificationManager ?: return
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val ch = notificationManager.getNotificationChannel(DL_CHANNEL_ID)
+            val ch = nm.getNotificationChannel(DL_CHANNEL_ID)
             if (ch == null) {
-                notificationManager.createNotificationChannel(
+                nm.createNotificationChannel(
                     NotificationChannel(
                         DL_CHANNEL_ID,
                         "语音模型下载",
@@ -1092,6 +1095,8 @@ private fun splitSentences(text: String): List<String> {
     /** 显示/更新下载进度通知。progress 0..1，null 表示不确定。 */
     fun showDownloadNotification(progress: Float?, contentText: String) {
         ensureDownloadChannel()
+        // P1 修复: notificationManager 可能为 null,跳过通知发送(下载本身仍正常)
+        val nm = notificationManager ?: return
         val builder = NotificationCompat.Builder(context, DL_CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_sys_download)
             .setContentTitle("下载内置语音模型")
@@ -1111,11 +1116,12 @@ private fun splitSentences(text: String): List<String> {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
         builder.setContentIntent(pi)
-        notificationManager.notify(DL_NOTIFICATION_ID, builder.build())
+        nm.notify(DL_NOTIFICATION_ID, builder.build())
     }
 
     /** 取消下载通知。 */
     fun cancelDownloadNotification() {
-        notificationManager.cancel(DL_NOTIFICATION_ID)
+        // P1 修复: 同上
+        notificationManager?.cancel(DL_NOTIFICATION_ID)
     }
 }

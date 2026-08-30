@@ -5,6 +5,7 @@ import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.eareyereading.MainActivity
 import com.eareyereading.R
@@ -33,13 +34,25 @@ class NotificationReceiver : BroadcastReceiver() {
             .setContentIntent(pendingIntent)
             .build()
 
-        val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        // P1 修复: getSystemService 在系统服务被禁用/移除时返回 null,改 `as?` 防御
+        val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+        if (notificationManager == null) {
+            Log.w(TAG, "NotificationManager not available, skip notification")
+            return
+        }
         notificationManager.notify(NotificationHelper.NOTIFICATION_ID, notification)
 
         // 重新调度明天的提醒
+        // P0 修复: 即使 catch 住也记一条 warn,方便排查"用户没收到次日提醒"问题
         try {
             val helper = NotificationHelper(context)
             helper.scheduleReviewReminder()
-        } catch (_: Exception) { }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to schedule next-day reminder", e)
+        }
+    }
+
+    private companion object {
+        const val TAG = "NotificationReceiver"
     }
 }

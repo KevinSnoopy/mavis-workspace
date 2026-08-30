@@ -478,12 +478,21 @@ class ReaderViewModel @Inject constructor(
                 settingsRepository.getTheme(),
                 settingsRepository.getTranslationAlpha(),
             ) { values ->
-                val speed = values[0] as Int
-                val strength = values[1] as Int
-                val interval = values[2] as Int
-                val fontSize = values[3] as Int
-                val theme = values[4] as ReadingTheme
-                val alpha = values[5] as Float
+                // P1 修复: 用 as? 安全转换 + 默认值,避免 DataStore 旧版本数据 schema
+                // 不匹配时 ClassCastException 直接死掉 init block(整个 Reader 屏开不起来)。
+                // 当前 SettingsRepository 返回类型稳定,但 as 是脆性耦合,加防御。
+                @Suppress("UNCHECKED_CAST")
+                val speed = values[0] as? Int ?: 300
+                @Suppress("UNCHECKED_CAST")
+                val strength = values[1] as? Int ?: 3
+                @Suppress("UNCHECKED_CAST")
+                val interval = values[2] as? Int ?: 1
+                @Suppress("UNCHECKED_CAST")
+                val fontSize = values[3] as? Int ?: 18
+                @Suppress("UNCHECKED_CAST")
+                val theme = values[4] as? ReadingTheme ?: ReadingTheme.LIGHT
+                @Suppress("UNCHECKED_CAST")
+                val alpha = values[5] as? Float ?: 0.85f
                 ReadingSettings(speed, fontSize, theme, alpha, strength, interval)
             }.collect { s ->
                 _uiState.update {

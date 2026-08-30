@@ -9,6 +9,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -582,6 +583,10 @@ class TtsHelper @Inject constructor(
         ttsGeneration++
         pendingContinuations.clear()
         try { embeddedTts.stop() } catch (_: Exception) {}
+        // P0 修复: cancel 内部协程 scope,避免 shutdown 后仍在飞的协程持有
+        // Activity/Context 引用造成内存泄漏(单例生命周期 = 进程生命周期,通常不致命,
+        // 但 hot reload / 单元测试 / 进程存活但 TTS 实例重建场景会泄漏 Activity 引用)
+        scope.cancel()
     }
 
     /**

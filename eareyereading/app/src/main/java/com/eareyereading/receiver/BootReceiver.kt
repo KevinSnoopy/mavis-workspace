@@ -15,7 +15,7 @@ class BootReceiver : BroadcastReceiver() {
             try {
                 val helper = NotificationHelper(context)
                 helper.scheduleReviewReminder()
-            } catch (_: Exception) { }
+            } catch (e: Exception) { android.util.Log.w("BootReceiver", "scheduleReviewReminder failed", e) }
         }
     }
 }
