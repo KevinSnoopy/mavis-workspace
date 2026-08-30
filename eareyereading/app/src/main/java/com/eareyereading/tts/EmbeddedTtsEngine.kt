@@ -168,6 +168,11 @@ class EmbeddedTtsEngine @Inject constructor(
          */
         val tarballUrl: String? = null,
         val tarballMirrorUrls: List<String> = emptyList(),
+        /**
+         * Piper 系模型：G2P 走 espeak-ng（需模型目录下的 espeak-ng-data/），
+         * 不用 lexicon。初始化时 dataDir 指向 espeak-ng-data 目录。
+         */
+        val usesEspeakNg: Boolean = false,
     ) {
         fun tarballAllUrls(): List<String> =
             (listOfNotNull(tarballUrl) + tarballMirrorUrls)
@@ -205,9 +210,28 @@ class EmbeddedTtsEngine @Inject constructor(
          * 注意：vits-melo-tts-zh_en 由 MeloTTS-Chinese 导出、只有 1 个中文说话人
          * （官方文档明确），用它读英文口音重、语调平，英文数字词会被读出
          * 中文音——纯英文书应路由到 language="en" 的纯英文模型
-         * （见 resolveModelForLanguage）。
+         * （见 resolveModelForLanguage，按列表顺序取第一个 "en"）。
+         *
+         * 英文首选 Piper lessac-medium：韵律明显比 MeloTTS/LJS 自然，
+         * G2P 走 espeak-ng（归档自带 espeak-ng-data/）。仅归档下载
+         * （文件是整目录树，无逐文件镜像）。
          */
         val AVAILABLE_MODELS = listOf(
+            ModelInfo(
+                id = "vits-piper-en_US-lessac-medium",
+                displayName = "Piper 英文男声·自然语调（约 66MB）",
+                language = "en",
+                sizeBytes = 66_000_000L,
+                tarballUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_US-lessac-medium.tar.bz2",
+                usesEspeakNg = true,
+                // URL 留空 = 仅归档下载：espeak-ng-data 含数百个小文件，
+                // 逐文件路径不可行；归档失败时由下载逻辑直接报失败
+                files = listOf(
+                    ModelFile("vits-piper-en_US-lessac-medium/en_US-lessac-medium.onnx", url = ""),
+                    ModelFile("vits-piper-en_US-lessac-medium/tokens.txt", url = ""),
+                    ModelFile("vits-piper-en_US-lessac-medium/espeak-ng-data", url = ""),
+                ),
+            ),
             ModelInfo(
                 id = "vits-melo-tts-zh_en",
                 displayName = "MeloTTS 中英双语（约 167MB）",
@@ -553,6 +577,12 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
     fun modelForInitialize(language: String?): ModelInfo? {
         val ideal = resolveModelForLanguage(language)
         if (isModelDownloaded(ideal)) return ideal
+        // 理想模型没下载时，优先同语言的其它已下载模型
+        // （如英文书：Piper 没下但 LJS 下过，不该退回中文声）
+        if (language?.lowercase(java.util.Locale.ROOT)?.startsWith("en") == true) {
+            AVAILABLE_MODELS.firstOrNull { it.language == "en" && isModelDownloaded(it) }
+                ?.let { return it }
+        }
         val fallback = getCurrentModelInfo()
         return if (isModelDownloaded(fallback)) fallback else null
     }
@@ -584,7 +614,9 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
     fun deleteModel(modelInfo: ModelInfo = getCurrentModelInfo()) {
         val dir = File(context.filesDir, MODELS_DIR_NAME)
         modelInfo.files.forEach { file ->
-            File(dir, file.relativePath).let { if (it.exists()) it.delete() }
+            // deleteRecursively：Piper 的 espeak-ng-data 是目录，
+            // File.delete() 对非空目录静默失败会留下 ~5MB 残留
+            File(dir, file.relativePath).let { if (it.exists()) it.deleteRecursively() }
             File(dir, file.relativePath + COMPLETE_SUFFIX).let { if (it.exists()) it.delete() }
         }
         // 状态流同步复位：此前删完模型流里仍是 READY(旧模型)，
@@ -630,6 +662,15 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
                 }
                 Log.w(TAG, "tarball 下载/解压失败，回退到逐文件下载")
                 showDownloadNotification(0f, "回退到逐文件下载...")
+            }
+
+            // 仅归档模型（Piper 类：整目录树、无逐文件镜像）：
+            // 归档失败即下载失败，不进逐文件路径（空 URL 只会逐个报错）
+            if (modelInfo.files.all { f -> f.allUrls().all { it.isBlank() } }) {
+                _state.value = EngineState.DOWNLOAD_FAILED("模型归档下载失败，请检查网络后重试")
+                _downloadProgress.value = null
+                cancelDownloadNotification()
+                return@withContext false
             }
 
             // 回退路径：逐文件下载（HuggingFace，国内可能不可达）
@@ -737,8 +778,9 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
             val ok = downloadFileWithResume(url, tarballFile) { bytesRead ->
                 // sizeBytes 是解压后大小，而此阶段下载的是压缩后的 tar.bz2，
                 // 拿它当分母进度会卡在 ~60% 再跳到"解压中"。
-                // 压缩前后大小无可靠元数据，直接按不确定进度展示
-                _downloadProgress.value = null
+                // 压缩前后大小无可靠元数据，按 0% 的"活动中"展示
+                // （发 null 会让 UI 以为没在下载）
+                _downloadProgress.value = 0f
                 onProgress(0f)
                 val now = System.currentTimeMillis()
                 if (now - lastNotifyMs > 500) {
@@ -1014,22 +1056,34 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
                     modelInfo.files.firstOrNull { it.relativePath.endsWith("/$name") }
                         ?.let { File(dir, it.relativePath).absolutePath }
 
-                val modelPath = findFile("model.onnx")
-                    ?: throw IllegalStateException("缺少 model.onnx")
+                // 主模型文件名各家不同（model.onnx / en_US-lessac-medium.onnx），
+                // 按 .onnx 后缀找而不是写死文件名
+                val modelPath = modelInfo.files
+                    .firstOrNull { it.relativePath.endsWith(".onnx") }
+                    ?.let { File(dir, it.relativePath).absolutePath }
+                    ?: throw IllegalStateException("缺少 .onnx 模型文件")
                 val tokensPath = findFile("tokens.txt")
                     ?: throw IllegalStateException("缺少 tokens.txt")
-                val lexiconPath = findFile("lexicon.txt") // 可选，英文 VITS-LJS 也用
+                // Piper 不用 lexicon（G2P 走 espeak-ng）；其余模型可选
+                val lexiconPath = if (modelInfo.usesEspeakNg) null else findFile("lexicon.txt")
                 // MeloTTS 的 jieba 词典目录名为 dict
                 val dictDirPath = modelInfo.files
                     .firstOrNull { it.relativePath.endsWith("/dict") }
                     ?.let { File(dir, it.relativePath).absolutePath }
+                // Piper 的 dataDir 必须指向 espeak-ng-data 目录（G2P 数据），
+                // 其余模型保持模型目录本身（MeloTTS 另用 dict 子目录）
+                val dataDirPath = if (modelInfo.usesEspeakNg) {
+                    File(modelDir, "espeak-ng-data").absolutePath
+                } else {
+                    modelDir.absolutePath
+                }
 
                 // VITS 模型配置（使用构造参数，避免依赖 var 字段默认值）
                 val vitsConfig = OfflineTtsVitsModelConfig(
                     model = modelPath,
                     tokens = tokensPath,
                     lexicon = lexiconPath ?: "",
-                    dataDir = modelDir.absolutePath,
+                    dataDir = dataDirPath,
                     dictDir = dictDirPath ?: "",
                 )
                 val modelConfig = OfflineTtsModelConfig(
