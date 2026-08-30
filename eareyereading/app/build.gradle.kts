@@ -81,6 +81,12 @@ android {
     }
 }
 
+// Room schema 导出：配合 AppDatabase.exportSchema = true，
+// 每个版本的表结构落到 app/schemas/ 并随仓库提交，供迁移链静态比对
+ksp {
+    arg("room.schemaLocation", "$projectDir/schemas")
+}
+
 dependencies {
     // Core Android
     implementation("androidx.core:core-ktx:1.12.0")

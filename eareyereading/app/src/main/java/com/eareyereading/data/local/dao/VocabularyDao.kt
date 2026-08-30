@@ -47,7 +47,9 @@ interface VocabularyDao {
     @Query("DELETE FROM review_records WHERE vocabularyId = :vocabId")
     suspend fun deleteReviewRecord(vocabId: Long)
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    // vocabularyId 唯一索引下用 IGNORE：与 ReviewRecordDao.insertReview 同理，
+    // 保护已积累的 SM-2 进度不被竞态插入重建
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertReviewRecord(review: ReviewRecordEntity)
 
     @Query("SELECT EXISTS(SELECT 1 FROM review_records WHERE vocabularyId = :vocabularyId LIMIT 1)")

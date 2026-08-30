@@ -6,7 +6,9 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface ReviewRecordDao {
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    // vocabularyId 唯一索引下用 IGNORE：竞态重复插入变成幂等空操作；
+    // 绝不能用 REPLACE（会把已积累的 SM-2 进度整条抹掉重建）
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertReview(review: ReviewRecordEntity): Long
 
     @Update

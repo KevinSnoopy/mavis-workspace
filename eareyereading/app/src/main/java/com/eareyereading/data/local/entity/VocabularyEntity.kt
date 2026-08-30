@@ -1,9 +1,16 @@
 package com.eareyereading.data.local.entity
 
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.PrimaryKey
 
-@Entity(tableName = "vocabulary")
+@Entity(
+    tableName = "vocabulary",
+    indices = [
+        // getWordsByBook / 按书删词场景的过滤列
+        Index(value = ["bookId"]),
+    ],
+)
 data class VocabularyEntity(
     @PrimaryKey(autoGenerate = true)
     val id: Long = 0,

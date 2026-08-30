@@ -1,9 +1,17 @@
 package com.eareyereading.data.local.entity
 
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.PrimaryKey
 
-@Entity(tableName = "books")
+@Entity(
+    tableName = "books",
+    indices = [
+        // getAllBooks / getArchivedBooks / searchBooks 都按 isArchived 过滤
+        // 并按 lastReadTime 排序，首页每次启动都走
+        Index(value = ["isArchived", "lastReadTime"]),
+    ],
+)
 data class BookEntity(
     @PrimaryKey(autoGenerate = true)
     val id: Long = 0,
