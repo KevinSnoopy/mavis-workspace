@@ -36,32 +36,32 @@ import kotlin.coroutines.resume
 /**
  * TTS 引擎引导弹窗的事件载荷。
  */
+/**
+ * TTS 引导提示（自 2026-08-30 系统 TTS 下线后已大幅简化）：
+ * 只剩"提醒用户去下载嵌入式模型"一种场景。系统引擎选择/Google TTS 安装/
+ * 第三方 TTS app 安装等场景全部删掉（TtsEngineHelper 已被删除）。
+ *
+ * 保留字段签名以避免 UI 侧广泛改动。
+ */
 data class TtsInstallPrompt(
-    val reason: TtsHelper.InitFailureReason,
-    val availableEngines: List<TtsEngineHelper.TtsEngineInfo>,
-    /** 自动回退候选引擎包名（如果不为空，弹窗会提示用户已自动尝试过此引擎） */
-    val fallbackEnginePackage: String? = null,
-    /** 通过 Intent 扫描发现的引擎（讯飞/百度/Google翻译等可能在这里） */
-    val discoveredEngines: List<TtsEngineHelper.TtsEngineInfo> = emptyList(),
-    /** 系统设置中选择的 TTS 引擎包名（Settings.Secure.TTS_DEFAULT_SYNTH） */
-    val systemDefaultEnginePackage: String? = null,
-    /** 是否处于"幽灵默认"状态：系统设置指向不存在的包，OEM 引擎不对第三方 app 开放 */
-    val isPhantomDefaultState: Boolean = false,
-    /** 设备上是否安装了 Google Play 商店 */
-    val hasGooglePlay: Boolean = false,
-    /** 未安装的第三方 TTS app（用于引导安装） */
-    val uninstalledThirdPartyTtsApps: List<TtsEngineHelper.ThirdPartyTtsApp> = emptyList(),
-    /** 安装指南步骤（当设备完全没有可用引擎时显示） */
-    val installGuideSteps: List<String> = emptyList(),
-    /** 当前 dialog 的对话场景（用于驱动 UI） */
-    val scenario: DialogScenario = DialogScenario.NO_ENGINE,
-    /** 内置 TTS 模型是否已下载 */
+    @Suppress("UNUSED_PARAMETER") val reason: TtsHelper.InitFailureReason = TtsHelper.InitFailureReason.NO_ENGINE,
+    @Suppress("UNUSED_PARAMETER") val availableEngines: List<Any> = emptyList(),
+    @Suppress("UNUSED_PARAMETER") val fallbackEnginePackage: String? = null,
+    @Suppress("UNUSED_PARAMETER") val discoveredEngines: List<Any> = emptyList(),
+    @Suppress("UNUSED_PARAMETER") val systemDefaultEnginePackage: String? = null,
+    @Suppress("UNUSED_PARAMETER") val isPhantomDefaultState: Boolean = false,
+    @Suppress("UNUSED_PARAMETER") val hasGooglePlay: Boolean = false,
+    @Suppress("UNUSED_PARAMETER") val uninstalledThirdPartyTtsApps: List<Any> = emptyList(),
+    @Suppress("UNUSED_PARAMETER") val installGuideSteps: List<String> = emptyList(),
+    @Suppress("UNUSED_PARAMETER") val scenario: DialogScenario = DialogScenario.NO_ENGINE,
+    /** 内置 TTS 模型是否已下载（剩余唯一影响 UI 的字段） */
     val embeddedModelDownloaded: Boolean = false,
     /** 内置 TTS 模型显示名 */
     val embeddedModelDisplayName: String = "",
     /** 内置 TTS 模型大小（人类可读） */
     val embeddedModelSizeText: String = "",
 ) {
+    @Suppress("unused")
     enum class DialogScenario {
         HAS_DISCOVERED_ENGINES,
         SYSTEM_DEFAULT_INSTALLED_BUT_UNREACHABLE,
@@ -70,23 +70,19 @@ data class TtsInstallPrompt(
 }
 
 /**
- * 用户对 TTS 引导弹窗的回应动作。
+ * 用户对 TTS 引导弹窗的回应动作（仅剩"下载内置模型"和"关闭"两类）。
  */
 sealed class TtsInstallAction {
-    /** 打开指定引擎（或默认）的系统设置 */
-    data class OpenEngineSettings(val enginePackage: String?) : TtsInstallAction()
-    /** 跳转到安装 Google TTS 的界面（Google Play 商店或浏览器） */
-    data object InstallGoogleTts : TtsInstallAction()
-    /** 跳转到"未知来源应用"设置（让用户允许安装第三方 APK） */
-    data object OpenUnknownSourcesSettings : TtsInstallAction()
-    /** 用指定的引擎包名重新初始化 */
-    data class RetryWithEngine(val enginePackage: String) : TtsInstallAction()
-    /** 跳转到安装第三方 TTS app 的下载页面 */
-    data class InstallThirdPartyTtsApp(val app: TtsEngineHelper.ThirdPartyTtsApp) : TtsInstallAction()
     /** 下载内置 TTS 模型 */
     data object DownloadEmbeddedTts : TtsInstallAction()
     /** 关闭弹窗 */
     data object Dismiss : TtsInstallAction()
+    // 占位旧枚举（兼容现有 UI 调用方，运行时不再创建）
+    @Suppress("unused") data class OpenEngineSettings(val enginePackage: String?) : TtsInstallAction()
+    @Suppress("unused") data object InstallGoogleTts : TtsInstallAction()
+    @Suppress("unused") data object OpenUnknownSourcesSettings : TtsInstallAction()
+    @Suppress("unused") data class RetryWithEngine(val enginePackage: String) : TtsInstallAction()
+    @Suppress("unused") data class InstallThirdPartyTtsApp(val app: Any) : TtsInstallAction()
 }
 
 data class ReaderUiState(
@@ -144,6 +140,9 @@ data class ReaderUiState(
     // 内置 TTS 模型下载进度（0..1）；null = 无下载任务。
     // 阅读页引导弹窗内直接展示，不再只能去设置页看进度
     val embeddedDownloadProgress: Float? = null,
+    // 阶段文案（"下载中 65%" / "解压中 (2/3) tokens.txt" / "正在初始化…"）
+    // 让用户知道现在到底在干什么——避免"进度条停 95%"误判为卡死
+    val embeddedDownloadStage: String? = null,
     // 加载
     val isLoading: Boolean = true,
 )
@@ -197,89 +196,31 @@ class ReaderViewModel @Inject constructor(
         _toastMessage.tryEmit(msg)
     }
 
-    private suspend fun showTtsInstallPrompt(reason: TtsHelper.InitFailureReason, force: Boolean = false) {
-        // 防抖：本会话内已经弹过则不再弹。
-        // 例外：当完全没有系统 TTS 引擎且内置模型未下载时，弹窗是用户触达"下载内置 TTS"
-        // 的唯一入口，必须允许每次点击朗读都重新弹出，否则用户关掉一次就再也找不到下载按钮。
-        // "未下载"按全部可用模型判断：初始化会退回任意已下载模型，
-        // 只要还有一个已下载，内置朗读就可用，不算 critical
+    /**
+     * 显示 TTS 引导弹窗——已下线系统 TTS 探测，只剩"提醒下载内置引擎"一种场景。
+     */
+    private suspend fun showTtsInstallPrompt(@Suppress("UNUSED_PARAMETER") reason: TtsHelper.InitFailureReason, force: Boolean = false) {
         val embeddedEngine = ttsHelper.getEmbeddedEngine()
         val embeddedNotDownloaded = EmbeddedTtsEngine.AVAILABLE_MODELS.none {
             embeddedEngine.isModelDownloaded(it)
         }
-        val isNoEngineCritical = reason == TtsHelper.InitFailureReason.NO_ENGINE && embeddedNotDownloaded
-        if (!force && !isNoEngineCritical && ttsPromptShownThisSession) {
+        // 防抖：未下载内置模型时强制每次弹出（用户关掉后仍能找到入口）；
+        // 已下载则不再骚扰
+        if (!force && !embeddedNotDownloaded && ttsPromptShownThisSession) {
             android.util.Log.d("ReaderViewModel", "TTS install prompt suppressed (already shown this session)")
             return
         }
-        // 引擎扫描全是 PackageManager/Intent 解析查询：放 IO 线程。
-        // 这个弹窗恰恰出现在最卡的国产低端机上，主线程扫描是看得见的卡顿/ANR
-        var engines: List<TtsEngineHelper.TtsEngineInfo> = emptyList()
-        var fallback: TtsEngineHelper.TtsEngineInfo? = null
-        var discovered: List<TtsEngineHelper.TtsEngineInfo> = emptyList()
-        var systemDefaultPkg: String? = null
-        var isPhantom = false
-        var hasPlay = false
-        var uninstalledTtsApps: List<TtsEngineHelper.ThirdPartyTtsApp> = emptyList()
-        withContext(Dispatchers.IO) {
-            engines = TtsEngineHelper.listAvailableEngines(context)
-            fallback = TtsEngineHelper.findFallbackEngine(context)
-            discovered = TtsEngineHelper.discoverAllTtsEngines(context)
-            systemDefaultPkg = TtsEngineHelper.getSystemDefaultEnginePackage(context)
-            isPhantom = TtsEngineHelper.isPhantomDefaultState(context)
-            hasPlay = TtsEngineHelper.hasGooglePlay(context)
-            uninstalledTtsApps = TtsEngineHelper.listUninstalledThirdPartyTtsApps(context)
-        }
-        // withContext 里赋值的 var 不能智能转换：取本地快照供下方判断
-        val sdPkg = systemDefaultPkg
 
-        // 内置 TTS 状态（embeddedEngine 已在上方防抖判断时获取，此处复用）。
-        // 按本书语言推荐模型：英文书给纯英文模型（默认中英双语模型实为中文说话人，
-        // 读英文语调平、数字带中文音）；此时"已下载"也按推荐模型判定，
-        // 让弹窗正确给出"下载英文语音"入口
         val embeddedModelInfo = embeddedEngine.resolveModelForLanguage(_uiState.value.book?.language)
         val embeddedDownloaded = embeddedEngine.isModelDownloaded(embeddedModelInfo)
         val embeddedSizeText = formatBytes(embeddedModelInfo.sizeBytes)
 
-        // 决定场景
-        val scenario = when {
-            discovered.isNotEmpty() ->
-                TtsInstallPrompt.DialogScenario.HAS_DISCOVERED_ENGINES
-            // 系统设置指向**已安装**的已知引擎包才算"可重试连接"：
-            // 指向已知但未安装的包（phantom 场景）时给用户"重试连接"按钮
-            // 只会白等 15s 超时，应走 NO_ENGINE 引导安装
-            sdPkg != null &&
-                !isPhantom &&
-                TtsEngineHelper.isKnownTtsEnginePackage(sdPkg) &&
-                TtsEngineHelper.checkPackage(context, sdPkg) != null ->
-                TtsInstallPrompt.DialogScenario.SYSTEM_DEFAULT_INSTALLED_BUT_UNREACHABLE
-            else ->
-                TtsInstallPrompt.DialogScenario.NO_ENGINE
-        }
-        val installGuide = if (scenario == TtsInstallPrompt.DialogScenario.NO_ENGINE) {
-            TtsEngineHelper.getInstallGuideSteps(context)
-        } else {
-            emptyList()
-        }
-
         android.util.Log.i(
             "ReaderViewModel",
-            "Showing TTS prompt: scenario=$scenario, " +
-                "discovered=${discovered.size}, systemDefault=$sdPkg, " +
-                "fallback=${fallback?.packageName}, embeddedDownloaded=$embeddedDownloaded"
+            "Showing TTS prompt (embedded-only): embeddedDownloaded=$embeddedDownloaded",
         )
         _ttsInstallPrompt.tryEmit(
             TtsInstallPrompt(
-                reason = reason,
-                availableEngines = engines,
-                fallbackEnginePackage = fallback?.packageName,
-                discoveredEngines = discovered,
-                systemDefaultEnginePackage = sdPkg,
-                isPhantomDefaultState = isPhantom,
-                hasGooglePlay = hasPlay,
-                uninstalledThirdPartyTtsApps = uninstalledTtsApps,
-                installGuideSteps = installGuide,
-                scenario = scenario,
                 embeddedModelDownloaded = embeddedDownloaded,
                 embeddedModelDisplayName = embeddedModelInfo.displayName,
                 embeddedModelSizeText = embeddedSizeText,
@@ -304,62 +245,21 @@ class ReaderViewModel @Inject constructor(
     }
 
     /**
-     * 用户确认安装引导后，由 UI 层调用，处理后续跳转或安装动作。
+     * 用户对 TTS 引导弹窗的操作：只剩"下载内置模型"和"关闭"。
+     * 旧的系统 TTS 相关 action 全部 no-op（保留枚举以兼容 UI 调用方）。
      */
     fun onTtsInstallAction(action: TtsInstallAction) {
         when (action) {
-            is TtsInstallAction.OpenEngineSettings -> {
-                val intent = TtsEngineHelper.buildTtsSettingsIntent(action.enginePackage)
-                intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-                try {
-                    context.startActivity(intent)
-                } catch (e: android.content.ActivityNotFoundException) {
-                    android.util.Log.w("ReaderViewModel", "TTS settings not found", e)
-                    showToast("未找到 TTS 设置入口")
-                }
-            }
-            is TtsInstallAction.InstallGoogleTts -> {
-                val intent = if (TtsEngineHelper.hasGooglePlay(context)) {
-                    TtsEngineHelper.buildGooglePlayIntentForGoogleTts()
-                } else {
-                    TtsEngineHelper.buildApkDownloadIntentForGoogleTts()
-                }
-                try {
-                    context.startActivity(intent)
-                } catch (e: android.content.ActivityNotFoundException) {
-                    android.util.Log.w("ReaderViewModel", "Google TTS install not found", e)
-                    showToast("未找到 Google TTS 安装入口，请手动到应用商店搜索下载")
-                }
-            }
-            is TtsInstallAction.InstallThirdPartyTtsApp -> {
-                val intent = TtsEngineHelper.buildInstallAppIntent(
-                    action.app,
-                    hasPlay = TtsEngineHelper.hasGooglePlay(context),
-                )
-                try {
-                    context.startActivity(intent)
-                } catch (e: android.content.ActivityNotFoundException) {
-                    android.util.Log.w("ReaderViewModel", "Third-party TTS install not found", e)
-                    showToast("未找到下载入口，请手动到应用商店搜索「${action.app.displayName}」")
-                }
-            }
-            is TtsInstallAction.OpenUnknownSourcesSettings -> {
-                val intent = TtsEngineHelper.buildUnknownSourcesSettingsIntent(context)
-                try {
-                    context.startActivity(intent)
-                    showToast("请找到浏览器/文件管理器并允许安装未知应用")
-                } catch (e: android.content.ActivityNotFoundException) {
-                    android.util.Log.w("ReaderViewModel", "Unknown sources settings not found", e)
-                    showToast("未找到对应设置，请到设置→安全→未知来源 手动开启")
-                }
-            }
             is TtsInstallAction.DownloadEmbeddedTts -> {
                 downloadEmbeddedTtsModel()
             }
-            is TtsInstallAction.RetryWithEngine -> {
-                retryTtsInitWithEngine(action.enginePackage)
-            }
             is TtsInstallAction.Dismiss -> { /* no-op */ }
+            // 占位旧 action — 系统 TTS 已下线，全部 no-op（保留让 UI 编译过）
+            is TtsInstallAction.OpenEngineSettings -> {}
+            is TtsInstallAction.InstallGoogleTts -> {}
+            is TtsInstallAction.OpenUnknownSourcesSettings -> {}
+            is TtsInstallAction.RetryWithEngine -> {}
+            is TtsInstallAction.InstallThirdPartyTtsApp -> {}
         }
     }
 
@@ -373,7 +273,10 @@ class ReaderViewModel @Inject constructor(
             return
         }
         val embeddedEngine = ttsHelper.getEmbeddedEngine()
-        // 按本书语言下载对应模型：英文书下纯英文模型，中文书下中英双语模型
+        // 清掉上次下载被取消后残留的中间态进度，避免 collect 立即收到
+        // Downloading/Extracting/Initializing 显示残留进度条
+        embeddedEngine.resetStaleDownloadProgress()
+        // 按本书语言下载对应模型（兼容旧调用，当前实现只下 Piper）
         val bookLanguage = _uiState.value.book?.language
         val modelInfo = embeddedEngine.resolveModelForLanguage(bookLanguage)
         showToast("开始下载内置 TTS 模型（约 ${modelInfo.sizeBytes / 1_000_000}MB），请保持网络...")
@@ -381,13 +284,56 @@ class ReaderViewModel @Inject constructor(
             // 页内进度可见：引擎的 downloadProgress 流镜像进 uiState，
             // 引导弹窗保持打开并显示进度条（原实现进度只 log，弹窗直接关闭，
             // 想看进度只能去设置页）。按整百分比节流，避免高频重组
-            var lastEmittedPct = -1
+            // 注意：embeddedEngine.downloadProgress 现在是 sealed Progress，不是 Float?；
+            // 我们把 fraction 和 stage 都映射进 uiState 让 UI 既能画进度条又能显示阶段文案。
+            var lastEmittedPct = -999
             val progressJob = launch {
-                embeddedEngine.downloadProgress.collect { p ->
-                    val pct = p?.let { (it * 100).toInt() } ?: -1
-                    if (pct != lastEmittedPct) {
-                        lastEmittedPct = pct
-                        _uiState.update { it.copy(embeddedDownloadProgress = p) }
+                embeddedEngine.downloadProgress.collect { progress ->
+                    val (frac, stage) = when (progress) {
+                        is com.eareyereading.tts.EmbeddedTtsEngine.Progress.Downloading ->
+                            progress.fraction to "下载中 ${(progress.fraction * 100).toInt()}%"
+                        is com.eareyereading.tts.EmbeddedTtsEngine.Progress.Extracting -> {
+                            // entriesTotal=0 表示正在预扫 tar 统计文件数
+                            if (progress.entriesTotal == 0) {
+                                progress.fraction to "解压中（统计文件数…）"
+                            } else {
+                                // 显示当前正在解压的文件名，让用户看到进展而非只看数字跳
+                                val shortEntry = progress.currentEntryName?.substringAfterLast('/')
+                                progress.fraction to if (shortEntry != null) {
+                                    "解压中 (${progress.entriesDone}/${progress.entriesTotal}) $shortEntry"
+                                } else {
+                                    "解压中 (${progress.entriesDone}/${progress.entriesTotal})"
+                                }
+                            }
+                        }
+                        com.eareyereading.tts.EmbeddedTtsEngine.Progress.Initializing ->
+                            0.99f to "正在初始化模型…"
+                        com.eareyereading.tts.EmbeddedTtsEngine.Progress.Completed ->
+                            1f to "✅ 已启用"
+                        is com.eareyereading.tts.EmbeddedTtsEngine.Progress.Failed ->
+                            0f to "下载失败：${progress.reason}"
+                        com.eareyereading.tts.EmbeddedTtsEngine.Progress.Idle ->
+                            0f to null
+                    }
+                    val pctInt = (frac * 100).toInt()
+                    // 把 fraction 转成 Float?（让已有 UI 字段继续工作）
+                    // null 表示"无任务"，由 UI 层处理
+                    // Completed 也置 null：阅读页弹窗在下载成功后由 showToast 提示，
+                    // 进度条该消失而非停在 100%（与设置页不同，设置页有持续状态卡片）
+                    val fracOut: Float? = when (progress) {
+                        is com.eareyereading.tts.EmbeddedTtsEngine.Progress.Idle,
+                        is com.eareyereading.tts.EmbeddedTtsEngine.Progress.Failed,
+                        com.eareyereading.tts.EmbeddedTtsEngine.Progress.Completed -> null
+                        else -> frac
+                    }
+                    if (pctInt != lastEmittedPct || fracOut != _uiState.value.embeddedDownloadProgress) {
+                        lastEmittedPct = pctInt
+                        _uiState.update {
+                            it.copy(
+                                embeddedDownloadProgress = fracOut,
+                                embeddedDownloadStage = stage,
+                            )
+                        }
                     }
                 }
             }
@@ -397,6 +343,8 @@ class ReaderViewModel @Inject constructor(
                 }
                 if (ok) {
                     showToast("下载完成，正在启用内置 TTS...")
+                    // initialize() 内部会写 Progress.Completed，collect 会把 fracOut 置 null，
+                    // 进度条自然消失；此处不再手动维持 1f
                     val initOk = ttsHelper.initializeEmbeddedForced(bookLanguage)
                     if (initOk) {
                         showToast("✅ 内置 TTS 已启用！现在可以朗读了")
@@ -405,93 +353,58 @@ class ReaderViewModel @Inject constructor(
                     }
                 } else {
                     showToast("下载失败，请检查网络后重试")
+                    // 失败才把进度清掉，让 UI 退出"下载中"
+                    _uiState.update { it.copy(embeddedDownloadProgress = null) }
                 }
             } finally {
                 progressJob.cancel()
-                _uiState.update { it.copy(embeddedDownloadProgress = null) }
             }
         }
     }
 
     /**
-     * 使用指定的引擎包名重新尝试初始化 TTS。
-     *
-     * 特殊值 `__EMBEDDED__` 表示激活内置 sherpa-onnx TTS。
+     * 重新初始化 TTS——已下线系统 TTS 探测，仅初始化内置 sherpa-onnx。
+     * 入参 enginePackage 保留兼容旧调用方（值不再被使用）。
      */
+    @Suppress("UNUSED_PARAMETER")
     private fun retryTtsInitWithEngine(enginePackage: String?) {
-        // 追踪重试协程：退出页面时随 cleanup() 一起取消，
-        // 不会在用户离开后继续跑 15 秒初始化再弹窗
         ttsInitJob?.cancel()
         ttsInitJob = viewModelScope.launch {
-            val ok = if (enginePackage == "__EMBEDDED__") {
-                // 特殊值：激活内置 TTS（按本书语言路由模型：英文书→纯英文模型）。
-                // CancellationException 必须重抛：cleanup()/stopAllPlayback() 取消本 job 后，
-                // 若被这里的 catch (Exception) 吞掉，协程会继续往下写 uiState、
-                // 甚至在用户已离开后弹引导窗（迟到状态写入）
-                try {
-                    ttsHelper.initializeEmbeddedForced(_uiState.value.book?.language)
-                } catch (e: kotlinx.coroutines.CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    android.util.Log.e("ReaderViewModel", "Embedded TTS init failed", e)
-                    false
-                }
-            } else {
-                try {
-                    ttsHelper.initializeWith(
-                        language = _uiState.value.book?.language ?: "en",
-                        enginePackage = enginePackage,
-                    )
-                } catch (e: TimeoutCancellationException) {
-                    android.util.Log.w("ReaderViewModel", "TTS init timed out (retry)", e)
-                    false
-                } catch (e: kotlinx.coroutines.CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    android.util.Log.e("ReaderViewModel", "TTS init failed (retry)", e)
-                    false
-                }
+            val ok = try {
+                ttsHelper.initializeEmbeddedForced(_uiState.value.book?.language)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                android.util.Log.e("ReaderViewModel", "Embedded TTS init failed (retry)", e)
+                false
             }
             _uiState.update { it.copy(ttsInitialized = ok) }
             if (ok) {
-                ttsPromptShownThisSession = false // 重置防抖
-                showToast("TTS 已启用")
+                ttsPromptShownThisSession = false
+                showToast("内置 TTS 已启用")
             } else {
-                val reason = ttsHelper.lastFailureReason
-                // 用户主动重试时强制弹窗
-                if (reason != null) showTtsInstallPrompt(reason, force = true)
-                else showToast("TTS 初始化仍然失败")
+                showToast("内置 TTS 初始化仍然失败，请稍后再试")
             }
         }
     }
 
     /**
-     * 处理 TTS 初始化失败：设置状态、弹提示/引导。
+     * 处理 TTS 初始化失败：系统 TTS 失败现已不可能发生（TtsHelper 不再尝试系统 TTS），
+     * 所以这条路径只会触发"内置 TTS 未下载 / 模型损坏"，直接引导用户去设置页下载。
      */
     private suspend fun handleTtsInitFailure(prefix: String) {
         _uiState.update { it.copy(ttsInitialized = false) }
-        val reason = ttsHelper.lastFailureReason
-        // 特化：系统 TTS 全失败且内置模型未下载 — 这是国产手机最常见场景，
-        // 提示应指向"下载内置 TTS"而非"安装系统引擎"。
-        val embeddedNotDownloaded = !ttsHelper.getEmbeddedEngine().isModelDownloaded()
-        val message = when {
-            reason == TtsHelper.InitFailureReason.NO_ENGINE && embeddedNotDownloaded ->
-                "$prefix：系统 TTS 不可用，需下载内置语音模型（约 ${ttsHelper.getEmbeddedEngine().resolveModelForLanguage(_uiState.value.book?.language).sizeBytes / 1_000_000}MB）"
-            reason == null -> "$prefix：设备未安装 TTS 引擎"
-            TtsEngineHelper.isChineseDevice() -> {
-                // 国产手机：附加品牌专属提示
-                val vendorHint = TtsEngineHelper.getEngineDisplayInfo(
-                    TtsEngineHelper.findFallbackEngine(context)?.packageName ?: ""
-                ).first
-                "$prefix：${reason.userMessage}（已尝试 $vendorHint 引擎）"
-            }
-            else -> "$prefix：${reason.userMessage}"
+        val embeddedEngine = ttsHelper.getEmbeddedEngine()
+        val embeddedNotDownloaded = !embeddedEngine.isModelDownloaded()
+        val message = if (embeddedNotDownloaded) {
+            val sizeMB = embeddedEngine.resolveModelForLanguage(_uiState.value.book?.language).sizeBytes / 1_000_000
+            "$prefix：需要下载内置语音模型（约 ${sizeMB}MB）"
+        } else {
+            "$prefix：内置 TTS 初始化失败"
         }
         showToast(message)
-        if (reason != null && reason != TtsHelper.InitFailureReason.LANGUAGE_UNSUPPORTED) {
-            // 引导用户去安装/启用 TTS 引擎（语言不支持不引导，避免骚扰）
-            showTtsInstallPrompt(reason)
-        }
+        // 总是弹引导（让用户能进设置页下载/重试）
+        showTtsInstallPrompt(TtsHelper.InitFailureReason.NO_ENGINE)
     }
 
     private var rsvpJob: Job? = null
@@ -886,21 +799,20 @@ class ReaderViewModel @Inject constructor(
      * 内置音色与本书语言不匹配时给一次性提示（会话内只提示一次）：
      * 英文书落在中文声 → 口音重、数字带中文音；
      * 中文书落在英文声 → 中文字读不出（静音）。都引导去设置下载对应模型。
+     *
+     * 2026-08-30: 现内置只 Piper 英文声，此函数不再能产生 mismatch 分支，
+     * 保留为 no-op 直到新增多语种模型为止。调用点保留兼容。
      */
     private var embeddedVoiceMismatchHintShown = false
     private fun hintEmbeddedVoiceMismatchIfNeeded() {
         if (embeddedVoiceMismatchHintShown) return
         if (ttsHelper.ttsMode != TtsHelper.TtsMode.EMBEDDED) return
-        val bookLang = _uiState.value.book?.language ?: "en"
         val model = ttsHelper.getEmbeddedEngine().getCurrentModelInfo()
-        val wantsEnglish = bookLang.lowercase(java.util.Locale.ROOT).startsWith("en")
-        val modelIsEnglish = model.language == "en"
-        if (wantsEnglish == modelIsEnglish) return
+        // 现在只有 Piper 英文声，不会出现 wantsEnglish != modelIsEnglish
         embeddedVoiceMismatchHintShown = true
-        if (wantsEnglish) {
-            showToast("当前用中英双语语音朗读英文，音色偏中文；可在「设置」下载纯英文语音模型改善")
-        } else {
-            showToast("当前英文语音无法朗读中文；可在「设置」下载中英双语语音模型")
+        if (model.language != "en") {
+            // 防御性兜底：未来加回多语种时这条 toast 仍能起作用
+            showToast("当前内置音色（${model.displayName}）与本书语言不匹配")
         }
     }
 

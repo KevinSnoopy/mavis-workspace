@@ -443,6 +443,7 @@ fun ReaderScreen(
         TtsInstallDialog(
             prompt = prompt,
             downloadProgress = uiState.embeddedDownloadProgress,
+            downloadStage = uiState.embeddedDownloadStage,
             onAction = { action ->
                 viewModel.onTtsInstallAction(action)
                 // 下载内置模型时保持弹窗打开，页内直接显示下载进度
@@ -465,15 +466,14 @@ fun ReaderScreen(
 private fun TtsInstallDialog(
     prompt: com.eareyereading.ui.screens.reader.TtsInstallPrompt,
     downloadProgress: Float? = null,
+    downloadStage: String? = null,
     onAction: (com.eareyereading.ui.screens.reader.TtsInstallAction) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    val isChineseDevice = remember { com.eareyereading.util.TtsEngineHelper.isChineseDevice() }
     val context = androidx.compose.ui.platform.LocalContext.current
-    val friendlyHint = remember(context) { com.eareyereading.util.TtsEngineHelper.getFriendlyHint(context) }
+    @Suppress("UNUSED_VARIABLE") val unusedCtx = context  // 旧版本用于 TtsEngineHelper 调用，移除后保留位
 
-    // 内置 TTS 模型下载按钮：下载进行中（progress != null）时原地显示进度条，
-    // 不再需要跳转设置页才能看到进度
+    // 2026-08-30: 系统 TTS 完全下线，对话框只剩"下载内置模型"一种 CTA。
     val downloadButton: @Composable () -> Unit = {
         val progress = downloadProgress
         if (progress != null) {
@@ -485,7 +485,8 @@ private fun TtsInstallDialog(
                     modifier = androidx.compose.ui.Modifier.fillMaxWidth(),
                 )
                 androidx.compose.material3.Text(
-                    text = "正在下载内置 TTS 模型 ${(progress * 100).toInt()}%…请保持网络，不要关闭应用",
+                    text = downloadStage
+                        ?: "正在下载内置 TTS 模型 ${(progress * 100).toInt()}%…请保持网络，不要关闭应用",
                     style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
                     color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = androidx.compose.ui.Modifier.padding(top = 4.dp),
@@ -505,13 +506,7 @@ private fun TtsInstallDialog(
         }
     }
 
-    // 派生标题：基于 scenario
-    val title = when (prompt.scenario) {
-        TtsInstallPrompt.DialogScenario.HAS_DISCOVERED_ENGINES -> "选择 TTS 引擎"
-        TtsInstallPrompt.DialogScenario.SYSTEM_DEFAULT_INSTALLED_BUT_UNREACHABLE -> "检测到 TTS 引擎但连接失败"
-        TtsInstallPrompt.DialogScenario.NO_ENGINE ->
-            if (prompt.isPhantomDefaultState) "系统 TTS 引擎不可用" else "TTS 引擎不可用"
-    }
+    val title = if (prompt.embeddedModelDownloaded) "启用内置 TTS" else "下载内置 TTS"
 
     androidx.compose.material3.AlertDialog(
         onDismissRequest = onDismiss,
@@ -523,340 +518,32 @@ private fun TtsInstallDialog(
         },
         text = {
             androidx.compose.foundation.layout.Column(
-                modifier = androidx.compose.ui.Modifier
-                    .fillMaxWidth()
-                    .heightIn(max = 400.dp)
-                    .verticalScroll(androidx.compose.foundation.rememberScrollState()),
+                modifier = androidx.compose.ui.Modifier.fillMaxWidth(),
             ) {
-                // 顶部：失败原因（始终显示）
                 androidx.compose.material3.Text(
-                    text = prompt.reason.userMessage,
+                    text = if (prompt.embeddedModelDownloaded) {
+                        "内置 TTS 模型已下载。点下方按钮启用。"
+                    } else {
+                        "内置 TTS 完全离线、不依赖系统服务，能保证英文朗读稳定性。" +
+                            "模型下载约 ${prompt.embeddedModelSizeText}。"
+                    },
                     style = androidx.compose.material3.MaterialTheme.typography.bodyMedium,
                 )
-
-                // ============================================================
-                // Scenario A: 已发现可用引擎 — 展示列表 + 提示用户选哪个
-                // ============================================================
-                if (prompt.scenario == TtsInstallPrompt.DialogScenario.HAS_DISCOVERED_ENGINES) {
-                    androidx.compose.foundation.layout.Spacer(modifier = androidx.compose.ui.Modifier.height(12.dp))
-                    androidx.compose.material3.Text(
-                        text = "🎯 已扫描到 ${prompt.discoveredEngines.size} 个真实可用的 TTS 引擎（按推荐顺序）：",
-                        style = androidx.compose.material3.MaterialTheme.typography.labelMedium,
-                        fontWeight = androidx.compose.ui.text.font.FontWeight.Medium,
-                        color = androidx.compose.material3.MaterialTheme.colorScheme.primary,
-                    )
-                    androidx.compose.foundation.layout.Spacer(modifier = androidx.compose.ui.Modifier.height(4.dp))
-                    prompt.discoveredEngines.forEach { engine ->
-                        androidx.compose.foundation.layout.Row(
-                            modifier = androidx.compose.ui.Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 4.dp),
-                            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
-                        ) {
-                            androidx.compose.foundation.layout.Column(modifier = androidx.compose.ui.Modifier.weight(1f)) {
-                                androidx.compose.material3.Text(
-                                    text = engine.displayName,
-                                    style = androidx.compose.material3.MaterialTheme.typography.bodyMedium,
-                                    fontWeight = androidx.compose.ui.text.font.FontWeight.Medium,
-                                )
-                                androidx.compose.material3.Text(
-                                    text = engine.packageName,
-                                    style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
-                                    color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                            if (!engine.isEnabled) {
-                                androidx.compose.material3.Text(
-                                    text = "(未启用)",
-                                    style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
-                                    color = androidx.compose.material3.MaterialTheme.colorScheme.error,
-                                )
-                            }
-                        }
-                    }
-                }
-
-                // ============================================================
-                // Scenario B: 系统设置指向已知引擎，但缓存未刷新
-                // 典型场景：用户刚装好 Google TTS，MIUI TTS service 还没识别
-                // ============================================================
-                if (prompt.scenario == TtsInstallPrompt.DialogScenario.SYSTEM_DEFAULT_INSTALLED_BUT_UNREACHABLE) {
-                    val pkg = prompt.systemDefaultEnginePackage
-                    val friendlyName = pkg?.let { com.eareyereading.util.TtsEngineHelper.friendlyEngineName(it) } ?: "未知引擎"
-                    androidx.compose.foundation.layout.Spacer(modifier = androidx.compose.ui.Modifier.height(12.dp))
-                    androidx.compose.material3.Text(
-                        text = "💡 系统设置里的 TTS 引擎：\n「$friendlyName」（$pkg）",
-                        style = androidx.compose.material3.MaterialTheme.typography.bodyMedium,
-                        color = androidx.compose.material3.MaterialTheme.colorScheme.primary,
-                    )
-                    androidx.compose.foundation.layout.Spacer(modifier = androidx.compose.ui.Modifier.height(8.dp))
-                    androidx.compose.material3.Text(
-                        text = "已自动尝试连接该引擎，但 MIUI 系统的 TTS 服务缓存可能还没刷新。\n" +
-                            "你可以：\n" +
-                            "• 点下方「重试连接」按钮再次尝试\n" +
-                            "• 关闭 app 然后重新打开（让系统重新扫描）\n" +
-                            "• 重启手机（最彻底）",
-                        style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
-                        color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-
-                // ============================================================
-                // 通用补充：fallback engine 状态（仅当 applicable）
-                // ============================================================
-                val fallbackEngine = prompt.fallbackEnginePackage?.let { pkg ->
-                    prompt.availableEngines.firstOrNull { it.packageName == pkg }
-                        ?: prompt.discoveredEngines.firstOrNull { it.packageName == pkg }
-                }
-                if (fallbackEngine != null &&
-                    prompt.scenario != TtsInstallPrompt.DialogScenario.HAS_DISCOVERED_ENGINES
-                ) {
-                    androidx.compose.foundation.layout.Spacer(modifier = androidx.compose.ui.Modifier.height(8.dp))
-                    androidx.compose.material3.Text(
-                        text = "已自动尝试「${fallbackEngine.displayName}」但仍未成功。\n请检查系统 TTS 设置中该引擎是否已启用并下载了语音数据。",
-                        style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
-                        color = androidx.compose.material3.MaterialTheme.colorScheme.primary,
-                    )
-                }
-
-                // 幽灵默认状态说明
-                if (prompt.isPhantomDefaultState) {
-                    androidx.compose.foundation.layout.Spacer(modifier = androidx.compose.ui.Modifier.height(8.dp))
-                    androidx.compose.material3.Text(
-                        text = "💡 系统设置里选了「${prompt.fallbackEnginePackage ?: "某个引擎"}」，但该引擎的 TTS 服务不对第三方 app 开放。\n" +
-                            "解决办法：使用下方扫描到的第三方引擎，或安装新引擎。",
-                        style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
-                        color = androidx.compose.material3.MaterialTheme.colorScheme.primary,
-                    )
-                }
-
-                // 国产手机友好提示
-                if (isChineseDevice && !prompt.isPhantomDefaultState &&
-                    prompt.scenario == TtsInstallPrompt.DialogScenario.NO_ENGINE
-                ) {
-                    androidx.compose.foundation.layout.Spacer(modifier = androidx.compose.ui.Modifier.height(8.dp))
-                    androidx.compose.material3.Text(
-                        text = friendlyHint,
-                        style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
-                        color = androidx.compose.material3.MaterialTheme.colorScheme.primary,
-                    )
-                }
-
-                // ============================================================
-                // 推荐未安装的第三方 TTS app（仅 NO_ENGINE 场景）
-                // ============================================================
-                if (prompt.uninstalledThirdPartyTtsApps.isNotEmpty() &&
-                    prompt.scenario == TtsInstallPrompt.DialogScenario.NO_ENGINE
-                ) {
-                    androidx.compose.foundation.layout.Spacer(modifier = androidx.compose.ui.Modifier.height(12.dp))
-                    androidx.compose.material3.Text(
-                        text = "推荐安装以下应用（自带可被第三方 app 使用的 TTS 引擎）：",
-                        style = androidx.compose.material3.MaterialTheme.typography.labelMedium,
-                        fontWeight = androidx.compose.ui.text.font.FontWeight.Medium,
-                    )
-                    androidx.compose.foundation.layout.Spacer(modifier = androidx.compose.ui.Modifier.height(4.dp))
-                    prompt.uninstalledThirdPartyTtsApps.forEach { app ->
-                        androidx.compose.foundation.layout.Column(
-                            modifier = androidx.compose.ui.Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 4.dp),
-                        ) {
-                            androidx.compose.material3.Text(
-                                text = app.displayName,
-                                style = androidx.compose.material3.MaterialTheme.typography.bodyMedium,
-                                fontWeight = androidx.compose.ui.text.font.FontWeight.Medium,
-                            )
-                            androidx.compose.material3.Text(
-                                text = app.description,
-                                style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
-                                color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                            androidx.compose.material3.TextButton(
-                                onClick = {
-                                    onAction(com.eareyereading.ui.screens.reader.TtsInstallAction.InstallThirdPartyTtsApp(app))
-                                },
-                                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 0.dp, vertical = 0.dp),
-                            ) {
-                                androidx.compose.material3.Text(
-                                    text = if (prompt.hasGooglePlay) "在 Play 商店下载" else "前往下载页",
-                                    style = androidx.compose.material3.MaterialTheme.typography.labelMedium,
-                                    color = androidx.compose.material3.MaterialTheme.colorScheme.primary,
-                                )
-                            }
-                        }
-                    }
-                }
-
-                // ============================================================
-                // 完整安装指南（仅 NO_ENGINE 场景）
-                // ============================================================
-                if (prompt.installGuideSteps.isNotEmpty()) {
-                    androidx.compose.foundation.layout.Spacer(modifier = androidx.compose.ui.Modifier.height(12.dp))
-                    androidx.compose.material3.Text(
-                        text = "📖 安装指南：",
-                        style = androidx.compose.material3.MaterialTheme.typography.labelMedium,
-                        fontWeight = androidx.compose.ui.text.font.FontWeight.Medium,
-                        color = androidx.compose.material3.MaterialTheme.colorScheme.primary,
-                    )
-                    androidx.compose.foundation.layout.Spacer(modifier = androidx.compose.ui.Modifier.height(4.dp))
-                    prompt.installGuideSteps.forEach { step ->
-                        androidx.compose.material3.Text(
-                            text = step,
-                            style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
-                            modifier = androidx.compose.ui.Modifier.padding(vertical = 2.dp),
-                        )
-                    }
-                    // 没有 Play 商店时，引导开启"未知来源"
-                    if (!prompt.hasGooglePlay) {
-                        androidx.compose.material3.TextButton(
-                            onClick = {
-                                onAction(com.eareyereading.ui.screens.reader.TtsInstallAction.OpenUnknownSourcesSettings)
-                            },
-                            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 0.dp, vertical = 0.dp),
-                        ) {
-                            androidx.compose.material3.Text(
-                                text = "🔓 前往开启「未知来源应用」",
-                                style = androidx.compose.material3.MaterialTheme.typography.labelMedium,
-                                color = androidx.compose.material3.MaterialTheme.colorScheme.primary,
-                            )
-                        }
-                    }
-                }
             }
         },
         confirmButton = {
             androidx.compose.foundation.layout.Column {
-                when (prompt.scenario) {
-                    // ============================================================
-                    // Scenario A: 已发现可用引擎 — 主要按钮是"使用XX"
-                    // ============================================================
-                    TtsInstallPrompt.DialogScenario.HAS_DISCOVERED_ENGINES -> {
-                        prompt.discoveredEngines.forEach { engine ->
-                            // 未启用的引擎置灰：点了必然绑定失败白等 15s 超时，
-                            // 应先在系统设置里启用（列表区已标"（未启用）"）
-                            androidx.compose.material3.Button(
-                                onClick = {
-                                    onAction(com.eareyereading.ui.screens.reader.TtsInstallAction.RetryWithEngine(engine.packageName))
-                                },
-                                enabled = engine.isEnabled,
-                                modifier = androidx.compose.ui.Modifier.fillMaxWidth(),
-                            ) {
-                                androidx.compose.material3.Text(
-                                    if (engine.isEnabled) "使用「${engine.displayName}」"
-                                    else "「${engine.displayName}」（未启用）"
-                                )
-                            }
-                        }
-                        if (prompt.discoveredEngines.any { !it.isEnabled }) {
-                            androidx.compose.material3.Text(
-                                text = "未启用的引擎无法连接：请先到「系统设置 → TTS」中启用后再试",
-                                style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
-                                color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = androidx.compose.ui.Modifier.padding(top = 2.dp),
-                            )
-                        }
+                if (prompt.embeddedModelDownloaded) {
+                    androidx.compose.material3.Button(
+                        onClick = {
+                            onAction(com.eareyereading.ui.screens.reader.TtsInstallAction.RetryWithEngine("__EMBEDDED__"))
+                        },
+                        modifier = androidx.compose.ui.Modifier.fillMaxWidth(),
+                    ) {
+                        androidx.compose.material3.Text("✅ 启用内置 TTS")
                     }
-                    // ============================================================
-                    // Scenario B: 系统设置指向已知引擎 — 主要按钮是"重试连接"
-                    // ============================================================
-                    TtsInstallPrompt.DialogScenario.SYSTEM_DEFAULT_INSTALLED_BUT_UNREACHABLE -> {
-                        val pkg = prompt.systemDefaultEnginePackage
-                        if (pkg != null) {
-                            androidx.compose.material3.Button(
-                                onClick = {
-                                    onAction(com.eareyereading.ui.screens.reader.TtsInstallAction.RetryWithEngine(pkg))
-                                },
-                                modifier = androidx.compose.ui.Modifier.fillMaxWidth(),
-                            ) {
-                                androidx.compose.material3.Text(
-                                    text = "🔄 重试连接${com.eareyereading.util.TtsEngineHelper.friendlyEngineName(pkg)}"
-                                )
-                            }
-                            androidx.compose.material3.Text(
-                                text = "（包名：$pkg）",
-                                style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
-                                color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = androidx.compose.ui.Modifier.padding(top = 2.dp),
-                            )
-                        }
-                        // 重试连接在 MIUI/HyperOS 等 OS 层拒绝 bind 的设备上无效，
-                        // 提供内置 TTS 作为可靠备选（与 Scenario C 一致）。
-                        androidx.compose.foundation.layout.Spacer(
-                            modifier = androidx.compose.ui.Modifier.height(8.dp),
-                        )
-                        if (prompt.embeddedModelDownloaded) {
-                            androidx.compose.material3.Button(
-                                onClick = {
-                                    onAction(com.eareyereading.ui.screens.reader.TtsInstallAction.RetryWithEngine("__EMBEDDED__"))
-                                },
-                                modifier = androidx.compose.ui.Modifier.fillMaxWidth(),
-                            ) {
-                                androidx.compose.material3.Text("✅ 启用内置 TTS（已下载）")
-                            }
-                        } else {
-                            downloadButton()
-                            androidx.compose.material3.Text(
-                                text = "若重试无效，可下载内置 TTS：完全离线、不依赖系统服务",
-                                style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
-                                color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = androidx.compose.ui.Modifier.padding(top = 2.dp),
-                            )
-                        }
-                    }
-                    // ============================================================
-                    // Scenario C: 完全没有引擎 — 主要按钮是"下载内置 TTS"或"下载 Google TTS"
-                    // ============================================================
-                    TtsInstallPrompt.DialogScenario.NO_ENGINE -> {
-                        if (prompt.embeddedModelDownloaded) {
-                            // 模型已下载，激活内置 TTS
-                            androidx.compose.material3.Button(
-                                onClick = {
-                                    onAction(com.eareyereading.ui.screens.reader.TtsInstallAction.RetryWithEngine("__EMBEDDED__"))
-                                },
-                                modifier = androidx.compose.ui.Modifier.fillMaxWidth(),
-                            ) {
-                                androidx.compose.material3.Text("✅ 启用内置 TTS（已下载）")
-                            }
-                        } else {
-                            // 模型未下载，提供一键下载按钮（推荐方案）
-                            downloadButton()
-                            androidx.compose.material3.Text(
-                                text = "内置 TTS 完全离线、不依赖系统服务，能彻底解决国产手机无法朗读的问题",
-                                style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
-                                color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = androidx.compose.ui.Modifier.padding(top = 2.dp),
-                            )
-                        }
-                        // 备用：下载 Google TTS
-                        androidx.compose.material3.TextButton(
-                            onClick = {
-                                onAction(com.eareyereading.ui.screens.reader.TtsInstallAction.InstallGoogleTts)
-                            },
-                        ) {
-                            androidx.compose.material3.Text(
-                                text = if (prompt.hasGooglePlay) "下载 Google 文字转语音（备用）" else "下载 Google TTS APK（备用）"
-                            )
-                        }
-                        if (!prompt.hasGooglePlay) {
-                            androidx.compose.material3.TextButton(
-                                onClick = {
-                                    onAction(com.eareyereading.ui.screens.reader.TtsInstallAction.OpenUnknownSourcesSettings)
-                                },
-                            ) {
-                                androidx.compose.material3.Text("🔓 开启「未知来源应用」权限")
-                            }
-                        }
-                    }
-                }
-                // ============================================================
-                // 通用次要按钮：跳转到系统 TTS 设置（让用户检查）
-                // ============================================================
-                androidx.compose.material3.TextButton(
-                    onClick = {
-                        onAction(com.eareyereading.ui.screens.reader.TtsInstallAction.OpenEngineSettings(null))
-                    },
-                ) {
-                    androidx.compose.material3.Text("前往系统 TTS 设置")
+                } else {
+                    downloadButton()
                 }
             }
         },

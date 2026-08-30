@@ -66,6 +66,8 @@ data class SettingsUiState(
     val embeddedModelDownloaded: Boolean = false,
     val embeddedDownloading: Boolean = false,
     val embeddedDownloadProgress: Float = 0f,  // 0..1
+    // 阶段文案（"下载中 65%" / "解压中 (2/3) tokens.txt" / "正在初始化…"）
+    val embeddedDownloadStage: String = "",
     // 下载完成后的初始化窗口：同样占用"不可再下载"语义，
     // 防止 progress 置空后 UI 翻回未下载态诱导并发下载
     val embeddedInitializing: Boolean = false,
@@ -223,10 +225,65 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 embeddedTts.downloadProgress.collect { progress ->
+                    // sealed Progress → (fraction, stage文案, isInitializing) 三通道
+                    // isInitializing 单独抽出：Initializing/Completed 阶段 UI 要显示
+                    // "初始化中"而非"下载中"，且 Completed 后要清掉 initializing 标志
+                    val (frac, stage, isInitializing) = when (progress) {
+                        is com.eareyereading.tts.EmbeddedTtsEngine.Progress.Downloading ->
+                            Triple(progress.fraction, "下载中 ${(progress.fraction * 100).toInt()}%", false)
+                        is com.eareyereading.tts.EmbeddedTtsEngine.Progress.Extracting -> {
+                            // entriesTotal=0 表示正在预扫 tar 统计文件数（耗时数秒），
+                            // 此时显示"解压中（统计文件数…）"而非"x/0"
+                            if (progress.entriesTotal == 0) {
+                                Triple(progress.fraction, "解压中（统计文件数…）", false)
+                            } else {
+                                // 显示当前正在解压的文件名，让用户看到进展而非只看数字跳
+                                // espeak-ng-data 下几百个小文件，只显示 x/y 会让人觉得卡住
+                                val entry = progress.currentEntryName
+                                val shortEntry = entry?.substringAfterLast('/')
+                                Triple(
+                                    progress.fraction,
+                                    if (shortEntry != null) {
+                                        "解压中 (${progress.entriesDone}/${progress.entriesTotal}) $shortEntry"
+                                    } else {
+                                        "解压中 (${progress.entriesDone}/${progress.entriesTotal})"
+                                    },
+                                    false,
+                                )
+                            }
+                        }
+                        com.eareyereading.tts.EmbeddedTtsEngine.Progress.Initializing ->
+                            Triple(0.99f, "正在初始化模型…", true)
+                        com.eareyereading.tts.EmbeddedTtsEngine.Progress.Completed ->
+                            Triple(1f, "✅ 已启用", false)
+                        is com.eareyereading.tts.EmbeddedTtsEngine.Progress.Failed ->
+                            Triple(0f, "下载失败：${progress.reason}", false)
+                        com.eareyereading.tts.EmbeddedTtsEngine.Progress.Idle ->
+                            Triple(0f, "", false)
+                    }
+                    // 是否处于"进行中"（显示进度条）：基于 Progress 类型而非 frac 值判断，
+                    // 避免 Extracting(0, total, null) 时 frac=0 被误判为"未下载"
+                    val isInProgress = when (progress) {
+                        is com.eareyereading.tts.EmbeddedTtsEngine.Progress.Downloading,
+                        is com.eareyereading.tts.EmbeddedTtsEngine.Progress.Extracting -> true
+                        com.eareyereading.tts.EmbeddedTtsEngine.Progress.Initializing -> true
+                        else -> false
+                    }
                     _uiState.update {
+                        // Completed 时模型必然已落盘，同步置 embeddedModelDownloaded=true，
+                        // 避免 initialize() 写 Completed 后、downloadEmbeddedTts() 还没执行到
+                        // refreshEmbeddedStatus 的窗口期里 UI 闪现"未下载"
+                        val downloadedOverride = when (progress) {
+                            com.eareyereading.tts.EmbeddedTtsEngine.Progress.Completed -> true
+                            is com.eareyereading.tts.EmbeddedTtsEngine.Progress.Failed -> null
+                            else -> null
+                        }
                         it.copy(
-                            embeddedDownloading = progress != null,
-                            embeddedDownloadProgress = progress ?: 0f,
+                            embeddedDownloading = isInProgress && !isInitializing,
+                            embeddedDownloadProgress = frac,
+                            embeddedDownloadStage = stage,
+                            embeddedInitializing = isInitializing,
+                            embeddedModelDownloaded = downloadedOverride ?: it.embeddedModelDownloaded,
                         )
                     }
                 }
@@ -236,6 +293,10 @@ class SettingsViewModel @Inject constructor(
                 android.util.Log.e("SettingsViewModel", "download progress collect failed", e)
             }
         }
+        // 清掉上次下载协程被取消后残留的中间态进度，否则 collect 立即收到
+        // Downloading/Extracting/Initializing → isInProgress=true → UI 卡在
+        // "正在下载..."，下载按钮不可点（用户报告"点击下载没反应"）
+        embeddedTts.resetStaleDownloadProgress()
         refreshEmbeddedStatus()
         refreshCacheSize()
     }
@@ -286,41 +347,37 @@ class SettingsViewModel @Inject constructor(
         if (_uiState.value.embeddedDownloading || _uiState.value.embeddedInitializing) return
         viewModelScope.launch {
             val model = embeddedTts.getCurrentModelInfo()
-            _uiState.update { it.copy(embeddedDownloading = true, embeddedDownloadProgress = 0f) }
+            // 注意：所有 UI 状态（progress / stage / downloading 标记 / initializing）
+            // 由 viewModelScope 启动的 downloadProgress.collect 统一管理，本函数只负责
+            // 触发下载 + 调度 initialize。不再在本函数内手动写 embeddedDownloadProgress
+            // —— 之前的旧实现里 "下载 100% 立即 reset 0f" 就是因为 downloadProgress.collect
+            // 推送的 Progress.Completed 被本函数 line 326 的"embeddedDownloadProgress = 0f"
+            // 立刻覆盖，用户看到的就是"100% 一瞬间又变 0%"。
             val ok = embeddedTts.downloadModel(model) { progress ->
-                _uiState.update { it.copy(embeddedDownloadProgress = progress) }
+                // 旧 callback 仍传 Float（仅作日志），不再写 uiState
+                android.util.Log.d("SettingsViewModel", "download progress callback: ${(progress * 100).toInt()}%")
             }
             if (ok) {
-                // 初始化期间保持"占用中"语义：按钮继续禁用，
-                // 避免 UI 翻回未下载态诱导二次下载
-                _uiState.update {
-                    it.copy(
-                        embeddedDownloading = false,
-                        embeddedInitializing = true,
-                        embeddedDownloadProgress = 1f,
-                    )
-                }
+                // 下载/解压阶段结束，初始化 OfflineTts（仍处于"占用中"语义，避免并发）
+                // 让 downloadProgress.collect 自然把 stage 切到"正在初始化模型"再变"已启用"
                 val initOk = embeddedTts.initialize(model)
                 embeddedTts.cancelDownloadNotification()
+                refreshEmbeddedStatus()
                 _uiState.update {
                     it.copy(
-                        embeddedInitializing = false,
-                        embeddedDownloadProgress = 0f,
                         embeddedModelDownloaded = true,
                         embeddedReady = initOk,
                         snackbarMessage = if (initOk) "内置语音已下载并启用" else "下载完成但初始化失败",
                     )
                 }
             } else {
+                refreshEmbeddedStatus()
                 _uiState.update {
                     it.copy(
-                        embeddedDownloading = false,
-                        embeddedDownloadProgress = 0f,
                         snackbarMessage = "下载失败，请检查网络后重试（已下载部分下次会续传）",
                     )
                 }
             }
-            refreshEmbeddedStatus()
         }
     }
 
@@ -804,8 +861,10 @@ fun SettingsScreen(
                                 )
                                 Spacer(modifier = Modifier.height(2.dp))
                                 Text(
-                                    text = if (uiState.embeddedInitializing) "初始化中..."
-                                        else "下载中 ${(uiState.embeddedDownloadProgress * 100).toInt()}%",
+                                    text = uiState.embeddedDownloadStage.ifEmpty {
+                                        if (uiState.embeddedInitializing) "初始化中..."
+                                        else "下载中 ${(uiState.embeddedDownloadProgress * 100).toInt()}%"
+                                    },
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )

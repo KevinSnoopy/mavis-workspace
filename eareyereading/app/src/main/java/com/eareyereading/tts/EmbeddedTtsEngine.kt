@@ -48,12 +48,12 @@ import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
  * sherpa-onnx 是一个**完全自包含**的离线 TTS 库，把神经网络模型直接打包进 app，无需
  * 系统 TTS 服务，从根本上绕过了这个限制。
  *
- * **模型选择**（按书籍语言路由，见 resolveModelForLanguage）：
- * - 英文：Piper en_US-lessac-medium（韵律自然，约 66MB）——默认内置模型
- * - 中文：VITS-MeloTTS-zh_en（中英双语、中文说话人，约 167MB，仅中文书使用；
- *   它读英文口音重、数字带中文音，不做英文默认）
+ * **模型选择**：当前仅内置 Piper en_US-lessac-medium 英文男声（韵律自然，
+ *   约 66MB）。原设计中由 resolveModelForLanguage 按书籍语言路由到不同模型
+ *   （中文书用 MeloTTS-zh_en），但该模型在国内无可用镜像、下载链路不稳，
+ *   且与产品当前的英文阅读主线不符——2026-08-30 起下线，全部归到 Piper。
  *
- * 模型文件从 CDN 下载到 app 的私有目录（首次约 66-167MB，按书语言）。
+ * 模型文件从 CDN 下载到 app 的私有目录（首次约 66MB）。
  */
 @Singleton
 class EmbeddedTtsEngine @Inject constructor(
@@ -135,9 +135,33 @@ class EmbeddedTtsEngine @Inject constructor(
     private val _state = MutableStateFlow<EngineState>(EngineState.NOT_INITIALIZED)
     val state: StateFlow<EngineState> = _state.asStateFlow()
 
-    // 当前下载进度（0.0 - 1.0），null 表示没在下载
-    private val _downloadProgress = MutableStateFlow<Float?>(null)
-    val downloadProgress: StateFlow<Float?> = _downloadProgress.asStateFlow()
+    /**
+     * 当前下载 / 解压 / 初始化 阶段。
+     * UI 根据 type 显示不同文案（"下载中 65%" / "解压中 (2/3) tokens.txt" / "正在初始化…"），
+     * 用 sealed class 而不是 Float 让"是否在解压"对用户透明——避免他们看到进度条停滞
+     * 在 95% 误以为卡死。
+     */
+    sealed class Progress {
+        object Idle : Progress()
+        data class Downloading(val bytesSoFar: Long, val totalBytes: Long) : Progress() {
+            val fraction: Float
+                get() = if (totalBytes > 0) (bytesSoFar.toFloat() / totalBytes.toFloat()).coerceIn(0f, 1f) else 0f
+        }
+        data class Extracting(
+            val entriesDone: Int,
+            val entriesTotal: Int,
+            val currentEntryName: String?,
+        ) : Progress() {
+            val fraction: Float
+                get() = if (entriesTotal > 0) (entriesDone.toFloat() / entriesTotal.toFloat()).coerceIn(0f, 1f) else 0f
+        }
+        object Initializing : Progress()
+        object Completed : Progress()
+        data class Failed(val reason: String) : Progress()
+    }
+
+    private val _downloadProgress = MutableStateFlow<Progress>(Progress.Idle)
+    val downloadProgress: StateFlow<Progress> = _downloadProgress.asStateFlow()
 
     /**
      * 引擎状态机
@@ -214,6 +238,9 @@ class EmbeddedTtsEngine @Inject constructor(
          * MeloTTS-zh_en 保留给中文书：它由 MeloTTS-Chinese 导出、只有 1 个
          * 中文说话人（官方文档明确），读英文口音重、语调平、英文数字词
          * 带中文音——语言路由只对非英文书使用它（见 resolveModelForLanguage）。
+         *
+         * 2026-08-30: 中文模型全部下线。AVAILABLE_MODELS 仅保留 Piper，
+         * 配套 modelForInitialize / resolveModelForLanguage 也不再按语言路由。
          */
         val AVAILABLE_MODELS = listOf(
             ModelInfo(
@@ -222,8 +249,11 @@ class EmbeddedTtsEngine @Inject constructor(
                 language = "en",
                 sizeBytes = 66_000_000L,
                 // 主源用 ghfast.top 镜像（国内可达性更稳），保留 GitHub release 作 fallback。
-                // 镜像失效时回退到原 URL；都不是 .tar.bz2 会被 tarballAllUrls() 过滤掉。
-                tarballUrl = "https://ghfast.top/https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_US-lessac-medium.tar.bz2",
+                // 注意：ghfast.top 嵌套 GitHub URL 时必须把内层 scheme/路径做 URL 转义，
+                // 否则 Java URL.openConnection 会发送未转义的 `://` 给边缘节点，
+                // 部分 CDN 会判定为非法资源 → 404 或卡死握手。转义后的
+                // 形态在浏览器和 ghfast.top 后端都稳。
+                tarballUrl = "https://ghfast.top/https%3A%2F%2Fgithub.com%2Fk2-fsa%2Fsherpa-onnx%2Freleases%2Fdownload%2Ftts-models%2Fvits-piper-en_US-lessac-medium.tar.bz2",
                 tarballMirrorUrls = listOf(
                     "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_US-lessac-medium.tar.bz2",
                 ),
@@ -236,51 +266,9 @@ class EmbeddedTtsEngine @Inject constructor(
                     ModelFile("vits-piper-en_US-lessac-medium/espeak-ng-data", url = ""),
                 ),
             ),
-            ModelInfo(
-                id = "vits-melo-tts-zh_en",
-                displayName = "MeloTTS 中英双语（约 167MB）",
-                language = "zh+en",
-                sizeBytes = 167_000_000L,
-                tarballUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-melo-tts-zh_en.tar.bz2",
-                tarballMirrorUrls = listOf(
-                    "https://hf-mirror.com/csukuangfj/sherpa-onnx-melo-tts-zh-en/resolve/main/model.onnx",
-                ),
-                files = listOf(
-                    ModelFile(
-                        "vits-melo-tts-zh_en/model.onnx",
-                        url = "https://hf-mirror.com/csukuangfj/sherpa-onnx-melo-tts-zh-en/resolve/main/model.onnx",
-                        mirrorUrls = listOf(
-                            "https://huggingface.co/csukuangfj/sherpa-onnx-melo-tts-zh-en/resolve/main/model.onnx",
-                        ),
-                    ),
-                    ModelFile(
-                        "vits-melo-tts-zh_en/tokens.txt",
-                        url = "https://hf-mirror.com/csukuangfj/sherpa-onnx-melo-tts-zh-en/resolve/main/tokens.txt",
-                        mirrorUrls = listOf(
-                            "https://huggingface.co/csukuangfj/sherpa-onnx-melo-tts-zh-en/resolve/main/tokens.txt",
-                        ),
-                    ),
-                    ModelFile(
-                        "vits-melo-tts-zh_en/lexicon.txt",
-                        url = "https://hf-mirror.com/csukuangfj/sherpa-onnx-melo-tts-zh-en/resolve/main/lexicon.txt",
-                        mirrorUrls = listOf(
-                            "https://huggingface.co/csukuangfj/sherpa-onnx-melo-tts-zh-en/resolve/main/lexicon.txt",
-                        ),
-                    ),
-                    ModelFile(
-                        "vits-melo-tts-zh_en/dict",
-                        url = "https://hf-mirror.com/csukuangfj/sherpa-onnx-melo-tts-zh-en/resolve/main/dict",
-                        mirrorUrls = listOf(
-                            "https://huggingface.co/csukuangfj/sherpa-onnx-melo-tts-zh-en/resolve/main/dict",
-                        ),
-                    ),
-                ),
-            ),
         )
 
-        // 内置默认 = Piper 英文声（此前默认的 MeloTTS-zh_en 实为中文说话人，
-        // 读英文语调平、数字带中文音，已被替换；melo 仅保留给中文书，
-        // 过渡用的 VITS-LJS 随之移除）
+        // 内置默认 = Piper 英文声
         val DEFAULT_MODEL_ID = "vits-piper-en_US-lessac-medium"
 
         /** 用户当前选中的模型 ID（用 SharedPreferences 持久化） */
@@ -296,18 +284,32 @@ class EmbeddedTtsEngine @Inject constructor(
  * 切分优先按句子边界（. ! ? 后跟空白 + 大写/引号/左括号），保证切出来的块仍是自然句子。
  */
 /**
- * 把文本里 sherpa-onnx MeloTTS 模型不认识的字符替换成可发音的等价物。
+ * 把文本里 sherpa-onnx Piper 模型不认识的字符替换成可发音的等价物，
+ * 并把所有 CJK 中日韩字符替换为占位符以保证纯英文 TTS 行为。
+ *
+ * 为什么强制过滤 CJK（即使书里偶尔出现中文 / 引用 / 跳跃来源）：
+ *  1) 当前内置只有 Piper 英文男声，无中英双语模型可用——CJK 字符进 generate()
+ *     模型无法产生对应音，会触发 OOV → 静音或段错误。
+ *  2) Piper G2P 对 [0-9]+ 'year' 这种组合的归一化在不同语料下表现不稳定，
+ *     偶发被听成单字拼音风味（如 "2026" 像 "er ling er liu"），
+ *     与我们目标"标准英文朗读"不符。
+ *  3) 只读英文书时 CJK 段一般是标题 / 作者名 / 引用，朗读意义不大，
+ *     替换为占位符可以提高可听性（"Title: [Chinese text omitted]"）。
  *
  * 已知 OOV 列表（来自实际 logcat）：
  *  - 数字 '0'-'99'：被 Ignore OOV 直接跳过，导致 tensor 索引越界 → SIGSEGV
  *  - 标点 'í'（西班牙语重音字符）、'—'（em-dash）、'"' '"'（smart quotes）、'(' ')'：同样 OOV
  *  - '$' '&' '+' '@' '#' '%' '=' '<' '>' '\\' '`' '~' '^' '|' 等特殊符号
+ *  - CJK Unified Ideographs (U+4E00–U+9FFF)、CJK Ext A/B (U+3400–U+4DBF, U+20000+)、
+ *    Hiragana (U+3040–U+309F)、Katakana (U+30A0–U+30FF)、Hangul (U+AC00–U+D7AF)：
+ *    用 [CJK] 占位
  *
  * 替换策略：
  *  - 4 位年份 (2026) → "twenty twenty-six"，避免被切成 "twenty" + "twenty-six"
  *  - 其他数字 (65, 28, 10, 07) → 英文单词
  *  - 标点 → ASCII 等价（'—' → ", ", '"' → '"'）
  *  - 货币、特殊符号 → 英文读法
+ *  - CJK 字符整段 → "[Chinese/Korean text]" 占位符
  */
 private fun preprocessForTts(text: String): String {
     var s = text
@@ -390,6 +392,15 @@ private fun preprocessForTts(text: String): String {
     s = s.replace("^", " ")
     s = s.replace("~", " ")
     s = s.replace("\u2026", "...")      // ellipsis
+
+    // CJK 强制过滤：把连续中日韩段替换为占位符（参见函数头注释）。
+    // 用 capture group + lookahead 实现"整段连续 CJK" 的合并替换，单字符替换的话
+    // 每字一字 placeholder，TTS 会读得稀碎。
+    s = Regex("([\\u4E00-\\u9FFF\\u3400-\\u4DBF\\u3040-\\u309F\\u30A0-\\u30FF\\uAC00-\\uD7AF]+)")
+        .replace(s) { match ->
+            // 短中文段（如 "的"）直接沉默；长段提示用户已跳过
+            if (match.value.length <= 3) " " else " [Chinese or other text omitted] "
+        }
 
     // 常见缩写展开（MeloTTS lexicon 不含这些，G2P fallback 可能触发 native 空指针）
     s = s.replace(Regex("\\bU\\.S\\.\\b"), "United States")
@@ -531,39 +542,24 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
     }
 
     /**
-     * 按书籍语言解析理想模型（不保证已下载）：
-     * 英文书 → 纯英文模型（Piper）；中文/其他 → 中英双语模型（MeloTTS，
-     * 唯一能读中文的内置声）。注意默认模型已是 Piper，这里绝不能
-     * 直接落回 getCurrentModelInfo()——中文书会被路由到读不了中文的英文声。
-     * 引导弹窗/下载入口用它决定给用户推荐哪个模型。
+     * 按书籍语言解析理想模型（不保证已下载）。
+     *
+     * 当前内置只有 Piper 英文声，所以无论书籍语言如何都返回它。参数
+     * `language` 保留是为了不让外部调用方大改——它原本用来在英文和
+     * 中英双语间路由。当前阶段中文书会由英文声读出（音色偏英文口音），
+     * 但更糟的情况（无声）不会出现。
      */
-    fun resolveModelForLanguage(language: String?): ModelInfo {
-        val isEnglish = language?.lowercase(java.util.Locale.ROOT)?.startsWith("en") == true
-        val byLang = if (isEnglish) {
-            AVAILABLE_MODELS.firstOrNull { it.language == "en" }
-        } else {
-            AVAILABLE_MODELS.firstOrNull { it.language != "en" }
-        }
-        return byLang ?: getCurrentModelInfo()
+    fun resolveModelForLanguage(@Suppress("UNUSED_PARAMETER") language: String?): ModelInfo {
+        return getCurrentModelInfo()
     }
 
     /**
-     * 初始化时实际可加载的模型：语言对应的理想模型已下载则用它，
-     * 否则在同语言已下载模型里挑；再不行：英文书退回中英双语声
-     * （带口音但能出声），中文书只有英文声时宁可返回 null 走下载引导
-     * （英文声读中文是静音，不如明确引导下载双语模型）。
+     * 初始化时实际可加载的模型：唯一内置 Piper 已下载则用它；否则返回 null
+     * 由调用方引导用户下载。language 参数保留（兼容旧调用方），不再用于路由。
      */
-    fun modelForInitialize(language: String?): ModelInfo? {
-        val ideal = resolveModelForLanguage(language)
-        if (isModelDownloaded(ideal)) return ideal
-        val isEnglish = language?.lowercase(java.util.Locale.ROOT)?.startsWith("en") == true
-        if (isEnglish) {
-            AVAILABLE_MODELS.firstOrNull { it.language == "en" && isModelDownloaded(it) }
-                ?.let { return it }
-            val fallback = getCurrentModelInfo()
-            return if (isModelDownloaded(fallback)) fallback else null
-        }
-        return AVAILABLE_MODELS.firstOrNull { it.language != "en" && isModelDownloaded(it) }
+    fun modelForInitialize(@Suppress("UNUSED_PARAMETER") language: String?): ModelInfo? {
+        val ideal = getCurrentModelInfo()
+        return if (isModelDownloaded(ideal)) ideal else null
     }
 
     /**
@@ -603,11 +599,38 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
         if (_state.value is EngineState.READY || _state.value is EngineState.FAILED) {
             _state.value = EngineState.MODEL_NOT_FOUND
         }
+        // 进度流也复位：删除后 Completed 残留会让 collect 保持
+        // embeddedModelDownloaded=true（downloadedOverride），与磁盘实际不符
+        _downloadProgress.value = Progress.Idle
     }
 
     /** 下载互斥：设置页与阅读页弹窗是两个独立入口，各自的 UI 守卫挡不住跨入口并发。
      * 两个下载协程交错写同一批文件/解压同一个 tarball 会产出损坏模型 */
     private val downloadMutex = Mutex()
+
+    /**
+     * 重置残留的下载进度状态。
+     *
+     * 场景：上次下载协程因 ViewModel 销毁被取消，但 `_downloadProgress` 停在
+     * Downloading/Extracting/Initializing 中间态（CancellationException 路径
+     * 在 downloadMutex.withLock 内，写 Idle 后才向上传播，但若取消发生在
+     * withLock 等待期间则不写）。新 ViewModel 的 collect 立即收到残留中间态，
+     * isInProgress=true → UI 卡在"正在下载..."，下载按钮不可点。
+     *
+     * 仅在 downloadMutex 空闲时重置：若下载真的在进行，不破坏进度。
+     * 调用方应在 ViewModel init 时调用。
+     */
+    fun resetStaleDownloadProgress() {
+        if (downloadMutex.isLocked) return
+        val current = _downloadProgress.value
+        if (current is Progress.Downloading ||
+            current is Progress.Extracting ||
+            current is Progress.Initializing
+        ) {
+            Log.w(TAG, "resetStaleDownloadProgress: clearing stale $current")
+            _downloadProgress.value = Progress.Idle
+        }
+    }
 
     /**
      * 下载模型文件（带进度回调、多镜像回退、断点续传）。
@@ -625,7 +648,7 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
         onProgress: (Float) -> Unit,
     ): Boolean = withContext(Dispatchers.IO) {
         _state.value = EngineState.DOWNLOADING
-        _downloadProgress.value = 0f
+        _downloadProgress.value = Progress.Downloading(0L, modelInfo.sizeBytes)
         showDownloadNotification(0f, "准备下载 ${modelInfo.displayName}")
         try {
             val dir = File(context.filesDir, MODELS_DIR_NAME)
@@ -635,7 +658,8 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
             if (modelInfo.tarballAllUrls().isNotEmpty()) {
                 val ok = downloadAndExtractTarball(modelInfo, dir, onProgress)
                 if (ok) {
-                    _downloadProgress.value = 1f
+                    Log.i(TAG, "downloadModel: tarball extracted + verified, initializing OfflineTts…")
+                    _downloadProgress.value = Progress.Initializing
                     showDownloadCompleteNotification("下载完成，正在启用...")
                     return@withContext true
                 }
@@ -647,7 +671,7 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
             // 归档失败即下载失败，不进逐文件路径（空 URL 只会逐个报错）
             if (modelInfo.files.all { f -> f.allUrls().all { it.isBlank() } }) {
                 _state.value = EngineState.DOWNLOAD_FAILED("模型归档下载失败，请检查网络后重试")
-                _downloadProgress.value = null
+                _downloadProgress.value = Progress.Failed("模型归档下载失败")
                 cancelDownloadNotification()
                 return@withContext false
             }
@@ -665,29 +689,40 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
                 // 已完整下载则跳过
                 if (completeFile.exists() && targetFile.exists() && targetFile.length() > 0) {
                     downloadedTotal += targetFile.length()
-                    val p = min(downloadedTotal.toFloat() / totalSize.toFloat(), 1f)
-                    _downloadProgress.value = p
-                    onProgress(p)
+                    _downloadProgress.value = Progress.Downloading(downloadedTotal, totalSize)
+                    onProgress(_downloadProgress.value.fractionOrZero())
                     continue
                 }
 
                 // 多镜像回退：依次尝试所有 URL，任一成功即可
                 var fileOk = false
                 for (url in file.allUrls()) {
-                    val ok = downloadFileWithResume(url, targetFile) { bytesRead ->
-                        downloadedTotal += bytesRead
-                        val progress = if (totalSize > 0) {
-                            downloadedTotal.toFloat() / totalSize.toFloat()
-                        } else 0f
-                        val pClamped = min(progress, 1f)
-                        _downloadProgress.value = pClamped
-                        onProgress(pClamped)
-                        val now = System.currentTimeMillis()
-                        if (now - lastNotifyMs > 500) {
-                            lastNotifyMs = now
-                            showDownloadNotification(pClamped, "${(pClamped * 100).toInt()}% · ${file.relativePath.substringAfterLast('/')}")
-                        }
-                    }
+                    val ok = downloadFileWithResume(
+                        url = url,
+                        target = targetFile,
+                        onChunkDownloaded = { bytesRead, totalBytes ->
+                            // bytesRead 是本批增量；totalBytes 是当前已下载（含 previous part）。
+                            // 这里仍按"累计"口径算分母，与 onTotalSizeKnown 配合
+                            downloadedTotal += bytesRead
+                            val denom = if (totalSize > 0) totalSize else totalBytes
+                            val p = if (denom > 0) {
+                                (downloadedTotal.toFloat() / denom.toFloat()).coerceIn(0f, 1f)
+                            } else 0f
+                            _downloadProgress.value = Progress.Downloading(downloadedTotal, denom)
+                            onProgress(p)
+                            val now = System.currentTimeMillis()
+                            if (now - lastNotifyMs > 500) {
+                                lastNotifyMs = now
+                                showDownloadNotification(
+                                    p,
+                                    "${(p * 100).toInt()}% · ${file.relativePath.substringAfterLast('/')}",
+                                )
+                            }
+                            // totalBytes 在此回调里也只是参考值，留着供调试使用
+                            @Suppress("UNUSED_VARIABLE")
+                            val unusedTotal = totalBytes
+                        },
+                    )
                     if (ok && targetFile.length() > 0) {
                         completeFile.createNewFile()
                         fileOk = true
@@ -697,35 +732,70 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
                 }
                 if (!fileOk) {
                     _state.value = EngineState.DOWNLOAD_FAILED("下载失败：${file.relativePath}（所有镜像均不可用）")
-                    _downloadProgress.value = null
+                    _downloadProgress.value = Progress.Failed("下载失败：${file.relativePath}")
                     // 终态通知必须可划掉：showDownloadNotification 是 ongoing 的，
                     // 失败时留着一条划不掉的"下载失败"通知只能杀进程消失
                     cancelDownloadNotification()
                     return@withContext false
                 }
             }
-            _downloadProgress.value = 1f
+            _downloadProgress.value = Progress.Initializing
             showDownloadCompleteNotification("下载完成，正在启用...")
             true
         } catch (e: kotlinx.coroutines.CancellationException) {
             // 调用方取消（离开页面等）：清掉 ongoing 通知、复位状态后向上传播。
             // 旧实现状态流永远停在 DOWNLOADING，UI 显示"下载中"直到进程重启
             cancelDownloadNotification()
-            _downloadProgress.value = null
+            _downloadProgress.value = Progress.Idle
             _state.value = EngineState.MODEL_NOT_FOUND
             throw e
         } catch (e: Exception) {
             Log.e(TAG, "downloadModel failed", e)
             _state.value = EngineState.DOWNLOAD_FAILED(e.message ?: "未知错误")
-            _downloadProgress.value = null
+            _downloadProgress.value = Progress.Failed(e.message ?: "下载失败")
             cancelDownloadNotification()
             false
         }
     }
 
+    /** 当 sealed Progress 没有 fraction 时返回 0f；仅给 onProgress 兼容旧回调用 */
+    private fun Progress.fractionOrZero(): Float = when (this) {
+        is Progress.Downloading -> fraction
+        is Progress.Extracting -> fraction
+        Progress.Initializing -> 0.99f
+        Progress.Completed -> 1f
+        is Progress.Failed -> 0f
+        Progress.Idle -> 0f
+    }
+
+    /**
+     * 轻量预扫 tar：只遍历 entry 头（文件 + 目录都算），不写盘、不落盘，
+     * 用于解压进度分母。tar 里 espeak-ng-data 下可能数百个条目，manifest 只声明 3 项，
+     * 用 manifest 当分母会让进度卡在 1/3 不动。失败返回 -1（调用方退回动态分母）。
+     */
+    private fun countTarEntries(tarballFile: File): Int {
+        var count = 0
+        try {
+            java.io.FileInputStream(tarballFile).use { fis ->
+                BZip2CompressorInputStream(fis).use { bzis ->
+                    TarArchiveInputStream(bzis).use { tis ->
+                        while (tis.nextEntry != null) {
+                            count++
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "countTarEntries failed, falling back to dynamic denominator", e)
+            return -1
+        }
+        return count
+    }
+
     /**
      * 下载 tarball 并解压到 models 目录。
-     * tarball 内顶层目录应为模型 id（如 vits-melo-tts-zh_en/），解压后路径与 files.relativePath 对齐。
+     * tarball 内顶层目录应为模型 id（如 vits-piper-en_US-lessac-medium/），
+     * 解压后路径与 files.relativePath 对齐。
      * 下载到临时文件（支持断点续传），解压成功后删除 tarball 并为每个文件写 .complete 标记。
      */
     private suspend fun downloadAndExtractTarball(
@@ -744,6 +814,7 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
         }
 
         val totalSize = modelInfo.sizeBytes
+        var tarballTotalSize = 0L    // 响应 Content-Length，由 onTotalSizeKnown 回填
         var lastNotifyMs = 0L
 
         // 下载 tarball（多镜像回退 + 断点续传）
@@ -754,19 +825,32 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
                 downloaded = true
                 break
             }
-            val ok = downloadFileWithResume(url, tarballFile) { bytesRead ->
-                // sizeBytes 是解压后大小，而此阶段下载的是压缩后的 tar.bz2，
-                // 拿它当分母进度会卡在 ~60% 再跳到"解压中"。
-                // 压缩前后大小无可靠元数据，按 0% 的"活动中"展示
-                // （发 null 会让 UI 以为没在下载）
-                _downloadProgress.value = 0f
-                onProgress(0f)
-                val now = System.currentTimeMillis()
-                if (now - lastNotifyMs > 500) {
-                    lastNotifyMs = now
-                    showDownloadNotification(null, "下载中（${tarballFile.length() / 1_000_000}MB）")
-                }
-            }
+            val ok = downloadFileWithResume(
+                url = url,
+                target = tarballFile,
+                onChunkDownloaded = { _, totalBytes ->
+                    // 按 tarball 自身大小算分母：用 Content-Length，否则用 modelInfo.sizeBytes
+                    val denominator = if (tarballTotalSize > 0) tarballTotalSize else totalSize
+                    val p = if (denominator > 0) {
+                        (totalBytes.toFloat() / denominator.toFloat()).coerceIn(0f, 1f)
+                    } else 0f
+                    _downloadProgress.value = Progress.Downloading(totalBytes, denominator)
+                    onProgress(p)
+                    val now = System.currentTimeMillis()
+                    if (now - lastNotifyMs > 500) {
+                        lastNotifyMs = now
+                        val downloadedMB = totalBytes / 1_000_000
+                        val totalMB = if (denominator > 0) denominator / 1_000_000 else 0
+                        showDownloadNotification(p, "下载中（${downloadedMB}/${totalMB}MB）")
+                    }
+                },
+                onTotalSizeKnown = { totalBytes ->
+                    if (totalBytes > 0) {
+                        Log.i(TAG, "tarball total size from Content-Length: $totalBytes bytes")
+                        tarballTotalSize = totalBytes
+                    }
+                },
+            )
             if (ok && tarballFile.length() > 0) {
                 tarballComplete.createNewFile()
                 downloaded = true
@@ -781,7 +865,47 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
 
         // 解压
         showDownloadNotification(null, "解压中...")
+        Log.i(TAG, "extraction: starting, tarball=${tarballFile.length()} bytes at ${tarballFile.absolutePath}")
+        // 立刻把阶段推到 Extracting(entriesTotal=0)，让 UI 立即切到"解压中"，
+        // 不要停在 Downloading(100%) 让用户以为卡死。entriesTotal=0 表示"预扫中"，
+        // UI 显示"解压中（统计文件数…）"。预扫完成后用真实 totalEntries 替换。
+        _downloadProgress.value = Progress.Extracting(0, 0, null)
+        onProgress(0f)
+        // 进度分母用"tar 内真实条目数"，不是 manifest 声明数（manifest 只有 3 项，
+        // 而 espeak-ng-data 下有几百个文件——用 manifest 当分母会让进度卡在 1/3 不动，
+        // 用户误以为卡死）。先做一次轻量预扫：只遍历 tar 头、不写盘、不落盘，数出总条目数。
+        val preCountedEntries = countTarEntries(tarballFile)
+        // 分母：预扫失败（-1）时退回动态分母（已见条目数+1，进度也能单调前进）
+        var totalEntries = if (preCountedEntries > 0) preCountedEntries else 1
+        var extractedEntries = 0
+        var lastExtractionEntry: String? = null
+        val extractionStartMs = System.currentTimeMillis()
+        var lastProgressPushMs = 0L
+        Log.i(TAG, "extraction: pre-counted $preCountedEntries tar entries")
+        // 预扫完成，用真实分母替换；UI 从"统计文件数…"切到"x/y"
+        _downloadProgress.value = Progress.Extracting(0, totalEntries, null)
+        onProgress(0f)
+        // 解压进度按时间节流：espeak-ng-data 有几百个小文件，逐条目推进度会让
+        // StateFlow 每次都发射新值（data class entriesDone 递增）→ 几百次 Compose 重组。
+        // 改为每 100ms 至多推一次；isFinal=true 时强制推一次保证末态精确。
+        fun pushExtractionProgress(isFinal: Boolean = false) {
+            // 预扫失败时动态补正分母，保证进度单调向 1 收敛
+            if (preCountedEntries <= 0 && extractedEntries >= totalEntries) {
+                totalEntries = extractedEntries + 1
+            }
+            val now = System.currentTimeMillis()
+            if (!isFinal && now - lastProgressPushMs < 100) return
+            lastProgressPushMs = now
+            _downloadProgress.value = Progress.Extracting(
+                extractedEntries,
+                totalEntries,
+                lastExtractionEntry,
+            )
+            onProgress(_downloadProgress.value.fractionOrZero())
+        }
         try {
+            val tarballCanonical = tarballFile.canonicalPath
+            Log.d(TAG, "extraction: opening BZip2+Tar streams on $tarballCanonical")
             val canonicalRoot = modelsDir.canonicalPath + File.separator
             var copiedSinceCheck = 0L
             java.io.FileInputStream(tarballFile).use { fis ->
@@ -809,16 +933,21 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
                                 continue
                             }
                             val outFile = File(modelsDir, name)
+                            lastExtractionEntry = name
                             if (entry.isDirectory) {
+                                Log.d(TAG, "extraction: mkdir ${outFile.absolutePath}")
                                 outFile.mkdirs()
                             } else {
                                 outFile.parentFile?.mkdirs()
+                                Log.d(TAG, "extraction: writing ${entry.name} (entry.size=${entry.size})")
                                 FileOutputStream(outFile).use { out ->
                                     val buf = ByteArray(262144)
+                                    var fileBytes = 0L
                                     while (true) {
                                         val n = tis.read(buf)
                                         if (n == -1) break
                                         out.write(buf, 0, n)
+                                        fileBytes += n
                                         copiedSinceCheck += n
                                         if (copiedSinceCheck >= 262144) {
                                             copiedSinceCheck = 0
@@ -826,10 +955,18 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
                                                 ?.ensureActive()
                                         }
                                     }
+                                    Log.d(TAG, "extraction: wrote ${outFile.name} ${fileBytes} bytes")
                                 }
                             }
+                            // 每个条目都推进进度（无论是否在 manifest 中）：
+                            // 之前只看 manifest 3 项 → espeak-ng-data 几百个文件不计数 → 卡 1/3
+                            extractedEntries++
+                            pushExtractionProgress(isFinal = false)
                             entry = tis.nextEntry
                         }
+                        // 流结束：强制推一次末态，保证 UI 看到解压 100%
+                        pushExtractionProgress(isFinal = true)
+                        Log.i(TAG, "extraction: tar stream fully consumed, took ${(System.currentTimeMillis() - extractionStartMs) / 1000}s")
                     }
                 }
             }
@@ -853,6 +990,7 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
         }
 
         // 为所有文件写 .complete 标记
+        Log.i(TAG, "extraction: verifying ${modelInfo.files.size} files from manifest")
         for (f in modelInfo.files) {
             val target = File(modelsDir, f.relativePath)
             // 目录：存在即可；文件：存在且非空
@@ -879,61 +1017,140 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
      * 若 target 已存在部分内容，通过 Range: bytes=offset- 请求续传。
      * 服务器不支持 Range 时回退为全量覆盖下载。
      */
+    /**
+     * 构造一个走指定 Proxy 的 HttpURLConnection（仅构造不连接；调用方负责
+     * 设置超时并 connect()）。失败时 catch 后由调用方决定切下一条 proxy。
+     */
+    private fun openConnection(url: String, proxy: java.net.Proxy?): HttpURLConnection {
+        val u = URL(url)
+        return (if (proxy != null) u.openConnection(proxy) else u.openConnection()) as HttpURLConnection
+    }
+
     private suspend fun downloadFileWithResume(
         url: String,
         target: File,
-        onChunkDownloaded: (Int) -> Unit,
+        onChunkDownloaded: (Int, Long) -> Unit,
+        onTotalSizeKnown: ((Long) -> Unit)? = null,
     ): Boolean {
-        var conn: HttpURLConnection? = null
-        return try {
-            val existingLen = if (target.exists()) target.length() else 0L
-            conn = URL(url).openConnection() as HttpURLConnection
-            // 国内网络对 GitHub / 镜像单次 TCP 握手偶尔超 15s；66MB 模型任意单次
-            // 读流超 30s 即失败，给到 30s/120s 更稳。
-            conn.connectTimeout = 30_000
-            conn.readTimeout = 120_000
-            conn.doInput = true
-            conn.instanceFollowRedirects = true
-            if (existingLen > 0) {
-                conn.setRequestProperty("Range", "bytes=$existingLen-")
+        val existingLen = if (target.exists()) target.length() else 0L
+        // 构造候选 proxy 列表：先系统代理，后常见端口兜底，最后 None（直连）
+        val candidateProxies = buildProxyCandidates(url)
+        var lastError: Throwable? = null
+        for ((idx, p) in candidateProxies.withIndex()) {
+            var conn: HttpURLConnection? = null
+            try {
+                conn = openConnection(url, p)
+                conn.connectTimeout = 8_000
+                conn.readTimeout = 120_000
+                conn.doInput = true
+                conn.instanceFollowRedirects = false   // 关键：禁用自动跟随，自己手动跟，
+                                                       // 否则 followRedirect 会丢失 Proxy
+                conn.setRequestProperty("Connection", "close")
+                conn.setRequestProperty("User-Agent", "eareyereading/1.0 Android")
+                if (existingLen > 0) conn.setRequestProperty("Range", "bytes=$existingLen-")
+                conn.connect()
+                val code = conn.responseCode
+                Log.i(TAG, "download: candidate #$idx (proxy=${describeProxy(p)}) responded HTTP $code for $url")
+                when {
+                    code in 200..299 || code == 206 -> {
+                        // 拿到响应 Content-Length 写到外面闭包的引用，供上层计算分母
+                        val contentLen = conn.getHeaderField("Content-Length")?.toLongOrNull() ?: -1L
+                        onTotalSizeKnown?.invoke(if (contentLen > 0) contentLen else -1L)
+                        return fullStream(conn, target, onChunkDownloaded)
+                    }
+                    code in 300..399 -> {
+                        // 手动跟随重定向：复用同一个 Proxy；只跟一次以避免循环
+                        val loc = conn.getHeaderField("Location")
+                        Log.w(TAG, "download: HTTP $code -> Location: $loc")
+                        conn.disconnect()
+                        if (loc == null) return false
+                        val nextUrl = if (loc.startsWith("http")) loc else {
+                            // 相对路径重定向：拼成绝对 URL
+                            val base = URL(url)
+                            URL(base, loc).toString()
+                        }
+                        // 重定向 1 次，递归走一次 candidate 循环（不递归函数，避免栈深）
+                        val redirectedConn = openConnection(nextUrl, p)
+                        redirectedConn.connectTimeout = 8_000
+                        redirectedConn.readTimeout = 120_000
+                        redirectedConn.doInput = true
+                        redirectedConn.instanceFollowRedirects = false
+                        redirectedConn.setRequestProperty("Connection", "close")
+                        redirectedConn.setRequestProperty("User-Agent", "eareyereading/1.0 Android")
+                        if (existingLen > 0) redirectedConn.setRequestProperty("Range", "bytes=$existingLen-")
+                        redirectedConn.connect()
+                        val redirectedCode = redirectedConn.responseCode
+                        Log.i(TAG, "download: redirected (via same proxy) -> HTTP $redirectedCode")
+                        conn = redirectedConn
+                        if (redirectedCode in 200..299 || redirectedCode == 206) {
+                            val contentLen = redirectedConn.getHeaderField("Content-Length")?.toLongOrNull() ?: -1L
+                            onTotalSizeKnown?.invoke(if (contentLen > 0) contentLen else -1L)
+                            return fullStream(redirectedConn, target, onChunkDownloaded)
+                        }
+                        lastError = RuntimeException("HTTP $redirectedCode after redirect")
+                    }
+                    else -> {
+                        Log.e(TAG, "downloadFile: HTTP $code for $url via ${describeProxy(p)}")
+                        // 4xx 不重试（除非 408 timeout）；5xx 下一条候选
+                        if (code in 400..499 && code != 408) return false
+                        lastError = RuntimeException("HTTP $code")
+                    }
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                conn?.disconnect()
+                throw e
+            } catch (e: Exception) {
+                Log.w(TAG, "download: candidate #$idx (${describeProxy(p)}) failed: ${e.javaClass.simpleName}: ${e.message}")
+                lastError = e
+            } finally {
+                // 没成功的连接要断开；成功的会被 fullStream 内部 dispose
+                if (conn?.inputStream == null) try { conn?.disconnect() } catch (_: Exception) {}
             }
-            conn.connect()
-
-            val code = conn.responseCode
-            when (code) {
-                206 -> {
-                    // Partial Content — 续传
-                    appendStream(conn, target, existingLen, onChunkDownloaded)
-                }
-                200 -> {
-                    // 全量 — 服务器不支持 Range 或无已有内容，覆盖下载
-                    fullStream(conn, target, onChunkDownloaded)
-                }
-                else -> {
-                    Log.e(TAG, "downloadFile: HTTP $code for $url")
-                    false
-                }
-            }
-        } catch (e: kotlinx.coroutines.CancellationException) {
-            // 调用方协程已取消（如离开下载页面）：向上传播，不能吞掉
-            throw e
-        } catch (e: Exception) {
-            Log.e(TAG, "downloadFile failed for $url", e)
-            false
-        } finally {
-            conn?.disconnect()
         }
+        Log.e(TAG, "download: all ${candidateProxies.size} candidates failed for $url", lastError)
+        return false
     }
 
+    /**
+     * 构造候选 proxy 列表：
+     *   [0] = ProxySelector 系统代理（如有）
+     *   [1..] = 127.0.0.1 常见端口 [7897, 7892, 7890, 1080, 8888]
+     *   [last] = null（直连，urlObj.openConnection() 不带 Proxy）
+     *
+     * 实测踩坑：MIUI 全局代理经常指向 7892 而不是 7897；批量探测可绕开
+     * "代理存在但端口不对"的问题。下载主循环会以 connect 成功判定 probe 成功。
+     */
+    private fun buildProxyCandidates(url: String): List<java.net.Proxy?> {
+        val out = mutableListOf<java.net.Proxy?>()
+        val uri = try { URL(url).toURI() } catch (_: Exception) { null }
+        if (uri != null) {
+            try {
+                java.net.ProxySelector.getDefault()?.select(uri)?.forEach { out.add(it) }
+            } catch (_: Exception) { /* 吞 */ }
+        }
+        intArrayOf(7897, 7892, 7890, 1080, 8888).forEach { port ->
+            out.add(java.net.Proxy(java.net.Proxy.Type.HTTP, java.net.InetSocketAddress("127.0.0.1", port)))
+        }
+        out.add(null)  // 直连
+        return out
+    }
+
+    private fun describeProxy(p: java.net.Proxy?): String =
+        if (p == null) "DIRECT" else "HTTP@${p.address()}"
+
+    /**
+     * 续传流（append）：保留以备未来 Range 续传实现重启用。当前下载路径
+     * 不再调用（统一走 fullStream）。Range 续传逻辑仍由 downloadAndExtractTarball
+     * 调用上层的 `if (tarballComplete.exists() && tarballFile.length() > 0)` 短路：
+     * 残文件命中时直接进解压，不需要续传 byte 拼接。
+     */
+    @Suppress("unused")
     private suspend fun appendStream(
         conn: HttpURLConnection,
         target: File,
         existingLen: Long,
-        onChunkDownloaded: (Int) -> Unit,
+        onChunkDownloaded: (Int, Long) -> Unit,
     ): Boolean {
-        // 校验：Range 请求返回的 Content-Range 起始必须精确等于 existingLen。
-        // 旧实现在不匹配时把 206 响应当全量写——但该响应体是从 start 开始的，
-        // 会产出缺了 [0, start) 字节的损坏文件且照常被标记 .complete
         val contentRange = conn.getHeaderField("Content-Range")
         val start = contentRange
             ?.substringAfter("bytes ", "")
@@ -948,13 +1165,13 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
                 java.io.FileOutputStream(target, /* append = */ true).use { output ->
                     val buffer = ByteArray(8192)
                     var sinceCheck = 0
+                    var totalRead = existingLen
                     while (true) {
                         val read = input.read(buffer)
                         if (read == -1) break
                         output.write(buffer, 0, read)
-                        onChunkDownloaded(read)
-                        // 协作式取消：字节循环本身无挂起点，取消的协程会把
-                        // 整个大文件下完才退出。每 256KB 检查一次。
+                        totalRead += read
+                        onChunkDownloaded(read, totalRead)
                         sinceCheck += read
                         if (sinceCheck >= 262144) {
                             sinceCheck = 0
@@ -976,22 +1193,33 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
     private suspend fun fullStream(
         conn: HttpURLConnection,
         target: File,
-        onChunkDownloaded: (Int) -> Unit,
+        onChunkDownloaded: (Int, Long) -> Unit,
     ): Boolean {
         return try {
+            Log.i(TAG, "fullStream: opening input stream from $conn")
             conn.inputStream.use { input ->
                 java.io.FileOutputStream(target, /* append = */ false).use { output ->
                     val buffer = ByteArray(8192)
-                    var sinceCheck = 0
+                    var totalRead = 0L
+                    var lastTraceMs = 0L
                     while (true) {
                         val read = input.read(buffer)
-                        if (read == -1) break
+                        if (read == -1) {
+                            Log.i(TAG, "fullStream: EOF, totalBytes=$totalRead")
+                            break
+                        }
                         output.write(buffer, 0, read)
-                        onChunkDownloaded(read)
+                        totalRead += read
+                        // 把本 batch 的字节数 + 累计字节吐给上层，让上层算 progress 分母
+                        onChunkDownloaded(read, totalRead)
+                        // 每 500ms 打一次 trace：能看到 byte stream 真在流
+                        val now = System.currentTimeMillis()
+                        if (now - lastTraceMs > 500) {
+                            lastTraceMs = now
+                            Log.d(TAG, "fullStream: progress ${totalRead / 1024}KB")
+                        }
                         // 同 appendStream：周期性响应协程取消
-                        sinceCheck += read
-                        if (sinceCheck >= 262144) {
-                            sinceCheck = 0
+                        if (totalRead % 262144L < read) {
                             kotlin.coroutines.coroutineContext[kotlinx.coroutines.Job]
                                 ?.ensureActive()
                         }
@@ -1021,12 +1249,22 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
                 // 已加载同模型：把状态流也摆正（此前可能停留在
                 // FAILED/DOWNLOAD_FAILED，与布尔返回值互相矛盾）
                 _state.value = EngineState.READY(modelInfo.id)
+                // 若正处于下载→初始化流程中（progress=Initializing），推进到 Completed
+                // 让 UI 收到 100% "已启用"；否则不碰 progress（避免干扰独立 initialize 调用）
+                if (_downloadProgress.value is Progress.Initializing) {
+                    _downloadProgress.value = Progress.Completed
+                }
                 return@withContext true
             }
             _state.value = EngineState.INITIALIZING
             try {
                 if (!isModelDownloaded(modelInfo)) {
                     _state.value = EngineState.MODEL_NOT_FOUND
+                    // 下载→初始化流程中模型文件缺失（解压后校验失败等）：
+                    // 推进到 Failed 让 UI 退出"初始化中"，否则 UI 卡在 99%
+                    if (_downloadProgress.value is Progress.Initializing) {
+                        _downloadProgress.value = Progress.Failed("模型文件缺失")
+                    }
                     return@withContext false
                 }
                 val dir = File(context.filesDir, MODELS_DIR_NAME)
@@ -1101,6 +1339,10 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
                     }
                 }
                 Log.i(TAG, "Initialized sherpa-onnx OfflineTts: model=${modelInfo.id}, sampleRate=$sampleRate")
+                // 下载→初始化流程：推进到 Completed 让 UI 收到 100% "已启用"
+                if (_downloadProgress.value is Progress.Initializing) {
+                    _downloadProgress.value = Progress.Completed
+                }
                 true
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
@@ -1113,6 +1355,10 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
                     EngineState.READY(fallback)
                 } else {
                     EngineState.FAILED(e.message ?: "初始化失败")
+                }
+                // 下载→初始化流程中失败：推进到 Failed 让 UI 退出"初始化中"
+                if (_downloadProgress.value is Progress.Initializing) {
+                    _downloadProgress.value = Progress.Failed(e.message ?: "初始化失败")
                 }
                 false
             }
