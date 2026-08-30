@@ -77,6 +77,43 @@ class EmbeddedTtsEngine @Inject constructor(
     // TtsHelper.speak() 在 scope.launch 里多次调用本方法，必须串行。
     private val speakMutex = Mutex()
 
+    // ── 音频焦点：此前完全不申请，朗读会压在音乐/播客上（或被电话打断后不恢复）。
+    // 用 TRANSIENT_MAY_DUCK：朗读期间让其他音频让路，结束后自动恢复
+    private val audioManager: AudioManager? by lazy {
+        context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+    }
+    private val focusListener = AudioManager.OnAudioFocusChangeListener { /* 短焦点无需响应变化 */ }
+    @Volatile
+    private var audioFocusHeld = false
+
+    private fun requestAudioFocusIfNeeded() {
+        if (audioFocusHeld) return
+        val am = audioManager ?: return
+        try {
+            @Suppress("DEPRECATION")
+            am.requestAudioFocus(
+                focusListener,
+                AudioManager.STREAM_MUSIC,
+                AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK,
+            )
+            audioFocusHeld = true
+        } catch (e: Exception) {
+            Log.w(TAG, "requestAudioFocus failed", e)
+        }
+    }
+
+    private fun abandonAudioFocusIfHeld() {
+        if (!audioFocusHeld) return
+        audioFocusHeld = false
+        val am = audioManager ?: return
+        try {
+            @Suppress("DEPRECATION")
+            am.abandonAudioFocus(focusListener)
+        } catch (e: Exception) {
+            Log.w(TAG, "abandonAudioFocus failed", e)
+        }
+    }
+
     // 当前正在跑的 speak() 协程的 Job。stop() 取消它，连带释放 mutex。
     private val speakJobLock = Any()
     private var currentSpeakJob: Job? = null
@@ -271,10 +308,25 @@ private fun preprocessForTts(text: String): String {
         "${numberToWords(h.toInt())} oh ${numberToWords(m.toInt())}"
     }
 
+    // 货币 + 数字组合（如 "$100"）：必须在通用数字转换之前，
+    // 否则 "$100" 会先变成 "$one hundred" 再变成 " dollars one hundred"（语序颠倒）
+    s = Regex("\\$(\\d+)").replace(s) { match ->
+        val num = match.groupValues[1].toIntOrNull()
+        "${if (num != null && num <= 9999) numberToWords(num) else digitsToWords(match.groupValues[1])} dollars"
+    }
+
     // 其他数字 (含小数)：转英文
-    // 不含已处理过的年份/时间
+    // 不含已处理过的年份/时间。
+    // 关键：超过 Int 或超过支持范围的数字必须逐位转成单词，
+    // 绝不能把裸数字留给 generate()——本文件注释明确记载数字会触发
+    // native tensor 索引越界 SIGSEGV，且信号无法被 catch 拦截
     s = Regex("(?<!\\d)(\\d+)(?!\\d|:)").replace(s) { match ->
-        numberToWords(match.value.toIntOrNull() ?: return@replace match.value)
+        val num = match.value.toIntOrNull()
+        if (num != null && num in 0..9999) {
+            numberToWords(num)
+        } else {
+            digitsToWords(match.value)
+        }
     }
 
     // 标点替换
@@ -295,7 +347,7 @@ private fun preprocessForTts(text: String): String {
     s = s.replace("\u20ac", " euros ")  // €
     s = s.replace("\u00a3", " pounds ") // £
     s = s.replace("\u00a5", " yen ")    // ¥
-    // 其他常见 OOV 符号
+    // 其他常见 OOV 符号（含注释中记载的 '<' '>' —— 此前遗漏未替换）
     s = s.replace("@", " at ")
     s = s.replace("&", " and ")
     s = s.replace("+", " plus ")
@@ -304,6 +356,14 @@ private fun preprocessForTts(text: String): String {
     s = s.replace("%", " percent ")
     s = s.replace("\\", " ")
     s = s.replace("/", " ")            // 日期斜杠
+    s = s.replace("<", " less than ")
+    s = s.replace(">", " greater than ")
+    s = s.replace("*", " ")
+    s = s.replace("[", ", ")
+    s = s.replace("]", ", ")
+    s = s.replace("_", " ")
+    s = s.replace("{", ", ")
+    s = s.replace("}", ", ")
 
     // 括号、特殊括号、引号变体
     s = s.replace("(", ", ")
@@ -350,12 +410,13 @@ private fun preprocessForTts(text: String): String {
 }
 
 /**
- * 整数 → 英文单词（0-9999）。超过 9999 返回数字字符串本身。
- * 不处理负数（文本里基本不会有）。
+ * 整数 → 英文单词（0-9999）。超过 9999 逐位读出。
+ * 永不返回裸数字字符串——裸数字进 generate() 是文档记载的
+ * native SIGSEGV 类别（见 preprocessForTts 注释）。
  */
 private fun numberToWords(n: Int): String {
-    if (n < 0) return n.toString()
-    if (n > 9999) return n.toString()
+    if (n < 0) return digitsToWords(n.toString().removePrefix("-"))
+    if (n > 9999) return digitsToWords(n.toString())
     if (n == 0) return "zero"
 
     val units = arrayOf("", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine")
@@ -382,6 +443,16 @@ private fun numberToWords(n: Int): String {
     val rest = n % 1000
     val t = if (thousands > 0) "${under1000(thousands)} thousand " else ""
     return "$t${under1000(rest)}".trim()
+}
+
+/** 数字串逐位读出（电话号/编号/超范围数值），保证不留裸数字。 */
+private fun digitsToWords(digits: String): String {
+    val names = mapOf(
+        '0' to "zero", '1' to "one", '2' to "two", '3' to "three",
+        '4' to "four", '5' to "five", '6' to "six", '7' to "seven",
+        '8' to "eight", '9' to "nine",
+    )
+    return digits.mapNotNull { names[it] }.joinToString(" ").ifEmpty { "zero" }
 }
 
 private fun splitForTts(text: String, maxChunkLen: Int = 200): List<String> {
@@ -421,17 +492,42 @@ private fun splitForTts(text: String, maxChunkLen: Int = 200): List<String> {
 }
 
 /**
- * 纯逐句切分（不累积）。按句末标点 . ! ? 后跟空白切分，
- * 每个元素是一个独立句子，适合逐句送入 sherpa-onnx generate()。
- * 单句仍可能很长（如标题），调用方自行截断。
+ * 纯逐句切分（不累积）。
+ * 中文全角句点 。！？；（允许尾随闭引号/括号）：中文散文不靠空白分句，
+ * 此前只认 ASCII 边界，整段中文被当成一个"句子"再被 150 字符截断，
+ * 而默认模型恰是 MeloTTS 中英——等于中文书每段只读前 150 字。
+ * ASCII 边界保留原规则：句末标点 + 空白 + 下一句开头（大写/引号/左括号/数字）。
  */
 private fun splitSentences(text: String): List<String> {
     if (text.isBlank()) return emptyList()
-    // 句末标点 + 空白 + 下一句开头（大写/引号/左括号/数字）
-    val sentenceBoundary = Regex("(?<=[.!?])\\s+(?=[A-Z\"\\(\\d])")
-    return text.split(sentenceBoundary)
+    val cjkBoundary = Regex("(?<=[。！？；][”’」』]?)")
+    val asciiBoundary = Regex("(?<=[.!?])\\s+(?=[A-Z\"\\(\\d])")
+    return text.split(cjkBoundary)
+        .flatMap { it.split(asciiBoundary) }
         .map { it.trim() }
         .filter { it.isNotBlank() }
+}
+
+/**
+ * 超长句切块（≤maxLen）：优先在空白处断，找不到就硬切。
+ * 替代旧的 substring(0,150)——那是直接丢弃 150 字符以后的全部内容。
+ */
+private fun hardChunks(sentence: String, maxLen: Int): List<String> {
+    if (sentence.length <= maxLen) return listOf(sentence)
+    val chunks = mutableListOf<String>()
+    var start = 0
+    while (start < sentence.length) {
+        val end = minOf(start + maxLen, sentence.length)
+        val cut = if (end < sentence.length) {
+            val ws = sentence.lastIndexOf(' ', end)
+            if (ws > start + maxLen - 40) ws else end
+        } else {
+            end
+        }
+        chunks.add(sentence.substring(start, cut).trim())
+        start = if (cut >= end) end else cut + 1
+    }
+    return chunks.filter { it.isNotBlank() }
 }
 
     private val prefs by lazy {
@@ -484,7 +580,16 @@ private fun splitSentences(text: String): List<String> {
             File(dir, file.relativePath).let { if (it.exists()) it.delete() }
             File(dir, file.relativePath + COMPLETE_SUFFIX).let { if (it.exists()) it.delete() }
         }
+        // 状态流同步复位：此前删完模型流里仍是 READY(旧模型)，
+        // 设置页状态与实际不符
+        if (_state.value is EngineState.READY || _state.value is EngineState.FAILED) {
+            _state.value = EngineState.MODEL_NOT_FOUND
+        }
     }
+
+    /** 下载互斥：设置页与阅读页弹窗是两个独立入口，各自的 UI 守卫挡不住跨入口并发。
+     * 两个下载协程交错写同一批文件/解压同一个 tarball 会产出损坏模型 */
+    private val downloadMutex = Mutex()
 
     /**
      * 下载模型文件（带进度回调、多镜像回退、断点续传）。
@@ -495,6 +600,11 @@ private fun splitSentences(text: String): List<String> {
     suspend fun downloadModel(
         modelInfo: ModelInfo = getCurrentModelInfo(),
         onProgress: (Float) -> Unit = {},
+    ): Boolean = downloadMutex.withLock { downloadModelLocked(modelInfo, onProgress) }
+
+    private suspend fun downloadModelLocked(
+        modelInfo: ModelInfo,
+        onProgress: (Float) -> Unit,
     ): Boolean = withContext(Dispatchers.IO) {
         _state.value = EngineState.DOWNLOADING
         _downloadProgress.value = 0f
@@ -569,9 +679,11 @@ private fun splitSentences(text: String): List<String> {
             showDownloadCompleteNotification("下载完成，正在启用...")
             true
         } catch (e: kotlinx.coroutines.CancellationException) {
-            // 调用方取消（离开页面等）：清掉 ongoing 通知后向上传播
+            // 调用方取消（离开页面等）：清掉 ongoing 通知、复位状态后向上传播。
+            // 旧实现状态流永远停在 DOWNLOADING，UI 显示"下载中"直到进程重启
             cancelDownloadNotification()
             _downloadProgress.value = null
+            _state.value = EngineState.MODEL_NOT_FOUND
             throw e
         } catch (e: Exception) {
             Log.e(TAG, "downloadModel failed", e)
@@ -641,11 +753,20 @@ private fun splitSentences(text: String): List<String> {
         showDownloadNotification(null, "解压中...")
         try {
             val canonicalRoot = modelsDir.canonicalPath + File.separator
+            var copiedSinceCheck = 0L
             java.io.FileInputStream(tarballFile).use { fis ->
                 BZip2CompressorInputStream(fis).use { bzis ->
                     TarArchiveInputStream(bzis).use { tis ->
                         var entry = tis.nextEntry
                         while (entry != null) {
+                            // 协作式取消：~100MB 归档的解压没有天然挂起点，
+                            // 旧实现离开页面后还要解压几十秒并留下半截文件
+                            copiedSinceCheck += entry.size.coerceAtLeast(0)
+                            if (copiedSinceCheck >= 262144) {
+                                copiedSinceCheck = 0
+                                kotlin.coroutines.coroutineContext[kotlinx.coroutines.Job]
+                                    ?.ensureActive()
+                            }
                             val name = entry.name
                             // 安全：entry 名来自远端 CDN 归档，不可信。
                             // 只接受常规文件/目录（跳过符号链接/硬链接等特殊条目），
@@ -663,7 +784,18 @@ private fun splitSentences(text: String): List<String> {
                             } else {
                                 outFile.parentFile?.mkdirs()
                                 FileOutputStream(outFile).use { out ->
-                                    tis.copyTo(out)
+                                    val buf = ByteArray(262144)
+                                    while (true) {
+                                        val n = tis.read(buf)
+                                        if (n == -1) break
+                                        out.write(buf, 0, n)
+                                        copiedSinceCheck += n
+                                        if (copiedSinceCheck >= 262144) {
+                                            copiedSinceCheck = 0
+                                            kotlin.coroutines.coroutineContext[kotlinx.coroutines.Job]
+                                                ?.ensureActive()
+                                        }
+                                    }
                                 }
                             }
                             entry = tis.nextEntry
@@ -671,6 +803,15 @@ private fun splitSentences(text: String): List<String> {
                     }
                 }
             }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            // 被取消：清掉半截解压产物和 tarball，避免下次误用残文件
+            Log.w(TAG, "extraction cancelled, cleaning partial files")
+            modelInfo.files.forEach { f ->
+                File(modelsDir, f.relativePath).let { if (it.exists()) it.delete() }
+            }
+            if (tarballFile.exists()) tarballFile.delete()
+            cancelDownloadNotification()
+            throw e
         } catch (e: Exception) {
             Log.e(TAG, "解压失败", e)
             showDownloadNotification(null, "解压失败")
@@ -751,15 +892,17 @@ private fun splitSentences(text: String): List<String> {
         existingLen: Long,
         onChunkDownloaded: (Int) -> Unit,
     ): Boolean {
-        // 校验：Range 请求返回的 Content-Range 起始应等于 existingLen
+        // 校验：Range 请求返回的 Content-Range 起始必须精确等于 existingLen。
+        // 旧实现在不匹配时把 206 响应当全量写——但该响应体是从 start 开始的，
+        // 会产出缺了 [0, start) 字节的损坏文件且照常被标记 .complete
         val contentRange = conn.getHeaderField("Content-Range")
-        if (contentRange != null) {
-            // 形如 "bytes 12345-99999/100000"
-            val start = contentRange.substringAfter("bytes ").substringBefore("-").toLongOrNull()
-            if (start != null && start != existingLen) {
-                // 服务器返回的起始不匹配，回退全量
-                return fullStream(conn, target, onChunkDownloaded)
-            }
+        val start = contentRange
+            ?.substringAfter("bytes ", "")
+            ?.substringBefore("-")
+            ?.toLongOrNull()
+        if (start == null || start != existingLen) {
+            Log.w(TAG, "Content-Range mismatch (start=$start, existing=$existingLen), aborting resume")
+            return false
         }
         return try {
             conn.inputStream.use { input ->
@@ -830,8 +973,15 @@ private fun splitSentences(text: String): List<String> {
      */
     suspend fun initialize(modelInfo: ModelInfo = getCurrentModelInfo()): Boolean =
         withContext(Dispatchers.IO) {
-            if (tts != null && currentModelName == modelInfo.id) {
-                // 已加载同模型
+            // 快路径也进锁：与 release()/deleteModel 竞态时，可能在 tts 被置空的
+            // 同时返回 true，之后每次 speak 静默失败
+            val sameModelLoaded = speakMutex.withLock {
+                tts != null && currentModelName == modelInfo.id
+            }
+            if (sameModelLoaded) {
+                // 已加载同模型：把状态流也摆正（此前可能停留在
+                // FAILED/DOWNLOAD_FAILED，与布尔返回值互相矛盾）
+                _state.value = EngineState.READY(modelInfo.id)
                 return@withContext true
             }
             _state.value = EngineState.INITIALIZING
@@ -890,7 +1040,14 @@ private fun splitSentences(text: String): List<String> {
                 true
             } catch (e: Exception) {
                 Log.e(TAG, "initialize failed", e)
-                _state.value = EngineState.FAILED(e.message ?: "初始化失败")
+                // 新实例构造失败但旧引擎还在时，状态回到"旧模型就绪"，
+                // 而不是 FAILED（引擎实际仍可用，UI 显示"未就绪"会说谎）
+                val fallback = if (tts != null) currentModelName else null
+                _state.value = if (fallback != null) {
+                    EngineState.READY(fallback)
+                } else {
+                    EngineState.FAILED(e.message ?: "初始化失败")
+                }
                 false
             }
         }
@@ -954,6 +1111,9 @@ private fun splitSentences(text: String): List<String> {
             // 每句通常 < 150 字符，是 sherpa-onnx VITS/MeloTTS 的安全区间。
             val sentences = splitSentences(cleaned)
             Log.i(TAG, "Embedded TTS speak: inputLen=${text.length}, cleanedLen=${cleaned.length}, sentences=${sentences.size}")
+            // 熔断器：模型损坏时每句都会抛异常，旧实现逐句"跳过"后照常返回成功，
+            // 上层会"静音朗读"完整本书并推进进度。连续失败 3 句直接中止并报失败
+            var consecutiveFailures = 0
             for ((idx, sentence) in sentences.withIndex()) {
                 if (sentence.isBlank()) continue
                 // 每句之前检查协程是否已被取消（stop() 调用）。
@@ -961,23 +1121,39 @@ private fun splitSentences(text: String): List<String> {
                 kotlinx.coroutines.currentCoroutineContext()[Job]?.let { job ->
                     if (!job.isActive) throw kotlinx.coroutines.CancellationException("stop() requested")
                 }
-                // 单句仍可能超长（如超长标题无句末标点），硬切到 150 字符避免 native 崩溃
-                val safeSentence = if (sentence.length > 150) sentence.substring(0, 150) else sentence
-                try {
-                    val audio = currentTts.generate(safeSentence, sid = 0, speed = speed)
-                    val pcm = audio.samples
-                    val sr = audio.sampleRate
-                    Log.i(
-                        TAG,
-                        "Embedded TTS sentence $idx/${sentences.size}: len=${safeSentence.length}, " +
-                            "generated ${pcm.size} samples, duration=${"%.1f".format(pcm.size / sr.toFloat())}s",
-                    )
-                    playPcm(pcm, sr)
-                } catch (e: kotlinx.coroutines.CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    // 单句 generate 崩溃（如 native G2P bug）：跳过该句，继续下一句
-                    Log.e(TAG, "sentence $idx generate failed, skipping: '${safeSentence.take(60)}'", e)
+                // 单句仍可能超长（超长标题/无标点中文长段）：切成 ≤150 字符的块逐块合成，
+                // 旧实现 substring(0,150) 直接丢弃 150 字符之后的全部内容
+                val chunks = hardChunks(sentence, 150)
+                var anyOk = false
+                for (chunk in chunks) {
+                    try {
+                        val audio = currentTts.generate(chunk, sid = 0, speed = speed)
+                        val pcm = audio.samples
+                        val sr = audio.sampleRate
+                        Log.i(
+                            TAG,
+                            "Embedded TTS sentence $idx/${sentences.size}: len=${chunk.length}, " +
+                                "generated ${pcm.size} samples, duration=${"%.1f".format(pcm.size / sr.toFloat())}s",
+                        )
+                        playPcm(pcm, sr)
+                        anyOk = true
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        // 单句 generate 崩溃（如 native G2P bug）：跳过该句，继续下一句
+                        Log.e(TAG, "sentence $idx chunk generate failed, skipping: '${chunk.take(60)}'", e)
+                    }
+                }
+                if (anyOk) {
+                    consecutiveFailures = 0
+                } else {
+                    consecutiveFailures++
+                    if (consecutiveFailures >= 3) {
+                        Log.e(TAG, "3 consecutive sentence failures — aborting speak (model likely broken)")
+                        _state.value = EngineState.FAILED("语音合成连续失败，模型可能已损坏")
+                        isPlaying.set(false)
+                        return false
+                    }
                 }
             }
             isPlaying.set(false)
@@ -1020,6 +1196,8 @@ private fun splitSentences(text: String): List<String> {
             audioTrack = null
         }
         isPlaying.set(false)
+        // 停止即归还音频焦点，让被压低的音乐/播客恢复
+        abandonAudioFocusIfHeld()
     }
 
     /**
@@ -1075,8 +1253,33 @@ private fun splitSentences(text: String): List<String> {
             audioTrack = track
         }
 
-        track.write(pcm16, 0, pcm16.size)
-        track.play()
+        // 播放前申请音频焦点：让音乐/播客让路，朗读结束/停止后归还
+        requestAudioFocusIfNeeded()
+
+        val written = track.write(pcm16, 0, pcm16.size)
+        if (written < 0) {
+            // write 失败（ERROR_*）：别播了，释放该 track 交由调用方按句跳过
+            Log.w(TAG, "AudioTrack.write failed: $written")
+            synchronized(audioTrackLock) {
+                if (audioTrack === track) {
+                    audioTrack = null
+                    try { track.release() } catch (_: Exception) {}
+                }
+            }
+            return
+        }
+        try {
+            track.play()
+        } catch (e: IllegalStateException) {
+            Log.w(TAG, "AudioTrack.play failed", e)
+            synchronized(audioTrackLock) {
+                if (audioTrack === track) {
+                    audioTrack = null
+                    try { track.release() } catch (_: Exception) {}
+                }
+            }
+            return
+        }
 
         // 等待播放完成
         val durationMs = (pcm16.size * 1000L) / sampleRate
@@ -1118,6 +1321,9 @@ private fun splitSentences(text: String): List<String> {
                 tts = null
             }
         }
+        // 状态流复位：旧实现释放后流里仍是 READY，设置页状态说谎
+        _state.value = EngineState.NOT_INITIALIZED
+        abandonAudioFocusIfHeld()
     }
 
     /**

@@ -46,6 +46,8 @@ class OfflineTts(
     assetManager: AssetManager? = null,
     var config: OfflineTtsConfig,
 ) {
+    // @Volatile：ptr 会被 GC finalizer 线程与应用线程并发读写
+    @Volatile
     private var ptr: Long
 
     init {
@@ -56,16 +58,27 @@ class OfflineTts(
         }
     }
 
-    fun sampleRate() = getSampleRate(ptr)
+    fun sampleRate(): Int {
+        val p = ptr
+        check(p != 0L) { "OfflineTts already released" }
+        return getSampleRate(p)
+    }
 
-    fun numSpeakers() = getNumSpeakers(ptr)
+    fun numSpeakers(): Int {
+        val p = ptr
+        check(p != 0L) { "OfflineTts already released" }
+        return getNumSpeakers(p)
+    }
 
     fun generate(
         text: String,
         sid: Int = 0,
         speed: Float = 1.0f
     ): GeneratedAudio {
-        val objArray = generateImpl(ptr, text = text, sid = sid, speed = speed)
+        // 本地快照：避免检查后被并发释放（释放后 ptr=0，直接传给 JNI 是段错误）
+        val p = ptr
+        check(p != 0L) { "OfflineTts already released" }
+        val objArray = generateImpl(p, text = text, sid = sid, speed = speed)
         return GeneratedAudio(
             samples = objArray[0] as FloatArray,
             sampleRate = objArray[1] as Int
@@ -78,8 +91,10 @@ class OfflineTts(
         speed: Float = 1.0f,
         callback: (samples: FloatArray) -> Int
     ): GeneratedAudio {
+        val p = ptr
+        check(p != 0L) { "OfflineTts already released" }
         val objArray = generateWithCallbackImpl(
-            ptr,
+            p,
             text = text,
             sid = sid,
             speed = speed,
@@ -101,6 +116,9 @@ class OfflineTts(
         }
     }
 
+    // @Synchronized：GC finalizer 线程与显式 release() 可能并发到达，
+    // 无同步时两个线程都能通过 "ptr != 0" 检查 → native double free 崩溃
+    @Synchronized
     fun free() {
         if (ptr != 0L) {
             delete(ptr)
@@ -108,6 +126,7 @@ class OfflineTts(
         }
     }
 
+    @Synchronized
     protected fun finalize() {
         if (ptr != 0L) {
             delete(ptr)
@@ -115,7 +134,7 @@ class OfflineTts(
         }
     }
 
-    fun release() = finalize()
+    fun release() = free()
 
     private external fun newFromAsset(
         assetManager: AssetManager,

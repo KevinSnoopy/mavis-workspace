@@ -236,10 +236,13 @@ class ReaderViewModel @Inject constructor(
         val scenario = when {
             discovered.isNotEmpty() ->
                 TtsInstallPrompt.DialogScenario.HAS_DISCOVERED_ENGINES
-            // 系统设置指向一个**已知 TTS 引擎包**（最常见的就是刚装好的 com.google.android.tts）
-            // 且用户实际上可以"重试连接"让它生效
+            // 系统设置指向**已安装**的已知引擎包才算"可重试连接"：
+            // 指向已知但未安装的包（phantom 场景）时给用户"重试连接"按钮
+            // 只会白等 15s 超时，应走 NO_ENGINE 引导安装
             sdPkg != null &&
-                TtsEngineHelper.isKnownTtsEnginePackage(sdPkg) ->
+                !isPhantom &&
+                TtsEngineHelper.isKnownTtsEnginePackage(sdPkg) &&
+                TtsEngineHelper.checkPackage(context, sdPkg) != null ->
                 TtsInstallPrompt.DialogScenario.SYSTEM_DEFAULT_INSTALLED_BUT_UNREACHABLE
             else ->
                 TtsInstallPrompt.DialogScenario.NO_ENGINE
@@ -409,6 +412,8 @@ class ReaderViewModel @Inject constructor(
                 } catch (e: TimeoutCancellationException) {
                     android.util.Log.w("ReaderViewModel", "TTS init timed out (retry)", e)
                     false
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
                 } catch (e: Exception) {
                     android.util.Log.e("ReaderViewModel", "TTS init failed (retry)", e)
                     false
@@ -481,11 +486,23 @@ class ReaderViewModel @Inject constructor(
         private const val TRANSLATION_ALPHA_MIN = 0.3f
         private const val TRANSLATION_ALPHA_MAX = 1f
 
-        // 句子边界：句末标点 + 空白 + 大写字母/引号/左括号。
+        // 句子边界（ASCII）：句末标点 + 空白 + 大写字母/引号/左括号。
         // "Aug." "Mr." "Dr." 这类缩写后的 "." + 空格 + 小写/数字不会误切，
         // 而 "happened. The" 的正常句子边界仍能切出。提升为常量避免热路径重复编译。
         private val SENTENCE_BOUNDARY = Regex("(?<=[.!?])\\s+(?=[A-Z\"\\(])")
+
+        // 句子边界（CJK）：全角句点 。！？；（允许尾随闭引号/括号）。
+        // 中文不靠空白分句；不处理的话整段中文是一个"句子"，
+        // 与引擎侧切分不一致且被逐句长度限制截断
+        private val SENTENCE_BOUNDARY_CJK = Regex("(?<=[。！？；][”’」』]?)")
     }
+
+    /** 与 EmbeddedTtsEngine 侧一致的句子切分：先按全角句点切，再按 ASCII 边界切。 */
+    private fun splitSentencesCompat(text: String): List<String> =
+        text.split(SENTENCE_BOUNDARY_CJK)
+            .flatMap { it.split(SENTENCE_BOUNDARY) }
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
     // 本次阅读会话的统计（用于 saveProgress/cleanup 时写入 DB）
     private var sessionCharsRead: Long = 0L
     private var lastRecordedParagraphIndex: Int = -1
@@ -798,9 +815,18 @@ class ReaderViewModel @Inject constructor(
         }
     }
 
-    /** 朗读看门狗时长：按内容量估算（慢语速 ~80ms/字符），下限 60 秒。 */
-    private fun watchdogMs(sentences: List<String>): Long =
-        maxOf(60_000L, sentences.sumOf { it.length } * 80L)
+    /**
+     * 朗读看门狗时长：按内容量估算，下限 90 秒。
+     * 中文语速 ~3-4 字/秒（≈300ms/字），比英文慢得多，必须分开预算，
+     * 否则 200 字以上的中文段会在朗读中途被看门狗切断。
+     * 语速倍率（0.5x-2.0x）也影响实际时长，统一放宽到最慢档兜底。
+     */
+    private fun watchdogMs(sentences: List<String>): Long {
+        val text = sentences.joinToString("")
+        val hasCjk = text.any { it in '\u4e00'..'\u9fff' }
+        val perCharMs = if (hasCjk) 350L else 120L
+        return maxOf(90_000L, text.length * perCharMs)
+    }
 
     private fun doStartAutoRead(paragraphs: List<String>) {
         val startParaIdx = _uiState.value.currentParagraphIndex
@@ -819,9 +845,13 @@ class ReaderViewModel @Inject constructor(
 
                 _uiState.update { it.copy(autoReadingParaIndex = paraIdx, currentParagraphIndex = paraIdx) }
 
-                // 按句子分割（与速读共用同一个边界正则，保证行为一致）
-                val sentences = para.split(SENTENCE_BOUNDARY).filter { it.isNotBlank() }
+                // 按句子分割（与速读/引擎侧共用同一套切分，保证行为一致；含中文标点）
+                val sentences = splitSentencesCompat(para)
                 _uiState.update { it.copy(currentSentences = sentences) }
+
+                // 启动新链前停掉上一条链：看门狗触发或引擎迟滞时，
+                // 旧链可能还在出声，直接叠新链会造成两条链交替朗读
+                ttsHelper.stop()
 
                 suspendCancellableCoroutine<Unit> { cont ->
                     // 用 AtomicBoolean 防止 race；并优先靠 cont.isActive 守门
@@ -893,6 +923,10 @@ class ReaderViewModel @Inject constructor(
         rsvpJob?.cancel()
         speedJob?.cancel()
         autoReadJob?.cancel()
+        // ttsInitJob 也必须取消：初始化成功后会回调 doToggleTts() 启动播放，
+        // 若不取消，用户在初始化窗口内切到别的播放形态后，
+        // 迟到的初始化回调会在新生播放之上再叠一层单段朗读
+        ttsInitJob?.cancel()
         ttsHelper.stop()
         _uiState.update {
             it.copy(
@@ -1054,10 +1088,8 @@ class ReaderViewModel @Inject constructor(
                 if (!_uiState.value.isPlaying) break
                 _uiState.update { it.copy(currentParagraphIndex = i) }
 
-                // 按句切分（跟自动朗读用同一个 regex，保证句边界一致）
-                val sentences = paragraphs[i]
-                    .split(SENTENCE_BOUNDARY)
-                    .filter { it.isNotBlank() }
+                // 按句切分（跟自动朗读/引擎侧用同一套切分，保证句边界一致；含中文标点）
+                val sentences = splitSentencesCompat(paragraphs[i])
                 _uiState.update { it.copy(currentSentences = sentences) }
 
                 if (sentences.isEmpty()) {
@@ -1066,6 +1098,9 @@ class ReaderViewModel @Inject constructor(
                     delay((wordCount * 60L / SPEED_READ_WPM).coerceAtLeast(SPEED_READ_MIN_DELAY_MS))
                     continue
                 }
+
+                // 启动新链前停掉上一条链（同自动朗读）
+                ttsHelper.stop()
 
                 // 调 speakSentences — UI 会按句推进 currentSentenceIndex
                 suspendCancellableCoroutine<Unit> { cont ->
@@ -1146,7 +1181,12 @@ class ReaderViewModel @Inject constructor(
                     }
                     _uiState.update { it.copy(ttsInitialized = ok) }
                     if (ok) {
-                        doToggleTts()
+                        // 初始化窗口内用户可能已启动别的播放形态（或被停止）：
+                        // 复查状态，避免迟到的初始化回调在新生播放之上叠一层单段朗读
+                        val s = _uiState.value
+                        if (!s.isPlaying && !s.isAutoReading && !s.isTtsPlaying) {
+                            doToggleTts()
+                        }
                     } else {
                         handleTtsInitFailure("朗读不可用")
                     }

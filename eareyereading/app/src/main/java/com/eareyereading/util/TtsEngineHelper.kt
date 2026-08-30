@@ -236,7 +236,7 @@ object TtsEngineHelper {
      * 检查一个包是否已安装，并返回其 TtsEngineInfo。
      * 即使包不在已知列表里，也返回（用户系统设置里选的可能就是未知包名）。
      */
-    private fun checkPackage(context: Context, packageName: String): TtsEngineInfo? {
+    fun checkPackage(context: Context, packageName: String): TtsEngineInfo? {
         val pm = context.packageManager
         return try {
             // 先尝试 getPackageInfo 确认包存在

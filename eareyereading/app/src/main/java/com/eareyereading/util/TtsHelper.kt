@@ -46,6 +46,13 @@ class TtsHelper @Inject constructor(
     // 每次创建新 TextToSpeech 实例时递增，用于在回调中识别过期的旧实例回调
     @Volatile
     private var ttsGeneration = 0
+
+    /**
+     * 所有初始化状态（isInitialized/initPending/tts/ttsGeneration/等待队列）
+     * 的唯一串行化点。此前这些字段散在 Main/引擎 binder/IO/协程四个线程上
+     * 裸读裸写，@Volatile 只保证可见性不保证原子性，check-then-act 全是竞态
+     */
+    private val stateLock = Any()
     // 初始化失败的原因，用于向用户展示具体的错误信息
     @Volatile
     var lastFailureReason: InitFailureReason? = null
@@ -78,6 +85,11 @@ class TtsHelper @Inject constructor(
     @Volatile
     private var activeChainOnAllDone: (() -> Unit)? = null
 
+    // 当前运行中的内置引擎句子链协程：此前未追踪，
+    // stop()/shutdown() 无法取消它，模式切换后还会继续调用已释放的引擎
+    @Volatile
+    private var sentenceChainJob: kotlinx.coroutines.Job? = null
+
     // 标记是否正在自动朗读句子链，防止 speak() 打断
     @Volatile
     private var isInSentenceChain = false
@@ -93,6 +105,9 @@ class TtsHelper @Inject constructor(
      * 所有内部 ttsMode 赋值都必须走这个方法，保证两个视图一致。
      */
     private suspend fun updateTtsMode(mode: TtsMode) {
+        // 切换模式前先停掉旧模式的活动链：补偿逻辑按"当前模式"分发，
+        // 先切模式会让旧链的终止回调永远无人认领（链卡死、状态残留）
+        stop()
         ttsMode = mode
         _ttsModeState.value = mode
         if (mode == TtsMode.SYSTEM) {
@@ -273,72 +288,101 @@ class TtsHelper @Inject constructor(
             }
         } catch (e: TimeoutCancellationException) {
             android.util.Log.w(TAG, "TTS init timed out (engine=$enginePackage)", e)
-            // 在 invokeOnCancellation 中已经设置了 lastFailureReason
-            // 清理可能残留的实例
-            try { tts?.shutdown() } catch (_: Exception) {}
-            tts = null
-            isInitialized = false
-            initPending = false
+            // 失败分类含多次 PackageManager 扫描：放 IO 且用 NonCancellable
+            // （此时协程已处于取消态，普通 withContext 会立刻抛取消异常）。
+            // 旧实现在主线程同步扫 3-4 次，恰好在最卡的设备上卡 UI
+            val reason = withContext(Dispatchers.IO + kotlinx.coroutines.NonCancellable) {
+                classifyFailureReason(enginePackage)
+            }
+            failAllWaitersAndReset(reason)
             false
         } catch (e: Exception) {
             android.util.Log.e(TAG, "TTS init failed (engine=$enginePackage)", e)
-            lastFailureReason = InitFailureReason.ENGINE_ERROR
+            failAllWaitersAndReset(InitFailureReason.ENGINE_ERROR)
+            false
+        }
+
+    /**
+     * 初始化失败/超时的统一收尾：作废当前代际、销毁实例、唤醒全部等待者。
+     *
+     * 关键：必须唤醒"所有"等待者并把代际号作废。旧实现只移除超时的那一个等待者，
+     * 其余等待者挂在已死实例的队列里各自等到自己的 15s 超时；更糟的是
+     * 等待者超时的清理回调会销毁此后新建的实例（毒化后继初始化）
+     */
+    private fun failAllWaitersAndReset(reason: InitFailureReason) {
+        val waiters: List<kotlin.coroutines.Continuation<Boolean>>
+        synchronized(stateLock) {
+            lastFailureReason = reason
+            ttsGeneration++
             try { tts?.shutdown() } catch (_: Exception) {}
             tts = null
             isInitialized = false
             initPending = false
-            false
+            activeEnginePackage = null
+            waiters = pendingContinuations.toList()
+            pendingContinuations.clear()
         }
+        waiters.forEach { c ->
+            try { c.resume(false) } catch (_: IllegalStateException) {}
+        }
+    }
 
     private suspend fun doInitialize(language: String, enginePackage: String?): Boolean =
         suspendCancellableCoroutine { cont ->
-                // 所有路径都注册取消回调，确保超时后从等待队列移除并清理旧实例
+                // 取消回调只负责出队：实例级清理统一由失败路径/回调路径在
+                // stateLock 内做。旧实现在这里销毁实例——超时的等待者
+                // 会误杀此后新建的实例（队列毒化）
                 cont.invokeOnCancellation {
-                    pendingContinuations.remove(cont)
-                    // 如果没有其他等待者且回调仍未触发，清理旧实例以便下次重试
-                    if (pendingContinuations.isEmpty() && initPending && !isInitialized) {
-                        initPending = false
-                        lastFailureReason = classifyFailureReason(enginePackage)
-                        try { tts?.shutdown() } catch (_: Exception) {}
-                        tts = null
+                    synchronized(stateLock) {
+                        pendingContinuations.remove(cont)
                     }
                 }
 
-                // 已初始化完成：语言必须每次应用——单例跨书复用，
-                // 否则读完英文书再开中文书会一直用旧 locale 朗读。
-                // 若请求的引擎与当前运行的不同（用户换了引擎重试），
-                // 则销毁旧实例走重新绑定流程，而不是谎报"已启用"
-                if (isInitialized && tts != null) {
-                    if (enginePackage != null && enginePackage != activeEnginePackage) {
+                synchronized(stateLock) {
+                    // 已初始化完成：语言必须每次应用——单例跨书复用，
+                    // 否则读完英文书再开中文书会一直用旧 locale 朗读。
+                    // 若请求的引擎与当前运行的不同（用户换了引擎重试），
+                    // 则销毁旧实例走重新绑定流程，而不是谎报"已启用"
+                    if (isInitialized && tts != null) {
+                        if (enginePackage != null && enginePackage != activeEnginePackage) {
+                            try { tts?.shutdown() } catch (_: Exception) {}
+                            tts = null
+                            isInitialized = false
+                            // 落到下方正常初始化流程
+                        } else {
+                            val engine = tts
+                            if (engine != null) {
+                                // 在锁内应用语言（引擎调用短促），然后直接返回
+                                setLanguage(language)
+                                cont.resume(true)
+                                return@suspendCancellableCoroutine
+                            }
+                        }
+                    }
+
+                    // 初始化进行中（实例正在构造或等待引擎回调）— 加入等待队列。
+                    // 用 initPending 判定而不是 "tts != null && initPending"：
+                    // 实例构造与 tts 赋值之间有窗口，旧条件会让并发调用者
+                    // 误走"清理重建"分支
+                    if (initPending) {
+                        pendingContinuations.add(cont)
+                        return@suspendCancellableCoroutine
+                    }
+
+                    // 之前的初始化已失败/超时（回调已触发但失败，或从未触发）— 清理旧实例
+                    if (tts != null) {
                         try { tts?.shutdown() } catch (_: Exception) {}
                         tts = null
                         isInitialized = false
-                        // 落到下方正常初始化流程
-                    } else {
-                        setLanguage(language)
-                        cont.resume(true)
-                        return@suspendCancellableCoroutine
                     }
-                }
 
-                // TTS 实例存在且回调仍在等待中 — 加入等待队列
-                if (tts != null && initPending) {
                     pendingContinuations.add(cont)
-                    return@suspendCancellableCoroutine
+                    pendingLanguage = language
+                    initPending = true
+                    activeEnginePackage = enginePackage
+                    ttsGeneration++
                 }
-
-                // 之前的初始化已失败/超时（回调已触发但失败，或从未触发）— 清理旧实例，创建新的
-                if (tts != null) {
-                    try { tts?.shutdown() } catch (_: Exception) {}
-                    tts = null
-                    isInitialized = false
-                }
-
-                pendingContinuations.add(cont)
-                pendingLanguage = language
-                initPending = true
-                activeEnginePackage = enginePackage
-                val gen = ++ttsGeneration
+                val gen = ttsGeneration
 
                 val instance = try {
                     if (enginePackage != null) {
@@ -352,88 +396,99 @@ class TtsHelper @Inject constructor(
                     }
                 } catch (e: Exception) {
                     android.util.Log.e(TAG, "Failed to create TextToSpeech", e)
-                    initPending = false
-                    lastFailureReason = InitFailureReason.ENGINE_ERROR
-                    val pending = pendingContinuations.toList()
-                    pendingContinuations.clear()
-                    cont.resume(false)
-                    pending.forEach { c ->
-                        if (c !== cont) {
-                            try { c.resume(false) } catch (_: IllegalStateException) {}
-                        }
-                    }
+                    failAllWaitersAndReset(InitFailureReason.ENGINE_ERROR)
                     return@suspendCancellableCoroutine
                 }
-                tts = instance
+                synchronized(stateLock) {
+                    // 代际已变（期间发生过失败重置）则丢弃该实例
+                    if (gen == ttsGeneration) {
+                        tts = instance
+                    } else {
+                        try { instance.shutdown() } catch (_: Exception) {}
+                    }
+                }
             }
 
     /**
      * 统一的初始化回调处理，便于在多个构造函数之间复用。
+     * 整个状态转换在 stateLock 内完成，杜绝回调线程与
+     * shutdown/超时清理路径交错出 isInitialized=true∧tts=null 的静默态
      */
     private fun handleInitCallback(status: Int, gen: Int, language: String, enginePackage: String?) {
-        // 忽略旧实例的延迟回调（已被 shutdown 取代）
-        if (ttsGeneration != gen) return
+        val waiters: List<kotlin.coroutines.Continuation<Boolean>>
+        val result: Boolean
+        synchronized(stateLock) {
+            // 忽略旧实例的延迟回调（已被失败重置/新代际取代）
+            if (ttsGeneration != gen) return
 
-        isInitialized = status == TextToSpeech.SUCCESS
-        initPending = false
-        android.util.Log.i(
-            TAG,
-            "TTS engine[$enginePackage] init status=$status ($status / " +
-                "SUCCESS=${TextToSpeech.SUCCESS})"
-        )
+            // tts 可能在回调到达前被清空（并发失败重置）：
+            // 此时绝不能置 isInitialized=true，否则朗读永久静默
+            val engine = tts
+            val success = status == TextToSpeech.SUCCESS && engine != null
+            isInitialized = success
+            initPending = false
+            android.util.Log.i(
+                TAG,
+                "TTS engine[$enginePackage] init status=$status ($status / " +
+                    "SUCCESS=${TextToSpeech.SUCCESS})"
+            )
 
-        val reason: InitFailureReason? = if (isInitialized) {
-            val lang = pendingLanguage ?: language
-            currentLocale = when (lang) {
-                "zh" -> Locale.SIMPLIFIED_CHINESE
-                "ja" -> Locale.JAPANESE
-                "fr" -> Locale.FRENCH
-                "de" -> Locale.GERMAN
-                "es" -> Locale("es", "ES")
-                else -> Locale.US
-            }
-            val result = tts?.setLanguage(currentLocale)
-            if (result == TextToSpeech.LANG_MISSING_DATA ||
-                result == TextToSpeech.LANG_NOT_SUPPORTED
-            ) {
-                android.util.Log.w(TAG, "TTS does not support locale $currentLocale, status=$result")
-                // 尝试回退到英语：只有连英语也不支持才算语言不可用。
-                // 原实现在 setLanguage(Locale.US) 成功后仍然销毁引擎，
-                // 导致 isInitialized=true 但 tts=null，之后所有朗读永久静默。
-                val usResult = tts?.setLanguage(Locale.US)
-                if (usResult == TextToSpeech.LANG_MISSING_DATA ||
-                    usResult == TextToSpeech.LANG_NOT_SUPPORTED
+            val reason: InitFailureReason? = if (success && engine != null) {
+                val lang = pendingLanguage ?: language
+                currentLocale = when (lang) {
+                    "zh" -> Locale.SIMPLIFIED_CHINESE
+                    "ja" -> Locale.JAPANESE
+                    "fr" -> Locale.FRENCH
+                    "de" -> Locale.GERMAN
+                    "es" -> Locale("es", "ES")
+                    else -> Locale.US
+                }
+                val langResult = engine.setLanguage(currentLocale)
+                if (langResult == TextToSpeech.LANG_MISSING_DATA ||
+                    langResult == TextToSpeech.LANG_NOT_SUPPORTED
                 ) {
-                    InitFailureReason.LANGUAGE_UNSUPPORTED
+                    android.util.Log.w(TAG, "TTS does not support locale $currentLocale, status=$langResult")
+                    // 尝试回退到英语：只有连英语也不支持才算语言不可用。
+                    // 原实现在 setLanguage(Locale.US) 成功后仍然销毁引擎，
+                    // 导致 isInitialized=true 但 tts=null，之后所有朗读永久静默。
+                    val usResult = engine.setLanguage(Locale.US)
+                    if (usResult == TextToSpeech.LANG_MISSING_DATA ||
+                        usResult == TextToSpeech.LANG_NOT_SUPPORTED
+                    ) {
+                        InitFailureReason.LANGUAGE_UNSUPPORTED
+                    } else {
+                        currentLocale = Locale.US
+                        // 新实例要应用用户设置的语速，而不是硬编码 1.0
+                        engine.setSpeechRate(currentSpeed)
+                        null
+                    }
                 } else {
-                    currentLocale = Locale.US
-                    // 新实例要应用用户设置的语速，而不是硬编码 1.0
-                    tts?.setSpeechRate(currentSpeed)
+                    engine.setSpeechRate(currentSpeed)
                     null
                 }
             } else {
-                tts?.setSpeechRate(currentSpeed)
-                null
+                // 回调触发但 status != SUCCESS（一般是 ERROR 或 ERROR_SYNTHESIS）
+                InitFailureReason.ENGINE_ERROR
             }
-        } else {
-            // 回调触发但 status != SUCCESS（一般是 ERROR 或 ERROR_SYNTHESIS）
-            InitFailureReason.ENGINE_ERROR
+
+            if (reason != null) {
+                lastFailureReason = reason
+                // 初始化失败 — 清理实例，使下次调用可以重新创建
+                try { tts?.shutdown() } catch (_: Exception) {}
+                tts = null
+                isInitialized = false
+            } else {
+                lastFailureReason = null
+            }
+
+            result = isInitialized
+            waiters = pendingContinuations.toList()
+            pendingContinuations.clear()
         }
 
-        if (reason != null) {
-            lastFailureReason = reason
-            // 初始化失败 — 清理实例，使下次调用可以重新创建
-            try { tts?.shutdown() } catch (_: Exception) {}
-            tts = null
-        } else {
-            lastFailureReason = null
-        }
-
-        // 唤醒所有等待的协程
-        val pending = pendingContinuations.toList()
-        pendingContinuations.clear()
-        pending.forEach { c ->
-            try { c.resume(isInitialized) } catch (_: IllegalStateException) {
+        // 唤醒所有等待的协程（锁外，避免回调里再入锁）
+        waiters.forEach { c ->
+            try { c.resume(result) } catch (_: IllegalStateException) {
                 // 协程已被取消/已完成，忽略
             }
         }
@@ -514,21 +569,35 @@ class TtsHelper @Inject constructor(
 
         when (ttsMode) {
             TtsMode.SYSTEM -> {
+                val engine = tts
+                if (engine == null) {
+                    // isInitialized=true 但实例被并发清空：不能静默，
+                    // 回调照常触发让上层状态落地
+                    android.util.Log.w(TAG, "speak(): engine missing despite isInitialized")
+                    onComplete?.invoke()
+                    return
+                }
+                // utteranceId 配对：QUEUE_FLUSH 不保证被冲刷语句的终态回调不迟到，
+                // 没有 id 匹配，A 的 onDone 会落在 B 安装的监听器上 →
+                // onComplete 提前触发 + 随后再触发一次（双回调）
+                val myId = "speak_${System.nanoTime()}"
                 val listener = object : UtteranceProgressListener() {
                     override fun onStart(utteranceId: String?) {
                         android.util.Log.d(TAG, "onStart utterance=$utteranceId")
                     }
                     override fun onDone(utteranceId: String?) {
+                        if (utteranceId != myId) return
                         android.util.Log.d(TAG, "onDone utterance=$utteranceId")
                         onComplete?.invoke()
                     }
                     override fun onError(utteranceId: String?) {
+                        if (utteranceId != myId) return
                         android.util.Log.e(TAG, "onError utterance=$utteranceId")
                         onComplete?.invoke()
                     }
                 }
-                tts?.setOnUtteranceProgressListener(listener)
-                tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "utterance_${System.currentTimeMillis()}")
+                engine.setOnUtteranceProgressListener(listener)
+                engine.speak(text, TextToSpeech.QUEUE_FLUSH, null, myId)
             }
             TtsMode.EMBEDDED -> {
                 // speak() 是 suspend 且在 IO 线程阻塞到播放完成；完成后切回主线程回调。
@@ -573,29 +642,37 @@ class TtsHelper @Inject constructor(
                         return
                     }
                     val sentence = sentences[index]
+                    // utteranceId 配对：被 QUEUE_FLUSH 冲刷的旧句迟到的 onDone
+                    // 不能让当前链跳句（此前会 index++ 跳掉一句）
+                    val expectedId = "sentence_${System.nanoTime()}"
                     val listener = object : UtteranceProgressListener() {
                         override fun onStart(utteranceId: String?) {}
                         override fun onDone(utteranceId: String?) {
+                            if (utteranceId != expectedId) return
                             onSentenceDone(index)
                             index++
                             speakNext()
                         }
                         override fun onError(utteranceId: String?) {
+                            if (utteranceId != expectedId) return
                             android.util.Log.w("TtsHelper", "TTS error on sentence $index, skipping")
                             index++
                             speakNext()
                         }
                     }
                     tts?.setOnUtteranceProgressListener(listener)
-                    tts?.speak(sentence, TextToSpeech.QUEUE_FLUSH, null, "sentence_$index")
+                    tts?.speak(sentence, TextToSpeech.QUEUE_FLUSH, null, expectedId)
                 }
                 speakNext()
             }
             TtsMode.EMBEDDED -> {
                 // Embedded 模式：逐句异步朗读。
                 // try/finally 保证被 stop() 取消（CancellationException 直接穿透 for 循环）
-                // 时 onAllDone 仍然触发，否则阅读页会永久卡在"朗读中"状态
-                scope.launch {
+                // 时 onAllDone 仍然触发，否则阅读页会永久卡在"朗读中"状态。
+                // 链协程必须被追踪：此前未存入任何 job 字段，stop()/shutdown()
+                // 取消不到它，模式切换后循环继续调用已释放的引擎
+                sentenceChainJob?.cancel()
+                sentenceChainJob = scope.launch {
                     try {
                         for ((index, sentence) in sentences.withIndex()) {
                             if (!isInSentenceChain) {
@@ -623,14 +700,21 @@ class TtsHelper @Inject constructor(
             TtsMode.SYSTEM -> {
                 tts?.stop()
                 // tts.stop() 不会触发 onDone/onError（只有 onStop），
-                // 句子链回调被孤立；补偿调用当前链的终止回调
-                activeChainOnAllDone?.let { cb ->
+                // 句子链回调被孤立；补偿调用当前链的终止回调。
+                // 快照-置空-调用放在 stateLock 内，避免并发 stop()/pause()
+                // 双份触发 onAllDone
+                val cb: (() -> Unit)?
+                synchronized(stateLock) {
+                    cb = activeChainOnAllDone
                     activeChainOnAllDone = null
-                    cb()
                 }
+                cb?.invoke()
             }
             TtsMode.EMBEDDED -> {
-                // 取消停在 speakMutex 上的过期朗读 + 当前朗读
+                // 取消句子链协程 + 停在 speakMutex 上的过期朗读 + 当前朗读。
+                // 链协程被取消后其 finally 会触发 onAllDone（链的终止信号）
+                sentenceChainJob?.cancel()
+                sentenceChainJob = null
                 embeddedSpeakJob?.cancel()
                 embeddedSpeakJob = null
                 embeddedTts.stop()
@@ -657,19 +741,25 @@ class TtsHelper @Inject constructor(
 
     fun shutdown() {
         isInSentenceChain = false
-        activeChainOnAllDone = null
+        sentenceChainJob?.cancel()
+        sentenceChainJob = null
         embeddedSpeakJob?.cancel()
         embeddedSpeakJob = null
-        try { tts?.stop(); tts?.shutdown() } catch (_: Exception) {}
-        tts = null
-        isInitialized = false
-        initPending = false
-        ttsGeneration++
+        val waiters: List<kotlin.coroutines.Continuation<Boolean>>
+        synchronized(stateLock) {
+            activeChainOnAllDone = null
+            try { tts?.stop(); tts?.shutdown() } catch (_: Exception) {}
+            tts = null
+            isInitialized = false
+            initPending = false
+            ttsGeneration++
+            activeEnginePackage = null
+            waiters = pendingContinuations.toList()
+            pendingContinuations.clear()
+        }
         // 唤醒所有等待初始化的协程（返回 false），否则它们要挂到 15s 超时，
         // 超时后的清理回调还可能误伤新建的实例
-        val pending = pendingContinuations.toList()
-        pendingContinuations.clear()
-        pending.forEach { c ->
+        waiters.forEach { c ->
             try { c.resume(false) } catch (_: IllegalStateException) {
                 // 协程已被取消/已完成，忽略
             }
@@ -689,4 +779,21 @@ class TtsHelper @Inject constructor(
      * 暴露 embedded TTS 给上层，用于模型下载管理 UI。
      */
     fun getEmbeddedEngine(): EmbeddedTtsEngine = embeddedTts
+
+    /**
+     * 内置引擎被外部释放（如设置页删除模型调用 release()）后调用：
+     * 重置初始化状态并退回系统模式。此前 ttsMode=EMBEDDED 且 isInitialized=true
+     * 但引擎已不存在，之后所有朗读静默无效，且不会触发任何重新初始化/引导
+     */
+    suspend fun onEmbeddedReleased() {
+        synchronized(stateLock) {
+            if (ttsMode == TtsMode.EMBEDDED) {
+                isInitialized = false
+            }
+        }
+        if (ttsMode == TtsMode.EMBEDDED) {
+            // 退回系统模式：下次朗读会重新走系统引擎初始化流程
+            updateTtsMode(TtsMode.SYSTEM)
+        }
+    }
 }

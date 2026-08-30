@@ -27,6 +27,7 @@ import com.eareyereading.domain.repository.SettingsRepository
 import com.eareyereading.domain.repository.VocabularyRepository
 import com.eareyereading.ui.theme.*
 import com.eareyereading.util.NotificationHelper
+import com.eareyereading.util.TtsHelper
 import com.eareyereading.tts.EmbeddedTtsEngine
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -68,6 +69,7 @@ class SettingsViewModel @Inject constructor(
     private val readingStatsDao: ReadingStatsDao,
     private val vocabularyDao: VocabularyDao,
     private val embeddedTts: EmbeddedTtsEngine,
+    private val ttsHelper: TtsHelper,
     @ApplicationContext private val context: Context,
 ) : ViewModel() {
 
@@ -245,8 +247,13 @@ class SettingsViewModel @Inject constructor(
     /** 删除已下载的内置 TTS 模型（释放空间）。 */
     fun deleteEmbeddedTts() {
         viewModelScope.launch {
-            embeddedTts.deleteModel()
+            // 顺序：先停并释放引擎（会等完正在播的句子），再通知 TtsHelper
+            // 复位状态并退回系统模式，最后才删文件。
+            // 旧实现先删文件再 release，且 TtsHelper 的 ttsMode/isInitialized
+            // 完全不知情——之后所有朗读静默失效直到进程重启
             embeddedTts.release()
+            ttsHelper.onEmbeddedReleased()
+            embeddedTts.deleteModel()
             refreshEmbeddedStatus()
             _uiState.update {
                 it.copy(embeddedReady = false, snackbarMessage = "已删除内置语音模型")

@@ -10,6 +10,32 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
+    <!-- Android 11+ 包可见性：不声明这些，queryIntentServices/getPackageInfo
+         会被系统过滤成空结果，TTS 引擎探测（TtsEngineHelper）在现代设备上
+         整个失效——而这恰是国产手机 TTS 兜底逻辑的目标场景 -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
+        <package android:name="com.google.android.tts" />
+        <!-- Google Play 包名：hasGooglePlay() 探测（引导安装 TTS 引擎） -->
+        <package android:name="com.android.vending" />
+        <package android:name="com.xiaomi.mibrain.speech" />
+        <package android:name="com.xiaomi.speech.tts" />
+        <package android:name="com.huawei.hitouch.tts" />
+        <package android:name="com.huawei.tts" />
+        <package android:name="com.hicloud.android.tts" />
+        <package android:name="com.coloros.tts" />
+        <package android:name="com.oppo.tts" />
+        <package android:name="com.vivo.tts" />
+        <package android:name="com.baidu.duer.tts" />
+        <package android:name="com.baidu.tts" />
+        <package android:name="com.iflytek.tts" />
+        <package android:name="com.iflytek.cloudtts" />
+        <package android:name="com.tencent.tts" />
+        <package android:name="com.sogou.tts" />
+    </queries>
+
     <application
         android:name=".EareyeReadingApp"
         android:allowBackup="true"
