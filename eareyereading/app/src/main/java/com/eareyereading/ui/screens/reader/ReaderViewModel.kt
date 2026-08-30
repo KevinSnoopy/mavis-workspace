@@ -11,7 +11,6 @@ import com.eareyereading.data.local.dao.HighlightDao
 import com.eareyereading.data.local.dao.ReadingStatsDao
 import com.eareyereading.data.local.entity.BookmarkEntity
 import com.eareyereading.data.local.entity.HighlightEntity
-import com.eareyereading.data.local.entity.ReadingStatsEntity
 import com.eareyereading.domain.model.*
 import com.eareyereading.domain.repository.*
 import com.eareyereading.ui.theme.*
@@ -1264,21 +1263,14 @@ class ReaderViewModel @Inject constructor(
         val dateFormat = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault())
         val today = dateFormat.format(java.util.Date(now))
         try {
-            // 累计而非覆盖：同一天多次打开同一本书时，
-            // 原实现 delete+insert 只保留本次会话，早上的阅读时长被晚上抹掉
-            val existing = readingStatsDao.getStatForBookAndDate(bookId, today)
-            readingStatsDao.deleteForBookAndDate(bookId, today)
-            readingStatsDao.insertStat(
-                ReadingStatsEntity(
-                    bookId = bookId,
-                    date = today,
-                    readingMinutes = (existing?.readingMinutes ?: 0) + minutesRead,
-                    charsRead = (existing?.charsRead ?: 0) + sessionCharsRead.toInt(),
-                    paragraphsRead = maxOf(
-                        existing?.paragraphsRead ?: 0,
-                        (lastRecordedParagraphIndex + 1).coerceAtLeast(1),
-                    ),
-                )
+            // 原子累计：@Transaction + (bookId,date) 唯一索引兜底，
+            // 替代旧的"读-删-插"三步写（进程在步骤间被杀会丢当日记录）
+            readingStatsDao.accumulateDailyStat(
+                bookId = bookId,
+                date = today,
+                addMinutes = minutesRead,
+                addChars = sessionCharsRead.toInt(),
+                paragraphsHighWater = (lastRecordedParagraphIndex + 1).coerceAtLeast(1),
             )
             statsFlushed = true
             sessionCharsRead = 0L

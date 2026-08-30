@@ -17,6 +17,47 @@ interface ReadingStatsDao {
     @Query("SELECT * FROM reading_stats WHERE bookId = :bookId AND date = :date LIMIT 1")
     suspend fun getStatForBookAndDate(bookId: Long, date: String): ReadingStatsEntity?
 
+    /**
+     * 原子累计当日统计：已存在则叠加（段落取高水位），不存在则插入。
+     * (bookId, date) 唯一索引 + @Transaction 保证并发/中断下不会
+     * 产生重复行或丢累计（替代旧的 delete+insert 两步写）
+     */
+    @Transaction
+    suspend fun accumulateDailyStat(
+        bookId: Long,
+        date: String,
+        addMinutes: Int,
+        addChars: Int,
+        paragraphsHighWater: Int,
+    ) {
+        val existing = getStatForBookAndDate(bookId, date)
+        if (existing != null) {
+            updateAccumulated(
+                bookId = bookId,
+                date = date,
+                minutes = existing.readingMinutes + addMinutes,
+                chars = existing.charsRead + addChars,
+                paragraphs = maxOf(existing.paragraphsRead, paragraphsHighWater),
+            )
+        } else {
+            insertStat(
+                ReadingStatsEntity(
+                    bookId = bookId,
+                    date = date,
+                    readingMinutes = addMinutes,
+                    charsRead = addChars,
+                    paragraphsRead = paragraphsHighWater,
+                )
+            )
+        }
+    }
+
+    @Query(
+        "UPDATE reading_stats SET readingMinutes = :minutes, charsRead = :chars, " +
+            "paragraphsRead = :paragraphs WHERE bookId = :bookId AND date = :date"
+    )
+    suspend fun updateAccumulated(bookId: Long, date: String, minutes: Int, chars: Int, paragraphs: Int)
+
     /** 删除某本书的全部统计（删书级联用）。 */
     @Query("DELETE FROM reading_stats WHERE bookId = :bookId")
     suspend fun deleteForBook(bookId: Long)

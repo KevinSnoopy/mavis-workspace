@@ -192,6 +192,43 @@ object DatabaseModule {
                         )
                     }
                 },
+                object : Migration(6, 7) {
+                    override fun migrate(db: SupportSQLiteDatabase) {
+                        // reading_stats 升级为 (bookId, date) 唯一。
+                        // 先防御性再合并一次（v6 已合并、写入路径也已单飞，
+                        // 但约束创建前兜底，保证迁移绝不在存量重复上失败）：
+                        // 分钟/字数求和、段落取最大，汇总到将保留的行后删冗余
+                        db.execSQL(
+                            """
+                            UPDATE reading_stats SET
+                                readingMinutes = (
+                                    SELECT SUM(s2.readingMinutes) FROM reading_stats s2
+                                    WHERE s2.bookId = reading_stats.bookId AND s2.date = reading_stats.date),
+                                charsRead = (
+                                    SELECT SUM(s2.charsRead) FROM reading_stats s2
+                                    WHERE s2.bookId = reading_stats.bookId AND s2.date = reading_stats.date),
+                                paragraphsRead = (
+                                    SELECT MAX(s2.paragraphsRead) FROM reading_stats s2
+                                    WHERE s2.bookId = reading_stats.bookId AND s2.date = reading_stats.date)
+                            WHERE id IN (SELECT MAX(id) FROM reading_stats GROUP BY bookId, date)
+                            """
+                        )
+                        db.execSQL(
+                            """
+                            DELETE FROM reading_stats
+                            WHERE id NOT IN (SELECT MAX(id) FROM reading_stats GROUP BY bookId, date)
+                            """
+                        )
+                        // 旧的非唯一索引与唯一索引同名，必须先删再建：
+                        // IF NOT EXISTS 遇到同名索引会直接跳过，留下非唯一版本，
+                        // Room 打开库时校验唯一性不匹配即崩
+                        db.execSQL("DROP INDEX IF EXISTS `index_reading_stats_bookId_date`")
+                        db.execSQL(
+                            "CREATE UNIQUE INDEX IF NOT EXISTS `index_reading_stats_bookId_date` " +
+                                "ON `reading_stats` (`bookId`, `date`)"
+                        )
+                    }
+                },
             )
             .build()
     }

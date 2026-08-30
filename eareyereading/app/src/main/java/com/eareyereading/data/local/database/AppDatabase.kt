@@ -16,7 +16,7 @@ import com.eareyereading.data.local.entity.*
         BookmarkEntity::class,
         HighlightEntity::class,
     ],
-    version = 6,
+    version = 7,
     // 导出 schema 到 app/schemas/：手写 migration 可以与 Room 期望的表结构
     // 逐版本对照，杜绝"迁移后 schema 校验失败 → 升级用户启动即崩"的漂移
     exportSchema = true

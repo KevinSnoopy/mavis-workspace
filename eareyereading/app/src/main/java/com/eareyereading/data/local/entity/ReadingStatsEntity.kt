@@ -12,8 +12,9 @@ import androidx.room.PrimaryKey
     indices = [
         // 首页/书库按日期做 SUM 聚合与列表查询（每日加载的热路径）
         Index(value = ["date"]),
-        // getStatForBookAndDate / deleteForBookAndDate / deleteForBook 的 bookId 前缀
-        Index(value = ["bookId", "date"]),
+        // 每日每书一条的硬约束（迁移 6→7）：累计落库改事务化后，
+        // 数据库层兜底保证不会再出现同书同日多行
+        Index(value = ["bookId", "date"], unique = true),
     ],
 )
 data class ReadingStatsEntity(
