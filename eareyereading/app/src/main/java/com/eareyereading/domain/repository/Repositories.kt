@@ -20,6 +20,10 @@ interface VocabularyRepository {
     fun getNewWords(): Flow<List<Vocabulary>>
     fun getLearnedWords(): Flow<List<Vocabulary>>
     suspend fun getWord(word: String): Vocabulary?
+    /** 按主键批量取词（复习会话组队用，避免逐词查询与字符串匹配歧义）。 */
+    suspend fun getWordsByIds(ids: List<Long>): Map<Long, Vocabulary>
+    /** 复习作答后同步词汇统计（复习次数/最后复习时间）。 */
+    suspend fun recordReviewActivity(vocabularyId: Long, reviewTime: Long)
     suspend fun addWord(vocabulary: Vocabulary): Long
     suspend fun updateWord(vocabulary: Vocabulary)
     suspend fun deleteWord(word: Vocabulary)

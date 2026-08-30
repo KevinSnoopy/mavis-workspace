@@ -70,6 +70,14 @@ fun ReviewScreen(
                 .padding(padding),
         ) {
             when {
+                uiState.errorMessage != null && uiState.dueCards.isEmpty() -> {
+                    // 加载失败必须与"全部完成"可区分，并提供重试入口
+                    ErrorReviewView(
+                        message = uiState.errorMessage,
+                        onRetry = viewModel::loadDueReviews,
+                        onBack = onBack,
+                    )
+                }
                 uiState.isSessionComplete && uiState.totalReviewed == 0 -> {
                     // 没有待复习
                     EmptyReviewView()
@@ -92,8 +100,11 @@ fun ReviewScreen(
                             currentIndex = uiState.currentIndex,
                             totalCards = uiState.dueCards.size,
                             isShowingAnswer = uiState.isShowingAnswer,
+                            isSubmitting = uiState.isSubmitting,
+                            errorMessage = uiState.errorMessage,
                             onReveal = viewModel::revealAnswer,
                             onAnswer = viewModel::answerCard,
+                            onDismissError = viewModel::clearError,
                         )
                     }
                 }
@@ -127,6 +138,42 @@ private fun EmptyReviewView() {
             style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+    }
+}
+
+@Composable
+private fun ErrorReviewView(
+    message: String?,
+    onRetry: () -> Unit,
+    onBack: () -> Unit,
+) {
+    Column(
+        modifier = Modifier.fillMaxSize(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Icon(
+            Icons.Default.Warning,
+            contentDescription = null,
+            modifier = Modifier.size(80.dp),
+            tint = Error,
+        )
+        Spacer(modifier = Modifier.height(16.dp))
+        Text(
+            message ?: "加载失败",
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(modifier = Modifier.height(24.dp))
+        Button(onClick = onRetry) {
+            Icon(Icons.Default.Refresh, null)
+            Spacer(modifier = Modifier.width(8.dp))
+            Text("重试")
+        }
+        Spacer(modifier = Modifier.height(12.dp))
+        OutlinedButton(onClick = onBack) {
+            Text("返回")
+        }
     }
 }
 
@@ -204,8 +251,11 @@ private fun ReviewCardView(
     currentIndex: Int,
     totalCards: Int,
     isShowingAnswer: Boolean,
+    isSubmitting: Boolean,
+    errorMessage: String?,
     onReveal: () -> Unit,
     onAnswer: (Int) -> Unit,
+    onDismissError: () -> Unit,
 ) {
     Column(
         modifier = Modifier
@@ -223,6 +273,19 @@ private fun ReviewCardView(
             style = MaterialTheme.typography.labelSmall,
             modifier = Modifier.padding(vertical = 4.dp),
         )
+
+        // 评分写库失败的会话内提示：保留在当前卡片，用户可知情并重试
+        if (errorMessage != null) {
+            Text(
+                errorMessage,
+                color = Error,
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onDismissError() }
+                    .padding(vertical = 4.dp),
+            )
+        }
 
         Spacer(modifier = Modifier.height(24.dp))
 
@@ -256,22 +319,33 @@ private fun ReviewCardView(
                     exit = fadeOut() + shrinkVertically(),
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        card.vocabulary?.definition?.let { def ->
+                        if (card.vocabulary == null) {
+                            // 词条已被删除但复习记录仍在：给出占位说明，
+                            // 不让用户面对空白答案盲评
                             Text(
-                                text = def,
+                                text = "词条已删除，无法展示释义",
                                 style = MaterialTheme.typography.bodyLarge,
-                                textAlign = TextAlign.Center,
-                                color = Primary,
-                            )
-                        }
-                        card.vocabulary?.context?.let { ctx ->
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Text(
-                                text = "\"$ctx\"",
-                                style = MaterialTheme.typography.bodyMedium,
                                 textAlign = TextAlign.Center,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
+                        } else {
+                            card.vocabulary.definition?.let { def ->
+                                Text(
+                                    text = def,
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    textAlign = TextAlign.Center,
+                                    color = Primary,
+                                )
+                            }
+                            card.vocabulary.context?.let { ctx ->
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(
+                                    text = "\"$ctx\"",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    textAlign = TextAlign.Center,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
                         }
                     }
                 }
@@ -291,6 +365,7 @@ private fun ReviewCardView(
             if (!showing) {
                 Button(
                     onClick = onReveal,
+                    enabled = !isSubmitting,
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(12.dp),
                 ) {
@@ -312,27 +387,33 @@ private fun ReviewCardView(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
+                        // isSubmitting 期间禁用：过渡动画中退场的按钮仍可命中，
+                        // 不加防护会把评分记到下一张未展示的卡片上
                         AnswerButton(
                             label = "忘了",
                             color = Error,
+                            enabled = !isSubmitting,
                             onClick = { onAnswer(1) },
                             modifier = Modifier.weight(1f),
                         )
                         AnswerButton(
                             label = "困难",
                             color = Warning,
+                            enabled = !isSubmitting,
                             onClick = { onAnswer(3) },
                             modifier = Modifier.weight(1f),
                         )
                         AnswerButton(
                             label = "一般",
                             color = Info,
+                            enabled = !isSubmitting,
                             onClick = { onAnswer(4) },
                             modifier = Modifier.weight(1f),
                         )
                         AnswerButton(
                             label = "完美",
                             color = Success,
+                            enabled = !isSubmitting,
                             onClick = { onAnswer(5) },
                             modifier = Modifier.weight(1f),
                         )
@@ -349,9 +430,11 @@ private fun AnswerButton(
     color: androidx.compose.ui.graphics.Color,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    enabled: Boolean = true,
 ) {
     Button(
         onClick = onClick,
+        enabled = enabled,
         modifier = modifier.height(52.dp),
         shape = RoundedCornerShape(8.dp),
         colors = ButtonDefaults.buttonColors(containerColor = color),

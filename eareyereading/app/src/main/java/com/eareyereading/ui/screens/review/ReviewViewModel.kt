@@ -2,6 +2,7 @@ package com.eareyereading.ui.screens.review
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.room.withTransaction
 import com.eareyereading.data.local.dao.ReviewRecordDao
 import com.eareyereading.data.local.entity.ReviewRecordEntity
 import com.eareyereading.domain.model.Vocabulary
@@ -21,6 +22,7 @@ import kotlin.math.roundToInt
 class ReviewViewModel @Inject constructor(
     private val reviewRecordDao: ReviewRecordDao,
     private val vocabularyRepository: VocabularyRepository,
+    private val database: com.eareyereading.data.local.database.AppDatabase,
 ) : ViewModel() {
 
     data class ReviewCard(
@@ -35,6 +37,11 @@ class ReviewViewModel @Inject constructor(
         val isSessionComplete: Boolean = false,
         val totalReviewed: Int = 0,
         val correctCount: Int = 0,
+        // 评分写库进行中：防止答案按钮在过渡/写入期间再次命中（双击会把
+        // 评分记到下一张未展示的卡片上，静默污染 SM-2 历史）
+        val isSubmitting: Boolean = false,
+        // 加载失败与"全部完成"必须可区分：此前 DB 异常被当成完成渲染庆祝页
+        val errorMessage: String? = null,
     )
 
     private val _uiState = MutableStateFlow(ReviewUiState())
@@ -56,9 +63,11 @@ class ReviewViewModel @Inject constructor(
                 // 用 first() 而非 collect() — 一次拉取，不持续监听 DB 变化
                 // answerCard() 会直接更新 _uiState，不依赖 Flow 重拉
                 val records = reviewRecordDao.getDueReviews(System.currentTimeMillis(), 50).first()
+                // 按 vocabularyId 一次批量取词：旧实现逐词 LOWER(word) 匹配，
+                // 同名多行时取到任意一行（可能无上下文），且 50 次全表扫描
+                val vocabById = vocabularyRepository.getWordsByIds(records.map { it.vocabularyId })
                 val cards = records.map { record ->
-                    val vocab = vocabularyRepository.getWord(record.word)
-                    ReviewCard(record = record, vocabulary = vocab)
+                    ReviewCard(record = record, vocabulary = vocabById[record.vocabularyId])
                 }
                 _uiState.update {
                     it.copy(
@@ -66,15 +75,18 @@ class ReviewViewModel @Inject constructor(
                         currentIndex = 0,
                         isShowingAnswer = false,
                         isSessionComplete = cards.isEmpty(),
+                        errorMessage = null,
                     )
                 }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
-                // DB 异常不再走 viewModelScope 未捕获处理器崩 App：
-                // 显示空会话，用户可重试
+                // DB 异常不再走 viewModelScope 未捕获处理器崩 App；
+                // 与"全部完成"区分开，显示错误态供用户重试
                 android.util.Log.e("ReviewViewModel", "loadDueReviews failed", e)
-                _uiState.update { it.copy(isSessionComplete = true) }
+                _uiState.update {
+                    it.copy(isSessionComplete = false, errorMessage = "复习数据加载失败，请重试")
+                }
             }
         }
     }
@@ -87,9 +99,15 @@ class ReviewViewModel @Inject constructor(
      * SM-2 算法核心：
      * - q < 3: 重新从间隔1开始
      * - q >= 3: 按公式更新间隔
+     *
+     * 评分写入与界面推进串行化：先落库成功再推进卡片。旧实现界面先推进、
+     * 写库 fire-and-forget，写入失败/进程被杀时评分静默丢失（卡片原地复活），
+     * 且过渡动画期间的二次点击会把评分记到下一张未展示的卡片上。
      */
     fun answerCard(quality: Int) {
         val state = _uiState.value
+        // 未揭示答案/正在提交/队列已尽：一律不受理
+        if (!state.isShowingAnswer || state.isSubmitting) return
         if (state.currentIndex >= state.dueCards.size) return
 
         val card = state.dueCards[state.currentIndex]
@@ -120,6 +138,7 @@ class ReviewViewModel @Inject constructor(
         // Int 乘法溢出会把 nextReviewDate 算进过去，卡片永久"到期"
         val nextReview = now + newInterval.toLong() * 24L * 60L * 60L * 1000L
 
+        _uiState.update { it.copy(isSubmitting = true) }
         viewModelScope.launch {
             try {
                 val updatedRecord = record.copy(
@@ -130,46 +149,48 @@ class ReviewViewModel @Inject constructor(
                     lastReviewDate = now,
                     lastQuality = q,
                 )
-                reviewRecordDao.updateReview(updatedRecord)
+                // 两次写必须原子：SM-2 推进 + 词汇统计若只成功一半，
+                // 重试会在已推进的记录上再套一次算法，间隔被错误放大
+                database.withTransaction {
+                    reviewRecordDao.updateReview(updatedRecord)
+                    // 词汇侧统计同步更新（此前复习只写 review_records，
+                    // 词汇页 reviewCount/lastReviewTime 永远为 0）
+                    vocabularyRepository.recordReviewActivity(record.vocabularyId, now)
+                }
+                // 刷新到期数基准时间，会话中后续到期的卡片能计入角标
+                dueCountTimestamp.value = System.currentTimeMillis()
+
+                val isCorrect = q >= 3
+                val nextIndex = state.currentIndex + 1
+                val isComplete = nextIndex >= state.dueCards.size
+                _uiState.update {
+                    it.copy(
+                        currentIndex = nextIndex,
+                        isShowingAnswer = false,
+                        isSubmitting = false,
+                        isSessionComplete = isComplete,
+                        totalReviewed = it.totalReviewed + 1,
+                        correctCount = if (isCorrect) it.correctCount + 1 else it.correctCount,
+                        // 重试成功后必须解除错误提示：否则旧文案会残留在
+                        // 后续每张卡片顶部，误导用户以为后续作答也失败
+                        errorMessage = null,
+                    )
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
+                // 写库失败不得假装成功：保留在当前卡片并给出可感知的错误，
+                // 用户可重试评分而不是丢失这次作答
                 android.util.Log.e("ReviewViewModel", "Failed to update review record", e)
+                _uiState.update {
+                    it.copy(isSubmitting = false, errorMessage = "保存复习结果失败，请重试")
+                }
             }
-        }
-
-        val isCorrect = q >= 3
-        val nextIndex = state.currentIndex + 1
-        val isComplete = nextIndex >= state.dueCards.size
-
-        _uiState.update {
-            it.copy(
-                currentIndex = nextIndex,
-                isShowingAnswer = false,
-                isSessionComplete = isComplete,
-                totalReviewed = it.totalReviewed + 1,
-                correctCount = if (isCorrect) it.correctCount + 1 else it.correctCount,
-            )
         }
     }
 
-    fun addWordToReview(vocabularyId: Long, word: String) {
-        viewModelScope.launch {
-            try {
-                val existing = reviewRecordDao.getReviewForVocab(vocabularyId)
-                if (existing == null) {
-                    val now = System.currentTimeMillis()
-                    reviewRecordDao.insertReview(
-                        ReviewRecordEntity(
-                            vocabularyId = vocabularyId,
-                            word = word,
-                            nextReviewDate = now,
-                            lastReviewDate = now,
-                        )
-                    )
-                }
-            } catch (e: Exception) {
-                android.util.Log.e("ReviewViewModel", "Failed to add word to review", e)
-            }
-        }
+    fun clearError() {
+        _uiState.update { it.copy(errorMessage = null) }
     }
 
     fun restartSession() {
@@ -180,6 +201,7 @@ class ReviewViewModel @Inject constructor(
                 isSessionComplete = false,
                 totalReviewed = 0,
                 correctCount = 0,
+                errorMessage = null,
             )
         }
         loadDueReviews()

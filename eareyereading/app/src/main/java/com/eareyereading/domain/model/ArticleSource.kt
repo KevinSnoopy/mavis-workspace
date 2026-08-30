@@ -23,10 +23,6 @@ enum class SourceCategory(val label: String, val emoji: String) {
     CUSTOM("自定义", "⭐"),
 }
 
-enum class RssItem {
-    TITLE, LINK, DESCRIPTION, PUB_DATE
-}
-
 /** 预置文章来源 + RSS 源（已验证 2024-08 可用） */
 object ArticleSources {
     val sources = listOf(

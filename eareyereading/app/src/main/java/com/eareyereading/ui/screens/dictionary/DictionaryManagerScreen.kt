@@ -107,8 +107,12 @@ class DictionaryViewModel @Inject constructor(
     fun delete(dictId: String) {
         viewModelScope.launch {
             try {
-                dictionaryManager.delete(dictId)
-                _uiState.update { it.copy(snackbarMessage = "已删除词典") }
+                // delete 返回 false 表示文件不存在（如 manifest 变更后
+                // 旧文件名失效）：不得谎报"已删除"
+                val ok = dictionaryManager.delete(dictId)
+                _uiState.update {
+                    it.copy(snackbarMessage = if (ok) "已删除词典" else "词典文件不存在，无需删除")
+                }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -136,11 +140,12 @@ fun DictionaryManagerScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
-    val scope = rememberCoroutineScope()
 
+    // Snackbar 直接挂起等待展示结束再清状态：原先 launch+立即 dismiss
+    // 会让两条消息并发抢同一个 SnackbarHostState，后到的消息被吞
     LaunchedEffect(uiState.snackbarMessage) {
         uiState.snackbarMessage?.let {
-            scope.launch { snackbarHostState.showSnackbar(it) }
+            snackbarHostState.showSnackbar(it)
             viewModel.dismissSnackbar()
         }
     }
@@ -260,7 +265,9 @@ fun DictionaryManagerScreen(
                 }
             }
 
-            items(uiState.statuses.size) { index ->
+            // key 用词典 id：进度刷新/整体重建列表时按位置重配会错乱，
+            // 且未来条目内状态（动画/焦点）会串位
+            items(uiState.statuses.size, key = { uiState.statuses[it].info.id }) { index ->
                 val status = uiState.statuses[index]
                 DictionaryCard(
                     status = status,
@@ -352,16 +359,30 @@ private fun DictionaryCard(
                 when {
                     status.downloading -> {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            LinearProgressIndicator(
-                                progress = status.progress,
-                                modifier = Modifier.width(80.dp),
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                "${(status.progress * 100).toInt()}%",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = Primary,
-                            )
+                            if (status.progress < 0f) {
+                                // chunked/无 Content-Length：定量条会永远 0%，
+                                // 用不定量指示器避免"卡死"错觉
+                                LinearProgressIndicator(
+                                    modifier = Modifier.width(80.dp),
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    "下载中",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = Primary,
+                                )
+                            } else {
+                                LinearProgressIndicator(
+                                    progress = status.progress.coerceIn(0f, 1f),
+                                    modifier = Modifier.width(80.dp),
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    "${(status.progress * 100).toInt()}%",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = Primary,
+                                )
+                            }
                         }
                     }
                     status.downloaded -> {

@@ -47,6 +47,10 @@ class HomeViewModel @Inject constructor(
     private var loadDataJob: Job? = null
     private var statsJob: Job? = null
 
+    // 到期数的查询基准时间不能冻结在加载时刻：长时间停留首页时
+    // 陆续到期的卡片要能计入（与 ReviewViewModel 同款方案）
+    private val dueCountTimestamp = MutableStateFlow(System.currentTimeMillis())
+
     init {
         updateGreeting()
         loadData()
@@ -67,6 +71,8 @@ class HomeViewModel @Inject constructor(
     }
 
     private fun loadData() {
+        // 每次加载刷新到期数基准时间，避免用旧时间戳过滤
+        dueCountTimestamp.value = System.currentTimeMillis()
         loadDataJob?.cancel()
         loadDataJob = viewModelScope.launch {
             try {
@@ -74,7 +80,9 @@ class HomeViewModel @Inject constructor(
                 combine(
                     vocabularyRepository.getTotalCount(),
                     vocabularyRepository.getLearnedCount(),
-                    reviewRecordDao.getDueReviewCount(System.currentTimeMillis()),
+                    dueCountTimestamp.flatMapLatest { now ->
+                        reviewRecordDao.getDueReviewCount(now)
+                    },
                     bookRepository.getAllBooks(),
                 ) { total, learned, due, books ->
                     _uiState.update { state ->
@@ -147,27 +155,10 @@ class HomeViewModel @Inject constructor(
         }
     }
 
-    private fun calculateStreak(stats: List<com.eareyereading.data.local.entity.ReadingStatsEntity>): Int {
-        if (stats.isEmpty()) return 0
-        val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
-        val todayStr = dateFormat.format(Date())
-        val today = dateFormat.parse(todayStr) ?: return 0
-
-        val dates = stats.mapNotNull { stat ->
-            try { dateFormat.parse(stat.date) } catch (_: java.text.ParseException) { null }
-        }.distinct().sorted().reversed()
-
-        var streak = 0
-        var expected = today
-        for (date in dates) {
-            val dayDiff = ((expected.time - date.time) / 86_400_000).toInt()
-            if (dayDiff <= 1) {
-                streak++
-                expected = date
-            } else break
-        }
-        return streak
-    }
+    /** Streak calc converged into ReadingStreak: single-source-of-truth for the
+     * calendar-day rule shared by Home/Library/Settings. */
+    private fun calculateStreak(stats: List<com.eareyereading.data.local.entity.ReadingStatsEntity>): Int =
+        com.eareyereading.util.ReadingStreak.calculate(stats)
 
     fun refresh() {
         _uiState.update { it.copy(isLoading = true) }

@@ -40,6 +40,17 @@ fun LibraryScreen(
     val uiState by viewModel.uiState.collectAsState()
     val context = LocalContext.current
 
+    // 导入的最终结果（成功/失败）用 Snackbar 呈现：loadingMessage 原先只在
+    // isLoading 为 true 的转圈分支里渲染，加载结束后设置的成功/失败消息
+    // 用户永远看不到（URL 抓取失败完全静默）
+    val snackbarHostState = remember { SnackbarHostState() }
+    LaunchedEffect(uiState.isLoading, uiState.loadingMessage) {
+        if (!uiState.isLoading && uiState.loadingMessage.isNotBlank()) {
+            snackbarHostState.showSnackbar(uiState.loadingMessage)
+            viewModel.dismissLoadingMessage()
+        }
+    }
+
     val filePicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument(),
     ) { uri: Uri? ->
@@ -47,6 +58,7 @@ fun LibraryScreen(
     }
 
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = {

@@ -233,27 +233,37 @@ object DatabaseModule {
             .build()
     }
 
+    // DAO 提供方统一 @Singleton：DB 与 Repository 均为单例，
+    // DAO 不加作用域会让每次注入产生新包装实例，作用域意图不一致
+    @Singleton
     @Provides
     fun provideBookDao(db: AppDatabase): BookDao = db.bookDao()
 
+    @Singleton
     @Provides
     fun provideVocabularyDao(db: AppDatabase): VocabularyDao = db.vocabularyDao()
 
+    @Singleton
     @Provides
     fun provideWordFrequencyDao(db: AppDatabase): WordFrequencyDao = db.wordFrequencyDao()
 
+    @Singleton
     @Provides
     fun provideReadingStateDao(db: AppDatabase): ReadingStateDao = db.readingStateDao()
 
+    @Singleton
     @Provides
     fun provideReadingStatsDao(db: AppDatabase): ReadingStatsDao = db.readingStatsDao()
 
+    @Singleton
     @Provides
     fun provideReviewRecordDao(db: AppDatabase): ReviewRecordDao = db.reviewRecordDao()
 
+    @Singleton
     @Provides
     fun provideBookmarkDao(db: AppDatabase): BookmarkDao = db.bookmarkDao()
 
+    @Singleton
     @Provides
     fun provideHighlightDao(db: AppDatabase): HighlightDao = db.highlightDao()
 

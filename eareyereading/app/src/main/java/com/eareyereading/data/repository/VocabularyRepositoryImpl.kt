@@ -28,6 +28,13 @@ class VocabularyRepositoryImpl @Inject constructor(
     override suspend fun getWord(word: String): Vocabulary? =
         vocabularyDao.getWord(word)?.toDomain()
 
+    override suspend fun getWordsByIds(ids: List<Long>): Map<Long, Vocabulary> =
+        vocabularyDao.getWordsByIds(ids).associate { it.id to it.toDomain() }
+
+    override suspend fun recordReviewActivity(vocabularyId: Long, reviewTime: Long) {
+        vocabularyDao.bumpReviewStats(vocabularyId, reviewTime)
+    }
+
     override suspend fun addWord(vocabulary: Vocabulary): Long =
         vocabularyDao.insert(vocabulary.toEntity())
 

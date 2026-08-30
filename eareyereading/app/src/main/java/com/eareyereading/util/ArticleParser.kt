@@ -289,18 +289,7 @@ class ArticleParser @Inject constructor() {
      * 清理 HTML 标签，提取纯文本并分段
      */
     private fun cleanText(html: String): List<String> {
-        val text = html
-            .replace(HTML_TAG, " ")       // 移除 HTML 标签
-            .replace("&nbsp;", " ")        // 替换不换行空格
-            .replace("&amp;", "&")         // 替换 &
-            .replace("&lt;", "<")           // 替换 <
-            .replace("&gt;", ">")           // 替换 >
-            .replace("&quot;", "\"")        // 替换 "
-            .replace("&#39;", "'")          // 替换 '
-            .replace("&mdash;", "—")        // 替换破折号
-            .replace("&ndash;", "–")
-            .replace("&hellip;", "…")
-            .replace("&hellip", "…")
+        val text = HtmlEntities.decode(html.replace(HTML_TAG, " "))
             .replace("\\s+".toRegex(), " ") // 压缩空格
             .trim()
 

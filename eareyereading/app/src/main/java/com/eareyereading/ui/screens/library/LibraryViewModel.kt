@@ -80,6 +80,35 @@ class LibraryViewModel @Inject constructor(
     private val _addedArticleLinks = MutableStateFlow<Set<String>>(emptySet())
     val addedArticleLinks: StateFlow<Set<String>> = _addedArticleLinks.asStateFlow()
 
+    /** 抓取中的文章链接集合：双击时两个点击事件都会先于任一成功通过"已成功"检查，
+     * 需在点击瞬间同步占位去重（Main 单线程，读写无竞态） */
+    private val inFlightArticleLinks = mutableSetOf<String>()
+
+    /** 并发导入操作计数：任一操作先结束不得清掉其它操作的加载态 */
+    private val activeImportOps = java.util.concurrent.atomic.AtomicInteger(0)
+
+    /** 待复习数查询基准时间：不能冻结在 init 时刻，长时间停留本页面时
+     * 陆续到期的卡片要能计入（与 ReviewViewModel 同款方案） */
+    private val dueCountTimestamp = MutableStateFlow(System.currentTimeMillis())
+
+    /** 文章源抓取任务：切换源时取消旧抓取，防陈旧结果覆盖新选择 */
+    private var articlesFetchJob: kotlinx.coroutines.Job? = null
+
+    private fun beginImportOp(message: String) {
+        activeImportOps.incrementAndGet()
+        _uiState.update { it.copy(isLoading = true, loadingMessage = message) }
+    }
+
+    private fun endImportOp() {
+        if (activeImportOps.decrementAndGet() <= 0) {
+            _uiState.update { it.copy(isLoading = false) }
+        }
+    }
+
+    private fun refreshDueTimestamp() {
+        dueCountTimestamp.value = System.currentTimeMillis()
+    }
+
     init {
         viewModelScope.launch {
             try {
@@ -112,11 +141,14 @@ class LibraryViewModel @Inject constructor(
         }
 
         // 待复习数（独立更新，避免 timestamp 变化干扰 combine）
+        // 基准时间走 dueCountTimestamp：长停留页面时新到期卡片能计入
         viewModelScope.launch {
             try {
-                reviewRecordDao.getDueReviewCount(System.currentTimeMillis()).collect { count ->
-                    _uiState.update { it.copy(dueReviewCount = count) }
-                }
+                dueCountTimestamp
+                    .flatMapLatest { now -> reviewRecordDao.getDueReviewCount(now) }
+                    .collect { count ->
+                        _uiState.update { it.copy(dueReviewCount = count) }
+                    }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -124,7 +156,11 @@ class LibraryViewModel @Inject constructor(
             }
         }
 
-        // 加载阅读统计
+        // 加载阅读统计（切回书库 tab 时刷新，见 setTab）
+        loadReadingStats()
+    }
+
+    private fun loadReadingStats() {
         viewModelScope.launch {
             try {
                 val todayDate = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
@@ -156,27 +192,10 @@ class LibraryViewModel @Inject constructor(
         }
     }
 
-    private fun calculateStreak(stats: List<com.eareyereading.data.local.entity.ReadingStatsEntity>): Int {
-        if (stats.isEmpty()) return 0
-        val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
-        val todayStr = dateFormat.format(Date())
-        val today = dateFormat.parse(todayStr) ?: return 0
-
-        val dates = stats.mapNotNull { stat ->
-            try { dateFormat.parse(stat.date) } catch (_: java.text.ParseException) { null }
-        }.distinct().sorted().reversed()
-
-        var streak = 0
-        var expected = today
-        for (date in dates) {
-            val dayDiff = ((expected.time - date.time) / 86_400_000).toInt()
-            if (dayDiff <= 1) {
-                streak++
-                expected = date
-            } else break
-        }
-        return streak
-    }
+    /** Streak calc converged into ReadingStreak: single-source-of-truth for the
+     * calendar-day rule shared by Home/Library/Settings. */
+    private fun calculateStreak(stats: List<com.eareyereading.data.local.entity.ReadingStatsEntity>): Int =
+        com.eareyereading.util.ReadingStreak.calculate(stats)
 
     private fun filterBooks(query: String, books: List<Book>): List<Book> {
         return if (query.isBlank()) books
@@ -213,7 +232,8 @@ class LibraryViewModel @Inject constructor(
         } else url
 
         viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true, loadingMessage = "正在抓取文章...", showUrlDialog = false) }
+            beginImportOp("正在抓取文章...")
+            _uiState.update { it.copy(showUrlDialog = false) }
             try {
                 val result = articleParser.parseFromUrl(fullUrl)
                 if (result != null && result.paragraphs.isNotEmpty()) {
@@ -229,16 +249,19 @@ class LibraryViewModel @Inject constructor(
                         addedAt = timestamp,
                     )
                     bookRepository.addBook(book)
-                    _uiState.update { it.copy(isLoading = false, loadingMessage = "") }
+                    refreshDueTimestamp()
+                    _uiState.update { it.copy(loadingMessage = "文章已加入书库") }
                 } else {
-                    _uiState.update { it.copy(isLoading = false, loadingMessage = "抓取失败，请检查链接") }
+                    _uiState.update { it.copy(loadingMessage = "抓取失败，请检查链接") }
                 }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: java.io.IOException) {
-                _uiState.update { it.copy(isLoading = false, loadingMessage = "抓取失败: 网络错误") }
+                _uiState.update { it.copy(loadingMessage = "抓取失败: 网络错误") }
             } catch (e: java.lang.RuntimeException) {
-                _uiState.update { it.copy(isLoading = false, loadingMessage = "抓取失败: ${e.message}") }
+                _uiState.update { it.copy(loadingMessage = "抓取失败: ${e.message}") }
+            } finally {
+                endImportOp()
             }
         }
     }
@@ -253,9 +276,14 @@ class LibraryViewModel @Inject constructor(
     }
 
     // ── 文件导入 ─────────────────────────────────
+    /** 导入文件体积上限：SAF 可递任意大文件（如数 GB 视频），
+     * 不设限会写满内部存储 */
+    private val maxImportBytes = 200L * 1024 * 1024
+
     fun importBook(uri: Uri) {
         viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true, loadingMessage = "正在导入...") }
+            beginImportOp("正在导入...")
+            var destFile: File? = null
             try {
                 val inputStream = context.contentResolver.openInputStream(uri)
                     ?: throw java.io.IOException("无法读取文件内容")
@@ -263,13 +291,25 @@ class LibraryViewModel @Inject constructor(
                 // 直接复用会覆盖上次导入的同名文件（静默数据丢失）。加时间戳前缀并去掉路径分隔符。
                 val rawName = uri.lastPathSegment?.substringAfterLast('/') ?: "book.epub"
                 val fileName = "${System.currentTimeMillis()}_${rawName.replace('/', '_')}"
-                val destFile = File(context.filesDir, "books/$fileName")
-                destFile.parentFile?.mkdirs()
-                // 整文件拷贝放 IO 线程，避免主线程拷贝大文件 ANR
+                val dest = File(context.filesDir, "books/$fileName")
+                destFile = dest
+                dest.parentFile?.mkdirs()
+                // 整文件拷贝放 IO 线程，避免主线程拷贝大文件 ANR；
+                // 带上限并计数，超限即中止
                 withContext(Dispatchers.IO) {
                     inputStream.use { input ->
-                        destFile.outputStream().use { output ->
-                            input.copyTo(output)
+                        dest.outputStream().use { output ->
+                            val buffer = ByteArray(8192)
+                            var copied = 0L
+                            while (true) {
+                                val n = input.read(buffer)
+                                if (n < 0) break
+                                copied += n
+                                if (copied > maxImportBytes) {
+                                    throw java.io.IOException("File exceeds import size limit")
+                                }
+                                output.write(buffer, 0, n)
+                            }
                         }
                     }
                 }
@@ -277,10 +317,12 @@ class LibraryViewModel @Inject constructor(
                 val book = Book(
                     title = rawName.removeSuffix(".epub").removeSuffix(".txt"),
                     author = "Unknown",
-                    filePath = destFile.absolutePath,
+                    filePath = dest.absolutePath,
                 )
                 bookRepository.addBook(book)
-                _uiState.update { it.copy(loadingMessage = "") }
+                destFile = null // 成功入库后文件由 deleteBook 生命周期接管
+                refreshDueTimestamp()
+                _uiState.update { it.copy(loadingMessage = "导入成功") }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: java.io.IOException) {
@@ -293,8 +335,9 @@ class LibraryViewModel @Inject constructor(
                 android.util.Log.e("LibraryViewModel", "Unexpected error importing book", e)
                 _uiState.update { it.copy(loadingMessage = "导入失败: ${e.javaClass.simpleName}") }
             } finally {
-                // 只复位 isLoading；错误信息保留在 loadingMessage，由 dismissLoadingMessage 清除
-                _uiState.update { it.copy(isLoading = false) }
+                // 失败/取消时删除已拷贝的孤儿文件，防存储泄漏
+                destFile?.delete()
+                endImportOp()
             }
         }
     }
@@ -318,6 +361,11 @@ class LibraryViewModel @Inject constructor(
     // ── 文章广场 ──────────────────────────────────
     fun setTab(index: Int) {
         _uiState.update { it.copy(selectedTab = index) }
+        if (index == 0) {
+            // 回到书库：刷新到期数基准时间与今日统计，避免长停留后数据陈旧
+            refreshDueTimestamp()
+            loadReadingStats()
+        }
     }
 
     fun selectSource(source: ArticleSource) {
@@ -327,7 +375,9 @@ class LibraryViewModel @Inject constructor(
             articlesLoading = true,
             articlesError = null,
         ) }
-        viewModelScope.launch {
+        // 取消上一个源的抓取：快速切换源时旧结果不得覆盖新选择
+        articlesFetchJob?.cancel()
+        articlesFetchJob = viewModelScope.launch {
             try {
                 val feed = if (source.isRss) {
                     withContext(Dispatchers.IO) { rssParser.parse(source.url) }
@@ -335,6 +385,8 @@ class LibraryViewModel @Inject constructor(
                     // 非 RSS 源：抓取首页，尝试从中提取文章链接
                     fetchArticleLinks(source)
                 }
+                // 结果落地前再核对当前选择：极端时序下仍可能有陈旧写入
+                if (_uiState.value.selectedSource?.id != source.id) return@launch
                 if (feed != null && feed.items.isNotEmpty()) {
                     // 去重：同一篇 feed 中可能出现重复的 (link, title) 组合，
                     // LazyColumn 的 key 必须唯一，否则触发 IllegalArgumentException 崩溃。
@@ -421,13 +473,15 @@ class LibraryViewModel @Inject constructor(
         )
     }
 
+    /** 相对链接解析统一交给 URI.resolve：正确处理 ./、../、协议相对
+     * （//host/...）与带查询串的 base，手写拼接在这些形态上会产出坏链 */
     private fun resolveUrl(base: String, relative: String): String {
         if (relative.startsWith("http://") || relative.startsWith("https://")) return relative
-        if (relative.startsWith("/")) {
-            val prefix = base.substringBefore("://") + "://" + base.substringAfter("://").substringBefore("/")
-            return prefix + relative
+        return try {
+            java.net.URI(base).resolve(relative).toString()
+        } catch (_: Exception) {
+            relative
         }
-        return base.substringBeforeLast("/") + "/" + relative
     }
 
     fun clearSelectedSource() {
@@ -440,13 +494,16 @@ class LibraryViewModel @Inject constructor(
 
     fun addArticleToLibrary(article: RssParser.RssArticle) {
         if (article.link.isBlank()) {
-            _uiState.update { it.copy(isLoading = false, loadingMessage = "文章链接无效，无法导入") }
+            _uiState.update { it.copy(loadingMessage = "文章链接无效，无法导入") }
             return
         }
         // 已成功的导入不重复抓取入库
         if (article.link in _addedArticleLinks.value) return
+        // 双击防护：成功集合要等抓取结束才写入，两次快速点击都会通过上面的检查。
+        // 点击瞬间同步占位（Main 单线程无竞态），成功或失败后释放
+        if (!inFlightArticleLinks.add(article.link)) return
         viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true, loadingMessage = "正在导入文章...") }
+            beginImportOp("正在导入文章...")
             try {
                 val result = articleParser.parseFromUrl(article.link)
                 if (result != null && result.paragraphs.isNotEmpty()) {
@@ -461,21 +518,26 @@ class LibraryViewModel @Inject constructor(
                     bookRepository.addBook(book)
                     // 成功后才标记"已添加"：失败时卡片保持可重试状态
                     _addedArticleLinks.update { it + article.link }
-                    _uiState.update { it.copy(
-                        isLoading = false,
-                        loadingMessage = "「${article.title.take(20)}...」已加入书库！",
-                        selectedTab = 0,
-                    ) }
+                    refreshDueTimestamp()
+                    _uiState.update {
+                        it.copy(
+                            loadingMessage = "「${article.title.take(20)}...」已加入书库！",
+                            selectedTab = 0,
+                        )
+                    }
                 } else {
-                    _uiState.update { it.copy(isLoading = false, loadingMessage = "抓取失败：无法解析文章内容") }
+                    _uiState.update { it.copy(loadingMessage = "抓取失败：无法解析文章内容") }
                 }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: java.io.IOException) {
-                _uiState.update { it.copy(isLoading = false, loadingMessage = "导入失败: 网络错误") }
+                _uiState.update { it.copy(loadingMessage = "导入失败: 网络错误") }
             } catch (e: java.lang.RuntimeException) {
                 val msg = e.message ?: e.javaClass.simpleName
-                _uiState.update { it.copy(isLoading = false, loadingMessage = "导入失败: $msg") }
+                _uiState.update { it.copy(loadingMessage = "导入失败: $msg") }
+            } finally {
+                inFlightArticleLinks.remove(article.link)
+                endImportOp()
             }
         }
     }

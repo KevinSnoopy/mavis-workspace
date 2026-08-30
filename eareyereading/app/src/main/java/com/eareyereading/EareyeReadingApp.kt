@@ -31,6 +31,12 @@ class EareyeReadingApp : Application() {
      * BroadcastReceiver 无法挂起读 DataStore，而镜像缺省为 true：
      * 不在启动时对账，开关已关闭的存量用户升级后会被当作开启状态重排闹钟。
      * 一次性读取小文件，runBlocking 毫秒级可接受；失败时保持镜像原值。
+     *
+     * 同时承担提醒链的自愈责任：
+     * - 新装设备从不重启时，没有任何路径会排上首个闹钟（开关显示开启
+     *   却永远不提醒）；启动时对账即补排。
+     * - 进程被强杀会丢掉一次性精确闹钟，下次启动在这里复活提醒链。
+     * scheduleReviewReminder 用 FLAG_UPDATE_CURRENT，重复调用幂等。
      */
     private fun syncReminderPrefsMirror() {
         try {
@@ -39,6 +45,12 @@ class EareyeReadingApp : Application() {
             }
             if (enabled != null) {
                 ReminderPrefs.setEnabled(this, enabled)
+                if (enabled) {
+                    notificationHelper.scheduleReviewReminder()
+                } else {
+                    // 开关关闭：确保没有遗留的闹钟在跑
+                    notificationHelper.cancelReminder()
+                }
             }
         } catch (e: Exception) {
             android.util.Log.w("EareyeReadingApp", "sync reminder prefs failed", e)

@@ -19,24 +19,24 @@ class EpubParser @Inject constructor() {
         /** 单个文档（OPF / 章节 HTML）读取上限，防压缩炸弹撑爆内存。 */
         private const val MAX_DOC_CHARS = 2_000_000
 
-        private val NAMED_ENTITIES = mapOf(
-            "nbsp" to " ", "amp" to "&", "lt" to "<", "gt" to ">",
-            "quot" to "\"", "apos" to "'",
-        )
+        /** 全书累计字符上限：单文档有上限但 spine 条目数不限，
+         * 恶意 OPF 可引用海量高压缩比条目 → 总提取量必须有顶。 */
+        private const val MAX_TOTAL_CHARS = 10_000_000
+
+        /** spine 条目数上限，与字符上限双重保险。 */
+        private const val MAX_SPINE_ITEMS = 20_000
     }
 
     /**
      * 解析 EPUB 文件，返回段落列表
      * 解析失败（文件不存在、IO 错误、格式错误）时返回空列表，由调用方决定如何处理。
+     * 注：ZipException 是 IOException 子类，一个 catch 即可覆盖。
      */
     fun parseBook(filePath: String): List<String> {
         return try {
             parseEpub(File(filePath))
         } catch (e: java.io.IOException) {
             android.util.Log.e("EpubParser", "Error reading EPUB file: ${filePath}", e)
-            emptyList()
-        } catch (e: java.util.zip.ZipException) {
-            android.util.Log.e("EpubParser", "Invalid EPUB file: ${filePath}", e)
             emptyList()
         }
     }
@@ -62,15 +62,25 @@ class EpubParser @Inject constructor() {
             val opfDir = opfEntry.name.substringBeforeLast('/', "")
 
             // 按 spine 顺序读取每个 HTML 文件
-            for (id in spineIds) {
+            var totalChars = 0
+            outer@ for (id in spineIds.take(MAX_SPINE_ITEMS)) {
                 val rawHref = manifestItems[id] ?: continue
                 // href 可能带片段（chapter1.xhtml#sec2），匹配文件时需去掉
                 val href = rawHref.substringBefore('#')
                 if (href.isBlank()) continue
-                val entry = resolveEntry(zip, opfDir, href) ?: continue
+                // 部分 OPF 的 href 是 URL 编码的（空格等），解码后再查条目；
+                // 解码失败或无匹配时回退原始字符串
+                val decoded = decodeHref(href)
+                val entry = resolveEntry(zip, opfDir, decoded)
+                    ?: if (decoded != href) resolveEntry(zip, opfDir, href) else null
+                    ?: continue
 
                 val html = readTextCapped(zip.getInputStream(entry).bufferedReader(), MAX_DOC_CHARS)
-                paragraphs.addAll(extractParagraphsFromHtml(html))
+                for (para in extractParagraphsFromHtml(html)) {
+                    if (totalChars + para.length > MAX_TOTAL_CHARS) break@outer
+                    paragraphs.add(para)
+                    totalChars += para.length
+                }
             }
         }
 
@@ -104,19 +114,39 @@ class EpubParser @Inject constructor() {
         }
     }
 
+    /** URL 解码 spine href（`ch%201.xhtml` 类文件名）；失败回退原串。 */
+    private fun decodeHref(href: String): String {
+        if (!href.contains('%')) return href
+        return try {
+            java.net.URLDecoder.decode(href, "UTF-8")
+        } catch (_: Exception) {
+            href
+        }
+    }
+
+    /**
+     * 提取 spine idref。属性顺序不敏感（`<itemref linear="yes" idref="ch1"/>` 也合法），
+     * 同时容忍单/双引号与等号两侧空白。
+     */
     private fun extractSpineIds(opfContent: String): List<String> {
-        val regex = Regex("<itemref\\s+idref=\"([^\"]+)\"")
+        val regex = Regex("<itemref\\b[^>]*?idref\\s*=\\s*[\"']([^\"']+)[\"']", RegexOption.IGNORE_CASE)
         return regex.findAll(opfContent).map { it.groupValues[1] }.toList()
     }
 
     private fun extractManifestItems(opfContent: String): Map<String, String> {
         val result = mutableMapOf<String, String>()
-        val regex = Regex("<item\\s+[^>]*id=\"([^\"]+)\"[^>]*href=\"([^\"]+)\"[^>]*/?>")
+        val regex = Regex(
+            "<item\\b[^>]*?id\\s*=\\s*[\"']([^\"']+)[\"'][^>]*?href\\s*=\\s*[\"']([^\"']+)[\"'][^>]*/?>",
+            RegexOption.IGNORE_CASE,
+        )
         regex.findAll(opfContent).forEach { match ->
             result[match.groupValues[1]] = match.groupValues[2]
         }
         // 也匹配 href 在 id 之前的情况
-        val regex2 = Regex("<item\\s+[^>]*href=\"([^\"]+)\"[^>]*id=\"([^\"]+)\"[^>]*/?>")
+        val regex2 = Regex(
+            "<item\\b[^>]*?href\\s*=\\s*[\"']([^\"']+)[\"'][^>]*?id\\s*=\\s*[\"']([^\"']+)[\"'][^>]*/?>",
+            RegexOption.IGNORE_CASE,
+        )
         regex2.findAll(opfContent).forEach { match ->
             result[match.groupValues[2]] = match.groupValues[1]
         }
@@ -146,36 +176,11 @@ class EpubParser @Inject constructor() {
             .map { para ->
                 // 移除剩余 HTML 标签
                 var cleaned = para.replace(Regex("<[^>]+>"), " ")
-                // 解码 HTML 实体
-                cleaned = decodeHtmlEntities(cleaned)
+                // 解码 HTML 实体（与 ArticleParser 共用同一实现，行为不分叉）
+                cleaned = HtmlEntities.decode(cleaned)
                 // 压缩空白并 trim
                 cleaned.replace(Regex("\\s+"), " ").trim()
             }
             .filter { it.length > 10 }
-    }
-
-    /**
-     * 单遍解码 HTML 实体：命名实体与数字实体一次扫描完成，
-     * 避免先解 `&amp;` 再把 `&#39;` 二次解码的串扰；
-     * 数字实体用 toIntOrNull + 码点范围校验，恶意超大值不再抛异常崩溃，
-     * 且用 Character.toChars 正确处理 >0xFFFF 的增补平面字符。
-     */
-    private fun decodeHtmlEntities(text: String): String {
-        if (!text.contains('&')) return text
-        return Regex("&(#\\d+|#[xX][0-9a-fA-F]+|[a-zA-Z][a-zA-Z0-9]*);").replace(text) { m ->
-            val inner = m.groupValues[1]
-            when {
-                inner.startsWith("#x", ignoreCase = true) ->
-                    codePointToString(inner.substring(2).toIntOrNull(16)) ?: m.value
-                inner.startsWith("#") ->
-                    codePointToString(inner.substring(1).toIntOrNull()) ?: m.value
-                else -> NAMED_ENTITIES[inner] ?: m.value
-            }
-        }
-    }
-
-    private fun codePointToString(codePoint: Int?): String? {
-        if (codePoint == null || codePoint !in 0..0x10FFFF) return null
-        return String(Character.toChars(codePoint))
     }
 }

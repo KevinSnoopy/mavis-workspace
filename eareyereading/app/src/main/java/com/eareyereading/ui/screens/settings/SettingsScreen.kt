@@ -20,6 +20,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.room.withTransaction
 import com.eareyereading.data.local.dao.ReadingStatsDao
 import com.eareyereading.data.local.dao.VocabularyDao
 import com.eareyereading.domain.model.ReadingTheme
@@ -31,8 +32,14 @@ import com.eareyereading.util.TtsHelper
 import com.eareyereading.tts.EmbeddedTtsEngine
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
@@ -59,6 +66,9 @@ data class SettingsUiState(
     val embeddedModelDownloaded: Boolean = false,
     val embeddedDownloading: Boolean = false,
     val embeddedDownloadProgress: Float = 0f,  // 0..1
+    // 下载完成后的初始化窗口：同样占用"不可再下载"语义，
+    // 防止 progress 置空后 UI 翻回未下载态诱导并发下载
+    val embeddedInitializing: Boolean = false,
     val embeddedReady: Boolean = false,         // 引擎已加载就绪
 )
 
@@ -68,6 +78,7 @@ class SettingsViewModel @Inject constructor(
     private val vocabularyRepository: VocabularyRepository,
     private val readingStatsDao: ReadingStatsDao,
     private val vocabularyDao: VocabularyDao,
+    private val database: com.eareyereading.data.local.database.AppDatabase,
     private val embeddedTts: EmbeddedTtsEngine,
     private val ttsHelper: TtsHelper,
     @ApplicationContext private val context: Context,
@@ -77,6 +88,60 @@ class SettingsViewModel @Inject constructor(
     val uiState: StateFlow<SettingsUiState> = _uiState.asStateFlow()
 
     private val notificationHelper = NotificationHelper(context)
+
+    // 设置滑杆逐像素写 DataStore 的防抖（与阅读器设置弹窗 persistSettingDebounced 同型，
+    // Round 6/8 延期项收口）：UI 状态立即更新保证滑杆跟手，持久化合并到拖停后一次。
+    // 按设置项分 key，互不取消；onCleared 兜底冲刷，防抖窗口内退出不丢最终值
+    private val settingsPersistJobs = mutableMapOf<String, kotlinx.coroutines.Job>()
+    private val settingsPendingWrites = mutableMapOf<String, suspend () -> Unit>()
+    private val flushScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    private fun persistSettingDebounced(key: String, write: suspend () -> Unit) {
+        settingsPersistJobs[key]?.cancel()
+        settingsPendingWrites[key] = write
+        settingsPersistJobs[key] = viewModelScope.launch {
+            delay(SETTINGS_PERSIST_DEBOUNCE_MS)
+            try {
+                write()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // DataStore 写失败不得炸到未捕获处理器崩 App：
+                // 提示用户，设置值仍保留在本会话内存态
+                android.util.Log.e("SettingsViewModel", "persist setting failed: $key", e)
+                _uiState.update { it.copy(snackbarMessage = "设置保存失败") }
+            }
+            // 按身份移除：只清自己这条，不误删并发排队的同名写入
+            if (settingsPendingWrites[key] === write) {
+                settingsPendingWrites.remove(key)
+            }
+        }
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        // viewModelScope 已随 onCleared 取消：用独立 scope 冲刷待写项，
+        // 防抖窗口内退出设置页不丢最后一次滑杆位置。
+        // 逐条隔离异常：一条写入失败不得连累其余待写项被丢弃
+        val pending = settingsPendingWrites.values.toList()
+        settingsPendingWrites.clear()
+        if (pending.isNotEmpty()) {
+            val flushJob = flushScope.launch {
+                pending.forEach { write ->
+                    try {
+                        write()
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        android.util.Log.e("SettingsViewModel", "flush pending write failed", e)
+                    }
+                }
+            }
+            flushJob.invokeOnCompletion { flushScope.cancel() }
+        } else {
+            flushScope.cancel()
+        }
+    }
 
     init {
         // 加载阅读设置
@@ -192,7 +257,11 @@ class SettingsViewModel @Inject constructor(
     private fun refreshEmbeddedStatus() {
         viewModelScope.launch {
             val model = embeddedTts.getCurrentModelInfo()
-            val downloaded = embeddedTts.isModelDownloaded(model)
+            // isModelDownloaded 做多文件存在性检查（含 .complete 标记），
+            // 属于磁盘遍历：不得在 Main 调度器上跑
+            val downloaded = withContext(Dispatchers.IO) {
+                embeddedTts.isModelDownloaded(model)
+            }
             _uiState.update {
                 it.copy(
                     embeddedModelName = model.displayName,
@@ -212,7 +281,9 @@ class SettingsViewModel @Inject constructor(
 
     /** 下载内置 TTS 模型（带进度），下载完成后自动初始化。 */
     fun downloadEmbeddedTts() {
-        if (_uiState.value.embeddedDownloading) return
+        // initializing 窗口同样纳入互斥：下载结束 → progress 置空 →
+        // 旧标志翻回"未下载"，此时点下载会与 initialize 并发
+        if (_uiState.value.embeddedDownloading || _uiState.value.embeddedInitializing) return
         viewModelScope.launch {
             val model = embeddedTts.getCurrentModelInfo()
             _uiState.update { it.copy(embeddedDownloading = true, embeddedDownloadProgress = 0f) }
@@ -220,11 +291,20 @@ class SettingsViewModel @Inject constructor(
                 _uiState.update { it.copy(embeddedDownloadProgress = progress) }
             }
             if (ok) {
+                // 初始化期间保持"占用中"语义：按钮继续禁用，
+                // 避免 UI 翻回未下载态诱导二次下载
+                _uiState.update {
+                    it.copy(
+                        embeddedDownloading = false,
+                        embeddedInitializing = true,
+                        embeddedDownloadProgress = 1f,
+                    )
+                }
                 val initOk = embeddedTts.initialize(model)
                 embeddedTts.cancelDownloadNotification()
                 _uiState.update {
                     it.copy(
-                        embeddedDownloading = false,
+                        embeddedInitializing = false,
                         embeddedDownloadProgress = 0f,
                         embeddedModelDownloaded = true,
                         embeddedReady = initOk,
@@ -261,29 +341,19 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
-    private fun calculateStreak(stats: List<com.eareyereading.data.local.entity.ReadingStatsEntity>): Int {
-        if (stats.isEmpty()) return 0
-        val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
-        val todayStr = dateFormat.format(Date())
-        val today = dateFormat.parse(todayStr) ?: return 0
-        val dates = stats.mapNotNull { stat ->
-            try { dateFormat.parse(stat.date) } catch (_: Exception) { null }
-        }.distinct().sorted().reversed()
-        var streak = 0
-        var expected = today
-        for (date in dates) {
-            val dayDiff = ((expected.time - date.time) / 86_400_000).toInt()
-            if (dayDiff <= 1) { streak++; expected = date } else break
-        }
-        return streak
-    }
+    /** Streak calc converged into ReadingStreak: single-source-of-truth for the
+     * calendar-day rule shared by Home/Library/Settings. */
+    private fun calculateStreak(stats: List<com.eareyereading.data.local.entity.ReadingStatsEntity>): Int =
+        com.eareyereading.util.ReadingStreak.calculate(stats)
 
     fun setFontSize(size: Int) {
-        viewModelScope.launch { settingsRepository.setFontSize(size) }
+        _uiState.update { it.copy(fontSize = size) }
+        persistSettingDebounced("fontSize") { settingsRepository.setFontSize(size) }
     }
 
     fun setRsvpSpeed(speed: Int) {
-        viewModelScope.launch { settingsRepository.setRsvpSpeed(speed) }
+        _uiState.update { it.copy(rsvpSpeed = speed) }
+        persistSettingDebounced("rsvpSpeed") { settingsRepository.setRsvpSpeed(speed) }
     }
 
     fun setTheme(theme: ReadingTheme) {
@@ -347,8 +417,12 @@ class SettingsViewModel @Inject constructor(
                     statsArr.put(o)
                 }
                 root.put("stats", statsArr)
-                file.writeText(root.toString())
+                // 序列化结果写盘放 IO 线程，大备份不冻 UI
+                withContext(Dispatchers.IO) { file.writeText(root.toString()) }
                 _uiState.update { it.copy(isExporting = false, snackbarMessage = "已导出: ${file.name}") }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+
             } catch (e: Exception) {
                 _uiState.update { it.copy(isExporting = false, snackbarMessage = "导出失败: ${e.message}") }
             }
@@ -358,36 +432,86 @@ class SettingsViewModel @Inject constructor(
     suspend fun importFromFile(file: File) {
         try {
             _uiState.update { it.copy(isImporting = true) }
-            val json = file.readText()
-
+            // 大备份的读盘与 JSON 解析都放 IO 线程：解析留在 Main 会冻 UI。
             // 用 org.json 结构化解析。旧实现按字段正则扫描再按索引配对：
             // 释义里一旦出现 "word":"..." 之类的文本就会产生额外匹配，
             // 索引整体错位，后续每个词都配到错误的释义（批量数据损坏）
-            val root = org.json.JSONObject(json)
-            val vocabArr = root.optJSONArray("vocabulary") ?: org.json.JSONArray()
-            var imported = 0
-            for (i in 0 until vocabArr.length()) {
-                val obj = vocabArr.optJSONObject(i) ?: continue
-                val word = obj.optString("word").trim()
-                if (word.isEmpty()) continue
-                vocabularyDao.insert(com.eareyereading.data.local.entity.VocabularyEntity(
-                    word = word,
-                    definition = obj.optString("definition", ""),
-                    level = obj.optInt("level", 0),
-                    isLearned = obj.optBoolean("isLearned", false),
-                    note = obj.optString("note", "").ifBlank { null },
-                    example = obj.optString("example", "").ifBlank { null },
-                    bookId = 0,
-                    bookTitle = "Imported",
-                    context = null,
-                    translation = null,
-                    reviewCount = 0,
-                    lastReviewTime = 0L,
-                    dateAdded = System.currentTimeMillis(),
-                ))
-                imported++
+            val root = withContext(Dispatchers.IO) {
+                org.json.JSONObject(file.readText())
             }
-            _uiState.update { it.copy(isImporting = false, snackbarMessage = "已导入 $imported 条词汇") }
+            val vocabArr = root.optJSONArray("vocabulary") ?: org.json.JSONArray()
+            val statsArr = root.optJSONArray("stats")
+            var imported = 0
+            var skipped = 0
+            var statsImported = 0
+            var statsSkipped = 0
+            // 事务化导入：中途失败整体回滚，不再留下半成品；
+            // REPLACE 冲突策略会用备份字段覆盖本地行的复习进度/书籍关联，
+            // 已存在的词一律跳过保留本地状态
+            database.withTransaction {
+                // 判存集合一次性预加载：循环内逐词 getWord 是 LOWER 全表扫描，
+                // n 词备份 × 全表 = O(n²)，大备份会拉长事务持锁时间
+                val existingWords = vocabularyDao.getAllWordsLowercase().toHashSet()
+                for (i in 0 until vocabArr.length()) {
+                    val obj = vocabArr.optJSONObject(i) ?: continue
+                    val word = obj.optString("word").trim()
+                    if (word.isEmpty()) continue
+                    if (word.lowercase(java.util.Locale.ROOT) in existingWords) {
+                        skipped++
+                        continue
+                    }
+                    vocabularyDao.insert(com.eareyereading.data.local.entity.VocabularyEntity(
+                        word = word,
+                        definition = obj.optString("definition", ""),
+                        level = obj.optInt("level", 0),
+                        isLearned = obj.optBoolean("isLearned", false),
+                        note = obj.optString("note", "").ifBlank { null },
+                        example = obj.optString("example", "").ifBlank { null },
+                        bookId = 0,
+                        bookTitle = "Imported",
+                        context = null,
+                        translation = null,
+                        reviewCount = 0,
+                        lastReviewTime = 0L,
+                        dateAdded = System.currentTimeMillis(),
+                    ))
+                    imported++
+                }
+                // 恢复一并导出的阅读统计：旧导入只读 vocabulary，
+                // "导出词汇和阅读数据"的承诺恢复时静默丢一半。
+                // 与词汇同款的"保留本地"语义：(bookId,date) 已有本地记录则跳过——
+                // insertStat 是 REPLACE 冲突策略，直接插会静默覆盖本地当天真实数据
+                if (statsArr != null) {
+                    for (i in 0 until statsArr.length()) {
+                        val obj = statsArr.optJSONObject(i) ?: continue
+                        val date = obj.optString("date")
+                        val bookId = obj.optLong("bookId", 0)
+                        if (date.isEmpty() || bookId == 0L) continue
+                        if (readingStatsDao.getStatForBookAndDate(bookId, date) != null) {
+                            statsSkipped++
+                            continue
+                        }
+                        readingStatsDao.insertStat(
+                            com.eareyereading.data.local.entity.ReadingStatsEntity(
+                                bookId = bookId,
+                                date = date,
+                                readingMinutes = obj.optInt("readingMinutes", 0),
+                                charsRead = obj.optInt("charsRead", 0),
+                                paragraphsRead = obj.optInt("paragraphsRead", 0),
+                            )
+                        )
+                        statsImported++
+                    }
+                }
+            }
+            val skipNote = if (skipped > 0) "（$skipped 条已有词汇跳过，保留本地进度）" else ""
+            val statsNote = if (statsImported > 0 || statsSkipped > 0) {
+                "，阅读统计导入 $statsImported 条" + if (statsSkipped > 0) "、跳过 $statsSkipped 条" else ""
+            } else ""
+            _uiState.update { it.copy(isImporting = false, snackbarMessage = "已导入 $imported 条词汇$skipNote$statsNote") }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+
         } catch (e: Exception) {
             _uiState.update { it.copy(isImporting = false, snackbarMessage = "导入失败: ${e.message}") }
         }
@@ -397,9 +521,15 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             _uiState.update { it.copy(isClearing = true) }
             try {
-                // 清理缓存目录（临时文件等）；导出备份不在 cacheDir，不受影响
-                context.cacheDir.walkTopDown().forEach { it.delete() }
+                // 清理缓存目录（临时文件等）；导出备份不在 cacheDir，不受影响。
+                // 目录遍历+批量删除是磁盘活，放 IO 调度器避免冻 UI
+                withContext(Dispatchers.IO) {
+                    context.cacheDir.walkTopDown().forEach { it.delete() }
+                }
                 _uiState.update { it.copy(isClearing = false, snackbarMessage = "缓存已清除") }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+
             } catch (e: Exception) {
                 _uiState.update { it.copy(isClearing = false, snackbarMessage = "清除失败: ${e.message}") }
             }
@@ -410,17 +540,37 @@ class SettingsViewModel @Inject constructor(
     fun resetToDefaults() {
         viewModelScope.launch {
             try {
+                // 先取消防抖窗口内的待写项：否则拖过滑杆立刻重置时，
+                // 300ms 内排队的旧值会在 clearAll 之后落盘，设置"复活"
+                settingsPersistJobs.values.forEach { it.cancel() }
+                settingsPersistJobs.clear()
+                settingsPendingWrites.clear()
                 settingsRepository.clearAll()
-                notificationHelper.cancelReminder()
+                // 默认值是"开启提醒"：重置后必须补排闹钟而不是取消，
+                // 否则开关显示开启却永远不提醒（只能靠拨开关/重启救活）
+                notificationHelper.scheduleReviewReminder()
                 _uiState.update { it.copy(snackbarMessage = "已恢复默认设置") }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+
             } catch (e: Exception) {
                 _uiState.update { it.copy(snackbarMessage = "重置失败: ${e.message}") }
             }
         }
     }
 
+    /** 供 Composable 侧回调直接弹提示（如导入文件读取失败）。 */
+    fun showSnackbarMessage(message: String) {
+        _uiState.update { it.copy(snackbarMessage = message) }
+    }
+
     fun dismissSnackbar() {
         _uiState.update { it.copy(snackbarMessage = null) }
+    }
+
+    private companion object {
+        // 与阅读器设置弹窗同款窗口（ReaderViewModel.SETTINGS_PERSIST_DEBOUNCE_MS）
+        const val SETTINGS_PERSIST_DEBOUNCE_MS = 300L
     }
 }
 
@@ -435,6 +585,15 @@ fun SettingsScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     val context = androidx.compose.ui.platform.LocalContext.current
+    // 版本号从包信息动态取：buildConfig 未开启，写死字符串会随发布漂移。
+    // 此前页脚固定 "v1.9.0"，用户看到的版本与实际安装包不一致
+    val versionName = remember {
+        try {
+            context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "dev"
+        } catch (_: Exception) {
+            "dev"
+        }
+    }
 
     // Android 13+ 通知权限申请
     val notificationPermissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
@@ -452,19 +611,41 @@ fun SettingsScreen(
         contract = androidx.activity.result.contract.ActivityResultContracts.OpenDocument(),
     ) { uri: android.net.Uri? ->
         uri?.let {
-            val inputStream = context.contentResolver.openInputStream(it)
-            val tempFile = java.io.File(context.cacheDir, "import_temp.json")
-            inputStream?.use { input -> tempFile.outputStream().use { output -> input.copyTo(output) } }
+            // openInputStream 可能在选完文件后被拒（文档删除/权限失效），
+            // 不能裸奔在回调里；拷贝放 IO 线程，大备份文件不冻 UI
             scope.launch {
-                viewModel.importFromFile(tempFile)
-                tempFile.delete()
+                val tempFile = java.io.File(context.cacheDir, "import_temp.json")
+                try {
+                    val ok = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        val inputStream = context.contentResolver.openInputStream(it)
+                            ?: return@withContext false
+                        inputStream.use { input ->
+                            tempFile.outputStream().use { output -> input.copyTo(output) }
+                        }
+                        true
+                    }
+                    if (ok) {
+                        viewModel.importFromFile(tempFile)
+                    } else {
+                        viewModel.showSnackbarMessage("无法读取所选文件")
+                    }
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+
+                } catch (e: Exception) {
+                    viewModel.showSnackbarMessage("导入失败: ${e.message}")
+                } finally {
+                    tempFile.delete()
+                }
             }
         }
     }
 
+    // Snackbar 直接挂起等待展示结束再清状态：原先 launch+立即 dismiss
+    // 会让两条消息并发抢同一个 SnackbarHostState，后到的消息被吞
     LaunchedEffect(uiState.snackbarMessage) {
         uiState.snackbarMessage?.let {
-            scope.launch { snackbarHostState.showSnackbar(it) }
+            snackbarHostState.showSnackbar(it)
             viewModel.dismissSnackbar()
         }
     }
@@ -616,14 +797,15 @@ fun SettingsScreen(
                     )
                     Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp)) {
                         when {
-                            uiState.embeddedDownloading -> {
+                            uiState.embeddedDownloading || uiState.embeddedInitializing -> {
                                 LinearProgressIndicator(
                                     progress = uiState.embeddedDownloadProgress,
                                     modifier = Modifier.fillMaxWidth(),
                                 )
                                 Spacer(modifier = Modifier.height(2.dp))
                                 Text(
-                                    text = "下载中 ${(uiState.embeddedDownloadProgress * 100).toInt()}%",
+                                    text = if (uiState.embeddedInitializing) "初始化中..."
+                                        else "下载中 ${(uiState.embeddedDownloadProgress * 100).toInt()}%",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
@@ -654,12 +836,12 @@ fun SettingsScreen(
 
                     Divider(modifier = Modifier.padding(horizontal = 20.dp))
 
-                    if (uiState.embeddedDownloading) {
+                    if (uiState.embeddedDownloading || uiState.embeddedInitializing) {
                         SettingRow(
                             icon = Icons.Default.Downloading,
                             iconBg = SurfaceSecondary,
                             iconColor = OnSurfaceTertiary,
-                            title = "正在下载...",
+                            title = if (uiState.embeddedInitializing) "正在初始化..." else "正在下载...",
                             subtitle = "请保持网络连接",
                         )
                     } else if (!uiState.embeddedModelDownloaded) {
@@ -805,7 +987,7 @@ fun SettingsScreen(
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(
-                        "听阅 EareyeReading · v1.9.0",
+                        "听阅 EareyeReading · v$versionName",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(vertical = 16.dp),

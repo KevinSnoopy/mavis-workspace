@@ -48,13 +48,14 @@ class NotificationReceiver : BroadcastReceiver() {
                 .setContentIntent(pendingIntent)
                 .build()
 
-            // P1 修复: getSystemService 在系统服务被禁用/移除时返回 null,改 `as?` 防御
-            val notificationManager =
-                context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
-            if (notificationManager == null) {
-                Log.w(TAG, "NotificationManager not available, skip notification")
-            } else {
-                notificationManager.notify(NotificationHelper.NOTIFICATION_ID, notification)
+            // 权限撤销竞态防护：上面的 areNotificationsEnabled 检查通过后
+            // 权限仍可能被撤销（13+），裸 notify 会抛 SecurityException 崩掉
+            // Receiver。走 NotificationManagerCompat + catch 兜底
+            try {
+                NotificationManagerCompat.from(context)
+                    .notify(NotificationHelper.NOTIFICATION_ID, notification)
+            } catch (e: SecurityException) {
+                Log.w(TAG, "Notification permission revoked, skip showing", e)
             }
         } else {
             Log.d(TAG, "System notifications disabled, skip showing but keep the chain alive")

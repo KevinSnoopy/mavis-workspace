@@ -19,6 +19,20 @@ interface VocabularyDao {
     @Query("SELECT * FROM vocabulary WHERE LOWER(word) = LOWER(:word) LIMIT 1")
     suspend fun getWord(word: String): VocabularyEntity?
 
+    /** 备份导入判存预加载用：一次性取全部现存词的小写形态，
+     * 避免循环内逐词 LOWER 全表扫描的 O(n²) 行访问。 */
+    @Query("SELECT LOWER(word) FROM vocabulary")
+    suspend fun getAllWordsLowercase(): List<String>
+
+    /** 按主键批量取词：复习会话组队的唯一查询（替代逐词 LOWER 全表扫描）。 */
+    @Query("SELECT * FROM vocabulary WHERE id IN (:ids)")
+    suspend fun getWordsByIds(ids: List<Long>): List<VocabularyEntity>
+
+    /** 复习作答后同步词汇侧统计：复习次数 +1、最后复习时间刷新。
+     * 此前复习流只写 review_records，词汇页统计永远为 0。 */
+    @Query("UPDATE vocabulary SET reviewCount = reviewCount + 1, lastReviewTime = :reviewTime WHERE id = :vocabId")
+    suspend fun bumpReviewStats(vocabId: Long, reviewTime: Long)
+
     @Query("SELECT * FROM vocabulary WHERE bookId = :bookId")
     fun getWordsByBook(bookId: Long): Flow<List<VocabularyEntity>>
 
