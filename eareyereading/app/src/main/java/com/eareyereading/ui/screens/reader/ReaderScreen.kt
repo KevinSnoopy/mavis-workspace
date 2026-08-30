@@ -15,6 +15,7 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.Translate
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
@@ -82,6 +83,14 @@ fun ReaderScreen(
         onDispose { viewModel.cleanup() }
     }
 
+    // 书籍不存在（深链失效/已删除）：提示已由 VM 发出，这里自动返回，
+    // 不停留在"加载中..."的死页面
+    LaunchedEffect(uiState.book, uiState.isLoading) {
+        if (uiState.book == null && !uiState.isLoading) {
+            onBack()
+        }
+    }
+
     val backgroundColor = when (uiState.theme) {
         ReadingTheme.LIGHT -> MaterialTheme.colorScheme.background
         ReadingTheme.DARK -> DarkBg
@@ -104,6 +113,14 @@ fun ReaderScreen(
                         overflow = TextOverflow.Ellipsis,
                     )
                 },
+                // 跟随阅读主题的背景必须同时指定内容色：
+                // 深色主题下默认内容色是深色墨，标题/返回/操作图标会整个看不见
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = backgroundColor,
+                    titleContentColor = textColor,
+                    navigationIconContentColor = textColor,
+                    actionIconContentColor = textColor,
+                ),
                 navigationIcon = {
                     IconButton(onClick = {
                         viewModel.saveProgress()
@@ -139,7 +156,8 @@ fun ReaderScreen(
                     // 播放 / 暂停（NORMAL 模式下等价于从当前段开始自动朗读）
                     IconButton(onClick = { viewModel.togglePlay() }) {
                         Icon(
-                            if (uiState.isPlaying || uiState.isAutoReading)
+                            // isTtsPlaying 也要算播放中：挖空/听写等模式走单段朗读
+                            if (uiState.isPlaying || uiState.isAutoReading || uiState.isTtsPlaying)
                                 Icons.Default.Pause else Icons.Default.PlayArrow,
                             "播放",
                         )
@@ -223,9 +241,6 @@ fun ReaderScreen(
                         }
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = backgroundColor,
-                ),
             )
         },
         bottomBar = {
@@ -266,6 +281,7 @@ fun ReaderScreen(
                         currentSentenceIndex = uiState.currentSentenceIndex,
                         onWordClick = viewModel::selectWord,
                         onSentenceDoubleTap = viewModel::translateSentence,
+                        onVisibleParagraphChanged = viewModel::onVisibleParagraphChanged,
                         bookmarkedParagraphs = uiState.bookmarkedParagraphs,
                         highlights = uiState.highlights,
                         onAddHighlight = { pIdx, start, end, text ->
@@ -286,6 +302,10 @@ fun ReaderScreen(
                         fontSize = uiState.fontSize,
                         textColor = textColor,
                         isPlaying = uiState.isPlaying,
+                        // VM 的速读链本来就按句驱动（切句、回调、索引都有），
+                        // 原视图却只渲染一个"●"，把同步数据全部丢弃；接上
+                        currentSentences = uiState.currentSentences,
+                        currentSentenceIndex = uiState.currentSentenceIndex,
                     )
                     ReadingMode.CLOZE -> ClozeReadingView(
                         clozeWords = uiState.clozeWords,
@@ -293,6 +313,7 @@ fun ReaderScreen(
                         fontSize = uiState.fontSize,
                         textColor = textColor,
                         showTranslation = uiState.showTranslation,
+                        translationAlpha = uiState.translationAlpha,
                         currentTranslation = uiState.paragraphTranslations[uiState.currentParagraphIndex],
                         onReveal = viewModel::hideWord,
                         onWordClick = viewModel::selectWord,
@@ -308,7 +329,7 @@ fun ReaderScreen(
                         fontSize = uiState.fontSize,
                         textColor = textColor,
                         paragraph = uiState.paragraphs.getOrNull(uiState.currentParagraphIndex) ?: "",
-                        onReveal = viewModel::hideWord,
+                        onCheckAnswer = viewModel::checkDictationAnswer,
                         onStartDictation = { viewModel.startDictation(uiState.currentParagraphIndex) },
                     )
                     ReadingMode.SPLIT -> SplitReadingView(
@@ -317,6 +338,7 @@ fun ReaderScreen(
                         currentIndex = uiState.currentParagraphIndex,
                         fontSize = uiState.fontSize,
                         textColor = textColor,
+                        translationAlpha = uiState.translationAlpha,
                         onWordClick = viewModel::selectWord,
                     )
                     ReadingMode.BACK_TRANSLATION -> BackTranslationView(
@@ -326,12 +348,14 @@ fun ReaderScreen(
                         fontSize = uiState.fontSize,
                         textColor = textColor,
                         primaryColor = Primary,
-                        onRevealAll = viewModel::revealAllFuzzy,
+                        translationAlpha = uiState.translationAlpha,
                     )
                     ReadingMode.POS_ANALYSIS -> PosAnalysisView(
                         paragraphs = uiState.paragraphs,
                         currentIndex = uiState.currentParagraphIndex,
                         fontSize = uiState.fontSize,
+                        // 原实现完全不接阅读主题色：深色主题下深色墨字配深底不可读
+                        textColor = textColor,
                         onWordClick = viewModel::selectWord,
                     )
                 }
@@ -820,6 +844,7 @@ fun NormalReadingView(
     currentSentenceIndex: Int = 0,
     onWordClick: (String) -> Unit,
     onSentenceDoubleTap: (String) -> Unit,
+    onVisibleParagraphChanged: (Int) -> Unit = {},
     bookmarkedParagraphs: Set<Int> = emptySet(),
     highlights: Map<Int, List<HighlightData>> = emptyMap(),
     onAddHighlight: (Int, Int, Int, String) -> Unit = { _, _, _, _ -> },
@@ -836,6 +861,12 @@ fun NormalReadingView(
             listState.animateScrollToItem(currentIndex)
         }
     }
+    // 反向同步：用户滑动阅读时把可见段落回报给 VM，
+    // 让底栏/滑杆/进度/统计跟上视口（播放中由播放循环主导，VM 侧会忽略）
+    LaunchedEffect(listState) {
+        snapshotFlow { listState.firstVisibleItemIndex }
+            .collect { idx -> onVisibleParagraphChanged(idx) }
+    }
 
     LazyColumn(
         state = listState,
@@ -846,16 +877,26 @@ fun NormalReadingView(
             items = paragraphs,
             key = { index, _ -> index }, // 段落按书加载后不可变，index 是稳定身份
         ) { index, para ->
-            Column(modifier = Modifier.fillMaxWidth()) {
             val isCurrent = index == currentIndex
             val isBookmarked = index in bookmarkedParagraphs
             val paraHighlights = highlights[index] ?: emptyList()
-            val alpha = when {
-                isCurrent && isAutoReading -> 1f
-                isCurrent -> 1f
-                index < currentIndex -> 0.4f
-                else -> 0.7f
-            }
+            val alpha = if (isCurrent) 1f else if (index < currentIndex) 0.4f else 0.7f
+
+            // 朗读中的当前段落：背景直接加在内容容器上。
+            // 原实现额外放了一个包 Text("") 的 Surface —— 零高度，背景永远不可见
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .then(
+                        if (isCurrent && isAutoReading) {
+                            Modifier
+                                .background(Primary.copy(alpha = 0.06f), RoundedCornerShape(8.dp))
+                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                        } else {
+                            Modifier
+                        }
+                    ),
+            ) {
 
             // 书签段落标记行
             if (isBookmarked) {
@@ -879,17 +920,6 @@ fun NormalReadingView(
                         color = Secondary.copy(alpha = 0.3f),
                     )
                 }
-            }
-
-            // 朗读中当前段落高亮背景
-            if (isCurrent && isAutoReading) {
-                Surface(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 2.dp),
-                    color = Primary.copy(alpha = 0.06f),
-                    shape = RoundedCornerShape(8.dp),
-                ) { Text("") }
             }
 
             // 句子级声文同步高亮（朗读中）
@@ -1091,8 +1121,10 @@ fun NormalReadingView(
                             lineHeight = (fontSize * 1.5).sp,
                         ),
                     )
+                    // 只有实际有译文才留间距：原实现把 Spacer 放在判空之外，
+                    // 未翻译段落也多出一截空白，节奏不齐
+                    Spacer(modifier = Modifier.height(12.dp))
                 }
-                Spacer(modifier = Modifier.height(12.dp))
             }
             }
         }
@@ -1152,15 +1184,17 @@ fun RsvpReadingView(
         Spacer(modifier = Modifier.height(24.dp))
         LinearProgressIndicator(
             progress = if (words.isNotEmpty()) {
-                (currentWordIndex.toFloat() / words.size).coerceIn(0f, 1f)
+                ((currentWordIndex + 1).toFloat() / words.size).coerceIn(0f, 1f)
             } else 0f,
             modifier = Modifier.width(200.dp),
         )
-        Text(
-            text = "${currentWordIndex + 1} / ${words.size}",
-            color = textColor.copy(alpha = 0.5f),
-            style = MaterialTheme.typography.labelSmall,
-        )
+        if (words.isNotEmpty()) {
+            Text(
+                text = "${(currentWordIndex + 1).coerceAtMost(words.size)} / ${words.size}",
+                color = textColor.copy(alpha = 0.5f),
+                style = MaterialTheme.typography.labelSmall,
+            )
+        }
     }
 }
 
@@ -1171,22 +1205,56 @@ fun SpeedReadingView(
     fontSize: Int,
     textColor: Color,
     isPlaying: Boolean,
+    currentSentences: List<String> = emptyList(),
+    currentSentenceIndex: Int = 0,
 ) {
     Column(
         modifier = Modifier.fillMaxSize(),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
-        Text(
-            text = if (isPlaying) "●" else paragraph.take(50),
-            color = textColor,
-            fontSize = fontSize.sp,
-            textAlign = TextAlign.Center,
-        )
+        if (isPlaying && currentSentences.isNotEmpty()) {
+            // VM 的速读链按句驱动（切句/回调/索引都有），视图按句渲染：
+            // 已读句变淡、当前句高亮、未读句正常。原实现播放中只显示一个"●"
+            Column(modifier = Modifier.fillMaxWidth()) {
+                currentSentences.forEachIndexed { idx, sentence ->
+                    val isCurrent = idx == currentSentenceIndex
+                    val alpha = when {
+                        idx < currentSentenceIndex -> 0.45f
+                        isCurrent -> 1f
+                        else -> 0.6f
+                    }
+                    Text(
+                        text = sentence,
+                        color = textColor.copy(alpha = alpha),
+                        fontSize = fontSize.sp,
+                        fontWeight = if (isCurrent) FontWeight.SemiBold else FontWeight.Normal,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 3.dp)
+                            .then(
+                                if (isCurrent) {
+                                    Modifier
+                                        .background(Primary.copy(alpha = 0.10f), RoundedCornerShape(4.dp))
+                                        .padding(horizontal = 6.dp, vertical = 4.dp)
+                                } else Modifier
+                            ),
+                    )
+                }
+            }
+        } else {
+            Text(
+                text = paragraph.take(80),
+                color = textColor,
+                fontSize = fontSize.sp,
+                textAlign = TextAlign.Center,
+            )
+        }
     }
 }
 
 // ── 挖空练习视图 ────────────────────────────────
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 fun ClozeReadingView(
     clozeWords: List<ClozeWord>,
@@ -1194,6 +1262,7 @@ fun ClozeReadingView(
     fontSize: Int,
     textColor: Color,
     showTranslation: Boolean,
+    translationAlpha: Float = 0.85f,
     currentTranslation: String?,
     onReveal: () -> Unit,
     onWordClick: (String) -> Unit,
@@ -1204,46 +1273,52 @@ fun ClozeReadingView(
             .verticalScroll(rememberScrollState())
             .padding(vertical = 8.dp),
     ) {
-        clozeWords.forEach { clozeWord ->
-            if (clozeWord.isWord) {
-                if (clozeWord.isHidden) {
-                    if (answer != null && clozeWord.text.equals(answer, ignoreCase = true)) {
-                        Text(
-                            text = "__${clozeWord.text}__",
-                            color = Secondary,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = fontSize.sp,
-                            modifier = Modifier.clickable { onWordClick(clozeWord.text) },
-                        )
-                    } else {
+        // FlowRow 行内排布：原实现把每个词放进纵向 Column，
+        // 一段话被渲染成一列单词，完全不可读。
+        // 揭示是渐进的：VM 每按一次"显示答案"清除一个隐藏词标记
+        FlowRow(
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            clozeWords.forEach { clozeWord ->
+                if (clozeWord.isWord) {
+                    if (clozeWord.isHidden) {
                         Text(
                             text = "____",
                             color = textColor.copy(alpha = 0.5f),
                             fontSize = fontSize.sp,
+                            modifier = Modifier.padding(end = 4.dp),
+                        )
+                    } else {
+                        Text(
+                            text = clozeWord.text,
+                            color = textColor,
+                            fontSize = fontSize.sp,
+                            modifier = Modifier
+                                .padding(end = 4.dp)
+                                .clickable { onWordClick(clozeWord.text) },
                         )
                     }
                 } else {
+                    // 分隔符 token 原样输出，保证词间距/标点自然
                     Text(
                         text = clozeWord.text,
-                        color = textColor,
+                        color = textColor.copy(alpha = 0.7f),
                         fontSize = fontSize.sp,
-                        modifier = Modifier.clickable { onWordClick(clozeWord.text) },
                     )
                 }
-            } else {
-                Text(
-                    text = clozeWord.text,
-                    color = textColor.copy(alpha = 0.7f),
-                    fontSize = fontSize.sp,
-                )
             }
         }
 
         Spacer(modifier = Modifier.height(24.dp))
-        FilledTonalButton(onClick = onReveal, modifier = Modifier.align(Alignment.CenterHorizontally)) {
+        val remainingHidden = clozeWords.count { it.isWord && it.isHidden }
+        FilledTonalButton(
+            onClick = onReveal,
+            enabled = remainingHidden > 0,
+            modifier = Modifier.align(Alignment.CenterHorizontally),
+        ) {
             Icon(Icons.Default.Visibility, null)
             Spacer(modifier = Modifier.width(8.dp))
-            Text("显示答案")
+            Text(if (remainingHidden > 0) "显示答案（剩 $remainingHidden 空）" else "已全部揭示")
         }
 
         if (showTranslation && !currentTranslation.isNullOrBlank()) {
@@ -1255,7 +1330,7 @@ fun ClozeReadingView(
                 Text(
                     text = currentTranslation,
                     modifier = Modifier.padding(12.dp),
-                    color = Primary,
+                    color = Primary.copy(alpha = translationAlpha),
                     fontSize = (fontSize - 2).sp,
                 )
             }
@@ -1264,6 +1339,7 @@ fun ClozeReadingView(
 }
 
 // ── 模糊阅读视图 ────────────────────────────────
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 fun FuzzyReadingView(
     fuzzyWords: List<com.eareyereading.util.FuzzyWord>,
@@ -1276,13 +1352,16 @@ fun FuzzyReadingView(
             .verticalScroll(rememberScrollState())
             .padding(vertical = 8.dp),
     ) {
-        fuzzyWords.forEach { fuzzyWord ->
-            Text(
-                text = fuzzyWord.text,
-                color = if (fuzzyWord.isBlurred) textColor.copy(alpha = 0.15f) else textColor,
-                fontSize = fontSize.sp,
-                modifier = if (fuzzyWord.isBlurred) Modifier.blur(8.dp) else Modifier,
-            )
+        // 同挖空视图：FlowRow 行内排布，不再一词一行
+        FlowRow(modifier = Modifier.fillMaxWidth()) {
+            fuzzyWords.forEach { fuzzyWord ->
+                Text(
+                    text = fuzzyWord.text,
+                    color = if (fuzzyWord.isBlurred) textColor.copy(alpha = 0.15f) else textColor,
+                    fontSize = fontSize.sp,
+                    modifier = if (fuzzyWord.isBlurred) Modifier.blur(8.dp) else Modifier,
+                )
+            }
         }
     }
 }
@@ -1295,92 +1374,76 @@ fun SplitReadingView(
     currentIndex: Int,
     fontSize: Int,
     textColor: Color,
+    translationAlpha: Float = 0.85f,
     onWordClick: (String) -> Unit,
 ) {
-    Row(
+    // 单滚动容器 + 逐段并排：原实现左右两个独立滚动列，
+    // 滚一边另一边不动，原文第 N 段会对上译文第 M 段
+    Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 12.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 12.dp, vertical = 8.dp),
     ) {
-        // 左栏：原文
-        Column(
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                .padding(vertical = 8.dp),
-        ) {
+        Row(modifier = Modifier.fillMaxWidth()) {
             Text(
                 "原文",
                 style = MaterialTheme.typography.labelSmall,
                 color = Primary,
                 fontWeight = FontWeight.Bold,
+                modifier = Modifier.weight(1f),
             )
-            Spacer(modifier = Modifier.height(8.dp))
-            paragraphs.forEachIndexed { index, para ->
-                val alpha = if (index == currentIndex) 1f else 0.5f
+            Text(
+                "译文",
+                style = MaterialTheme.typography.labelSmall,
+                color = Primary,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.weight(1f),
+            )
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+        paragraphs.forEachIndexed { index, para ->
+            val alpha = if (index == currentIndex) 1f else 0.5f
+            val translation = translations[index]
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
                 TappableParagraphText(
                     text = AnnotatedString(para),
                     paragraph = para,
                     onWordClick = onWordClick,
                     onSentenceDoubleTap = {},
-                    modifier = Modifier.padding(vertical = 4.dp),
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(vertical = 4.dp),
                     style = TextStyle(
                         fontSize = fontSize.sp,
                         color = textColor.copy(alpha = alpha),
                         lineHeight = (fontSize * 1.8).sp,
                     ),
                 )
-                if (index < paragraphs.lastIndex) {
-                    Divider(
-                        modifier = Modifier.padding(vertical = 8.dp),
-                        color = textColor.copy(alpha = 0.1f),
-                    )
-                }
-            }
-        }
-
-        // 中间分隔线
-        Divider(
-            modifier = Modifier.fillMaxHeight(),
-            thickness = 1.dp,
-            color = textColor.copy(alpha = 0.2f),
-        )
-
-        // 右栏：译文
-        Column(
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                .padding(vertical = 8.dp),
-        ) {
-            Text(
-                "译文",
-                style = MaterialTheme.typography.labelSmall,
-                color = Primary,
-                fontWeight = FontWeight.Bold,
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            paragraphs.forEachIndexed { index, para ->
-                val translation = translations[index]
-                val alpha = if (index == currentIndex) 1f else 0.5f
                 Text(
                     text = translation ?: "（无译文）",
-                    modifier = Modifier.padding(vertical = 4.dp),
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(vertical = 4.dp),
                     style = TextStyle(
                         fontSize = fontSize.sp,
-                        color = if (translation != null) Primary.copy(alpha = alpha) else textColor.copy(alpha = alpha * 0.4f),
+                        color = if (translation != null) {
+                            Primary.copy(alpha = alpha * translationAlpha)
+                        } else {
+                            textColor.copy(alpha = alpha * 0.4f)
+                        },
                         lineHeight = (fontSize * 1.8).sp,
                     ),
                 )
-                if (index < paragraphs.lastIndex) {
-                    Divider(
-                        modifier = Modifier.padding(vertical = 8.dp),
-                        color = textColor.copy(alpha = 0.1f),
-                    )
-                }
+            }
+            if (index < paragraphs.lastIndex) {
+                Divider(
+                    modifier = Modifier.padding(vertical = 8.dp),
+                    color = textColor.copy(alpha = 0.1f),
+                )
             }
         }
     }
@@ -1392,17 +1455,17 @@ fun PosAnalysisView(
     paragraphs: List<String>,
     currentIndex: Int,
     fontSize: Int,
+    textColor: Color,
     onWordClick: (String) -> Unit,
 ) {
-    val posTagger = remember { PosTagger() }
-    val surfaceColor = MaterialTheme.colorScheme.onSurface
-    // POS 颜色映射（文具风暖调）
+    // 非词性着色（非单词 token、图例文字）跟随阅读主题色：
+    // 原实现硬编码 app 级浅色 onSurface，深色主题下深底深字不可读
     fun posColor(tag: PosTag): Color = when (tag) {
         PosTag.NOUN -> Info      // 青灰 - 名词
         PosTag.VERB -> Error     // 赤褐 - 动词
         PosTag.ADJECTIVE -> Warning // 暖金 - 形容词
         PosTag.ADVERB -> Primary  // 暖棕 - 副词
-        else -> surfaceColor.copy(alpha = 0.85f)
+        else -> textColor.copy(alpha = 0.85f)
     }
 
     Column(
@@ -1427,7 +1490,7 @@ fun PosAnalysisView(
                             val color = posColor(tag).copy(alpha = alpha)
                             withStyle(SpanStyle(color = color)) { append(token) }
                         } else {
-                            withStyle(SpanStyle(color = MaterialTheme.colorScheme.onSurface.copy(alpha = alpha * 0.5f))) {
+                            withStyle(SpanStyle(color = textColor.copy(alpha = alpha * 0.5f))) {
                                 append(token)
                             }
                         }
@@ -1443,7 +1506,7 @@ fun PosAnalysisView(
             if (index < paragraphs.lastIndex) {
                 Divider(
                     modifier = Modifier.padding(vertical = 8.dp),
-                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
+                    color = textColor.copy(alpha = 0.15f),
                 )
             }
         }
@@ -1529,10 +1592,13 @@ fun BackTranslationView(
     fontSize: Int,
     textColor: Color,
     primaryColor: Color,
-    onRevealAll: () -> Unit,
+    translationAlpha: Float = 0.85f,
 ) {
     // 直接派生即可，无需 remember + LaunchedEffect 多一次组合跳转
     val hasTranslation = translations.isNotEmpty()
+    // 揭示是视图本地状态：原实现"查看原文"会 setReadingMode(NORMAL)，
+    // 把用户踢出回译模式还持久化了模式切换
+    var revealed by rememberSaveable { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
@@ -1606,7 +1672,7 @@ fun BackTranslationView(
                         modifier = Modifier.padding(vertical = 6.dp),
                         style = TextStyle(
                             fontSize = fontSize.sp,
-                            color = primaryColor.copy(alpha = alpha),
+                            color = primaryColor.copy(alpha = alpha * translationAlpha),
                             lineHeight = (fontSize * 1.8).sp,
                         ),
                     )
@@ -1638,12 +1704,19 @@ fun BackTranslationView(
                         color = textColor.copy(alpha = 0.6f),
                     )
                     TextButton(
-                        onClick = onRevealAll,
+                        onClick = { revealed = !revealed },
                         contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
                     ) {
-                        Icon(Icons.Default.Visibility, null, modifier = Modifier.size(14.dp))
+                        Icon(
+                            if (revealed) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                            null,
+                            modifier = Modifier.size(14.dp),
+                        )
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("查看原文", style = MaterialTheme.typography.labelSmall)
+                        Text(
+                            if (revealed) "隐藏原文" else "查看原文",
+                            style = MaterialTheme.typography.labelSmall,
+                        )
                     }
                 }
                 Spacer(modifier = Modifier.height(8.dp))
@@ -1653,10 +1726,11 @@ fun BackTranslationView(
                         text = para,
                         modifier = Modifier
                             .padding(vertical = 6.dp)
-                            .blur(if (hasTranslation) 6.dp else 0.dp),
+                            // 揭示后或译文还没加载完（没东西可挡）时不模糊
+                            .blur(if (revealed || !hasTranslation) 0.dp else 6.dp),
                         style = TextStyle(
                             fontSize = fontSize.sp,
-                            color = textColor.copy(alpha = alpha * 0.4f),
+                            color = textColor.copy(alpha = if (revealed) alpha else alpha * 0.4f),
                             lineHeight = (fontSize * 1.8).sp,
                         ),
                     )
@@ -1680,7 +1754,7 @@ fun DictationReadingView(
     fontSize: Int,
     textColor: Color,
     paragraph: String,
-    onReveal: () -> Unit,
+    onCheckAnswer: (String) -> Boolean,
     onStartDictation: () -> Unit,
 ) {
     Column(
@@ -1731,12 +1805,13 @@ fun DictationReadingView(
                     clozeWords.forEach { word ->
                         if (word.isWord) {
                             if (word.isHidden) {
-                                // 划线填空
+                                // 填空占位：原实现直接把答案单词加下划线原样输出，
+                                // 等于把答案写在题面上
                                 withStyle(SpanStyle(
                                     textDecoration = TextDecoration.Underline,
                                     fontWeight = FontWeight.Bold,
                                     color = Primary,
-                                )) { append(word.text) }
+                                )) { append("____") }
                             } else {
                                 withStyle(SpanStyle(color = textColor)) { append(word.text) }
                             }
@@ -1749,7 +1824,7 @@ fun DictationReadingView(
             )
             Spacer(modifier = Modifier.height(24.dp))
 
-            // 提示答案按钮
+            // 核对答案：输入与下一个隐藏词匹配才揭示（VM 侧判定并反馈）
             val hiddenWords = clozeWords.filter { it.isHidden }.map { it.text }
             if (hiddenWords.isNotEmpty()) {
                 var inputWord by remember { mutableStateOf("") }
@@ -1763,10 +1838,11 @@ fun DictationReadingView(
                 Spacer(modifier = Modifier.height(12.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FilledTonalButton(onClick = {
-                        hiddenWords.firstOrNull()?.let { onReveal() }
-                        inputWord = ""
+                        if (inputWord.isNotBlank() && onCheckAnswer(inputWord)) {
+                            inputWord = ""
+                        }
                     }) {
-                        Text("查看答案")
+                        Text("核对答案")
                     }
                     OutlinedButton(onClick = {
                         inputWord = ""

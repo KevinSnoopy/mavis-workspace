@@ -34,6 +34,10 @@ class TtsHelper @Inject constructor(
     private var isInitialized = false
     @Volatile
     private var currentLocale = Locale.US
+    // 当前运行中实例绑定的引擎包名（null = 系统默认）。
+    // 用于识别"用户换了引擎重试"的场景，避免旧实例谎报已启用
+    @Volatile
+    private var activeEnginePackage: String? = null
     @Volatile
     private var pendingLanguage: String? = null
     // 标记 TTS 引擎的 InitListener 回调是否仍在等待（尚未触发）
@@ -300,10 +304,21 @@ class TtsHelper @Inject constructor(
                     }
                 }
 
-                // 已初始化完成，直接返回
+                // 已初始化完成：语言必须每次应用——单例跨书复用，
+                // 否则读完英文书再开中文书会一直用旧 locale 朗读。
+                // 若请求的引擎与当前运行的不同（用户换了引擎重试），
+                // 则销毁旧实例走重新绑定流程，而不是谎报"已启用"
                 if (isInitialized && tts != null) {
-                    cont.resume(true)
-                    return@suspendCancellableCoroutine
+                    if (enginePackage != null && enginePackage != activeEnginePackage) {
+                        try { tts?.shutdown() } catch (_: Exception) {}
+                        tts = null
+                        isInitialized = false
+                        // 落到下方正常初始化流程
+                    } else {
+                        setLanguage(language)
+                        cont.resume(true)
+                        return@suspendCancellableCoroutine
+                    }
                 }
 
                 // TTS 实例存在且回调仍在等待中 — 加入等待队列
@@ -322,6 +337,7 @@ class TtsHelper @Inject constructor(
                 pendingContinuations.add(cont)
                 pendingLanguage = language
                 initPending = true
+                activeEnginePackage = enginePackage
                 val gen = ++ttsGeneration
 
                 val instance = try {
@@ -391,11 +407,12 @@ class TtsHelper @Inject constructor(
                     InitFailureReason.LANGUAGE_UNSUPPORTED
                 } else {
                     currentLocale = Locale.US
-                    tts?.setSpeechRate(1.0f)
+                    // 新实例要应用用户设置的语速，而不是硬编码 1.0
+                    tts?.setSpeechRate(currentSpeed)
                     null
                 }
             } else {
-                tts?.setSpeechRate(1.0f)
+                tts?.setSpeechRate(currentSpeed)
                 null
             }
         } else {
@@ -546,6 +563,9 @@ class TtsHelper @Inject constructor(
                 activeChainOnAllDone = onAllDone
                 var index = 0
                 fun speakNext() {
+                    // stop() 可能落在两句之间（上一句 onDone 已回调、下一句还没 speak）：
+                    // 此时终止回调已由 stop() 补偿调用，链不应再出声
+                    if (!isInSentenceChain) return
                     if (index >= sentences.size) {
                         isInSentenceChain = false
                         activeChainOnAllDone = null

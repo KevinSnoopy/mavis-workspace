@@ -141,14 +141,22 @@ fun AppNavigation(
                     onNavigateToVocabulary = { navController.navigateToTopLevel(Screen.Vocabulary.route) },
                     onNavigateToReview = { navController.navigateToTopLevel(Screen.Review.route) },
                     onNavigateToSettings = { navController.navigateToTopLevel(Screen.Settings.route) },
-                    onBookClick = { bookId -> navController.navigate(Screen.Reader.createRoute(bookId)) },
+                    onBookClick = { bookId ->
+                        // launchSingleTop：快速双击同一本书不再堆叠两个相同的
+                        // reader 栈项（两个存活 VM 共享 TTS 单例会互相打架）
+                        navController.navigate(Screen.Reader.createRoute(bookId)) {
+                            launchSingleTop = true
+                        }
+                    },
                 )
             }
 
             composable(Screen.Library.route) {
                 LibraryScreen(
                     onBookClick = { bookId ->
-                        navController.navigate(Screen.Reader.createRoute(bookId))
+                        navController.navigate(Screen.Reader.createRoute(bookId)) {
+                            launchSingleTop = true
+                        }
                     },
                     onNavigateToVocabulary = { navController.navigateToTopLevel(Screen.Vocabulary.route) },
                     onNavigateToReview = { navController.navigateToTopLevel(Screen.Review.route) },
