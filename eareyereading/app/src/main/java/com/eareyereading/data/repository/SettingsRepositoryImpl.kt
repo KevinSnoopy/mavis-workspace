@@ -25,7 +25,8 @@ class SettingsRepositoryImpl @Inject constructor(
         val LANGUAGE = stringPreferencesKey("app_language")
         val TRANSLATION_ALPHA = floatPreferencesKey("translation_alpha")
         val RSVP_STRENGTH = intPreferencesKey("rsvp_strength")      // 1-5 强度
-        val RSVP_INTERVAL = intPreferencesKey("rsvp_interval")      // 1-3 间隔
+        // rsvp_interval（加粗间隔）已移除：持久化+展示齐全但从未被消费的死设置，
+        // 语义无产品定义。旧版本写入的 rsvp_interval 键留在文件里不被读取，无害
         val DARK_MODE = booleanPreferencesKey("dark_mode")
         val NOTIFICATIONS = booleanPreferencesKey("notifications_enabled")
         val COLLINS_HIGHLIGHT = booleanPreferencesKey("collins_highlight")
@@ -69,15 +70,8 @@ class SettingsRepositoryImpl @Inject constructor(
     override fun getRsvpStrength(): Flow<Int> =
         dataStore.data.map { it[RSVP_STRENGTH] ?: 3 }
 
-    override fun getRsvpInterval(): Flow<Int> =
-        dataStore.data.map { it[RSVP_INTERVAL] ?: 1 }
-
     override suspend fun setRsvpStrength(strength: Int) {
         dataStore.edit { it[RSVP_STRENGTH] = strength.coerceIn(1, 5) }
-    }
-
-    override suspend fun setRsvpInterval(interval: Int) {
-        dataStore.edit { it[RSVP_INTERVAL] = interval.coerceIn(1, 3) }
     }
 
     override fun getDarkMode(): Flow<Boolean> =

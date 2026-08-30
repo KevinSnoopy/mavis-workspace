@@ -47,7 +47,6 @@ interface SettingsRepository {
     fun getLanguage(): Flow<String>
     fun getTranslationAlpha(): Flow<Float>
     fun getRsvpStrength(): Flow<Int>
-    fun getRsvpInterval(): Flow<Int>
     fun getDarkMode(): Flow<Boolean>
     fun getNotifications(): Flow<Boolean>
     fun getCollinsHighlight(): Flow<Boolean>
@@ -58,7 +57,6 @@ interface SettingsRepository {
     suspend fun setTheme(theme: ReadingTheme)
     suspend fun setTranslationAlpha(alpha: Float)
     suspend fun setRsvpStrength(strength: Int)
-    suspend fun setRsvpInterval(interval: Int)
     suspend fun setDarkMode(enabled: Boolean)
     suspend fun setNotifications(enabled: Boolean)
     suspend fun setCollinsHighlight(enabled: Boolean)

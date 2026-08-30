@@ -79,8 +79,16 @@ fun ReaderScreen(
         }
     }
 
+    // 配置变更（旋转/深色切换）也会触发 onDispose，但 VM 并不销毁：
+    // 此时跳过 cleanup，朗读不再被旋转打断；真退出（返回/VM 销毁）
+    // 仍由 onCleared -> cleanup() 兜底落库停播
+    val activity = context as? android.app.Activity
     DisposableEffect(Unit) {
-        onDispose { viewModel.cleanup() }
+        onDispose {
+            if (activity?.isChangingConfigurations != true) {
+                viewModel.cleanup()
+            }
+        }
     }
 
     // 书籍不存在（深链失效/已删除）：提示已由 VM 发出，这里自动返回，
@@ -340,6 +348,7 @@ fun ReaderScreen(
                         textColor = textColor,
                         translationAlpha = uiState.translationAlpha,
                         onWordClick = viewModel::selectWord,
+                        onVisibleParagraphChanged = viewModel::onVisibleParagraphChanged,
                     )
                     ReadingMode.BACK_TRANSLATION -> BackTranslationView(
                         paragraphs = uiState.paragraphs,
@@ -378,14 +387,12 @@ fun ReaderScreen(
             fontSize = uiState.fontSize,
             rsvpSpeed = uiState.rsvpSpeed,
             rsvpStrength = uiState.rsvpStrength,
-            rsvpInterval = uiState.rsvpInterval,
             translationAlpha = uiState.translationAlpha,
             showWordLevelColors = uiState.showWordLevelColors,
             showKnownWordsHighlight = uiState.showKnownWordsHighlight,
             onFontSizeChange = viewModel::setFontSize,
             onSpeedChange = viewModel::setRsvpSpeed,
             onStrengthChange = viewModel::setRsvpStrength,
-            onIntervalChange = viewModel::setRsvpInterval,
             onTranslationAlphaChange = viewModel::setTranslationAlpha,
             onWordLevelColorsToggle = viewModel::toggleWordLevelColors,
             onKnownWordsHighlightToggle = viewModel::toggleKnownWordsHighlight,
@@ -435,9 +442,15 @@ fun ReaderScreen(
     ttsPrompt?.let { prompt ->
         TtsInstallDialog(
             prompt = prompt,
+            downloadProgress = uiState.embeddedDownloadProgress,
             onAction = { action ->
                 viewModel.onTtsInstallAction(action)
-                ttsPrompt = null
+                // 下载内置模型时保持弹窗打开，页内直接显示下载进度
+                // （原实现点下载立即关弹窗，进度只在设置页可见）；
+                // 下载结束后进度归空，弹窗回到常规按钮态由用户关闭
+                if (action !is com.eareyereading.ui.screens.reader.TtsInstallAction.DownloadEmbeddedTts) {
+                    ttsPrompt = null
+                }
             },
             onDismiss = {
                 viewModel.onTtsInstallAction(com.eareyereading.ui.screens.reader.TtsInstallAction.Dismiss)
@@ -451,12 +464,46 @@ fun ReaderScreen(
 @Composable
 private fun TtsInstallDialog(
     prompt: com.eareyereading.ui.screens.reader.TtsInstallPrompt,
+    downloadProgress: Float? = null,
     onAction: (com.eareyereading.ui.screens.reader.TtsInstallAction) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val isChineseDevice = remember { com.eareyereading.util.TtsEngineHelper.isChineseDevice() }
     val context = androidx.compose.ui.platform.LocalContext.current
     val friendlyHint = remember(context) { com.eareyereading.util.TtsEngineHelper.getFriendlyHint(context) }
+
+    // 内置 TTS 模型下载按钮：下载进行中（progress != null）时原地显示进度条，
+    // 不再需要跳转设置页才能看到进度
+    val downloadButton: @Composable () -> Unit = {
+        val progress = downloadProgress
+        if (progress != null) {
+            androidx.compose.foundation.layout.Column(
+                modifier = androidx.compose.ui.Modifier.fillMaxWidth(),
+            ) {
+                androidx.compose.material3.LinearProgressIndicator(
+                    progress = progress.coerceIn(0f, 1f),
+                    modifier = androidx.compose.ui.Modifier.fillMaxWidth(),
+                )
+                androidx.compose.material3.Text(
+                    text = "正在下载内置 TTS 模型 ${(progress * 100).toInt()}%…请保持网络，不要关闭应用",
+                    style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
+                    color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = androidx.compose.ui.Modifier.padding(top = 4.dp),
+                )
+            }
+        } else {
+            androidx.compose.material3.Button(
+                onClick = {
+                    onAction(com.eareyereading.ui.screens.reader.TtsInstallAction.DownloadEmbeddedTts)
+                },
+                modifier = androidx.compose.ui.Modifier.fillMaxWidth(),
+            ) {
+                androidx.compose.material3.Text(
+                    text = "🚀 下载内置 TTS（${prompt.embeddedModelDisplayName}，${prompt.embeddedModelSizeText}）"
+                )
+            }
+        }
+    }
 
     // 派生标题：基于 scenario
     val title = when (prompt.scenario) {
@@ -685,14 +732,28 @@ private fun TtsInstallDialog(
                     // ============================================================
                     TtsInstallPrompt.DialogScenario.HAS_DISCOVERED_ENGINES -> {
                         prompt.discoveredEngines.forEach { engine ->
+                            // 未启用的引擎置灰：点了必然绑定失败白等 15s 超时，
+                            // 应先在系统设置里启用（列表区已标"（未启用）"）
                             androidx.compose.material3.Button(
                                 onClick = {
                                     onAction(com.eareyereading.ui.screens.reader.TtsInstallAction.RetryWithEngine(engine.packageName))
                                 },
+                                enabled = engine.isEnabled,
                                 modifier = androidx.compose.ui.Modifier.fillMaxWidth(),
                             ) {
-                                androidx.compose.material3.Text("使用「${engine.displayName}」")
+                                androidx.compose.material3.Text(
+                                    if (engine.isEnabled) "使用「${engine.displayName}」"
+                                    else "「${engine.displayName}」（未启用）"
+                                )
                             }
+                        }
+                        if (prompt.discoveredEngines.any { !it.isEnabled }) {
+                            androidx.compose.material3.Text(
+                                text = "未启用的引擎无法连接：请先到「系统设置 → TTS」中启用后再试",
+                                style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
+                                color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = androidx.compose.ui.Modifier.padding(top = 2.dp),
+                            )
                         }
                     }
                     // ============================================================
@@ -733,16 +794,7 @@ private fun TtsInstallDialog(
                                 androidx.compose.material3.Text("✅ 启用内置 TTS（已下载）")
                             }
                         } else {
-                            androidx.compose.material3.Button(
-                                onClick = {
-                                    onAction(com.eareyereading.ui.screens.reader.TtsInstallAction.DownloadEmbeddedTts)
-                                },
-                                modifier = androidx.compose.ui.Modifier.fillMaxWidth(),
-                            ) {
-                                androidx.compose.material3.Text(
-                                    text = "🚀 下载内置 TTS（${prompt.embeddedModelDisplayName}，${prompt.embeddedModelSizeText}）"
-                                )
-                            }
+                            downloadButton()
                             androidx.compose.material3.Text(
                                 text = "若重试无效，可下载内置 TTS：完全离线、不依赖系统服务",
                                 style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
@@ -767,16 +819,7 @@ private fun TtsInstallDialog(
                             }
                         } else {
                             // 模型未下载，提供一键下载按钮（推荐方案）
-                            androidx.compose.material3.Button(
-                                onClick = {
-                                    onAction(com.eareyereading.ui.screens.reader.TtsInstallAction.DownloadEmbeddedTts)
-                                },
-                                modifier = androidx.compose.ui.Modifier.fillMaxWidth(),
-                            ) {
-                                androidx.compose.material3.Text(
-                                    text = "🚀 下载内置 TTS（${prompt.embeddedModelDisplayName}，${prompt.embeddedModelSizeText}）"
-                                )
-                            }
+                            downloadButton()
                             androidx.compose.material3.Text(
                                 text = "内置 TTS 完全离线、不依赖系统服务，能彻底解决国产手机无法朗读的问题",
                                 style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
@@ -857,7 +900,12 @@ fun NormalReadingView(
     // 都会滚动到目标段（此前跳转只改索引，视口从不移动）
     val listState = rememberLazyListState()
     LaunchedEffect(currentIndex) {
-        if (currentIndex in paragraphs.indices) {
+        // 目标段已在可见窗口内就不发起程序化滚动：反向同步把用户滑动
+        // 经过的段落写回 currentIndex 后，这里若再 animateScrollToItem
+        // 会在甩动（fling）途中反复打断惯性、把视口拽回段首
+        if (currentIndex in paragraphs.indices &&
+            listState.layoutInfo.visibleItemsInfo.none { it.index == currentIndex }
+        ) {
             listState.animateScrollToItem(currentIndex)
         }
     }
@@ -1167,17 +1215,20 @@ fun RsvpReadingView(
                 fontSize = (fontSize * 3).sp,
                 textAlign = TextAlign.Center,
             )
-            // 强度指示
-            AssistChip(
-                onClick = {},
-                label = { Text("强度 $rsvpStrength") },
-                colors = AssistChipDefaults.assistChipColors(
-                    containerColor = Primary.copy(alpha = 0.1f),
-                    labelColor = Primary,
-                ),
-                border = null,
+            // 强度指示：纯展示徽章。原实现是 onClick={} 的 AssistChip，
+            // TalkBack 会把它读成"没反应的按钮"
+            Surface(
+                shape = RoundedCornerShape(50),
+                color = Primary.copy(alpha = 0.1f),
                 modifier = Modifier.padding(top = 8.dp),
-            )
+            ) {
+                Text(
+                    "强度 $rsvpStrength",
+                    color = Primary,
+                    style = MaterialTheme.typography.labelMedium,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                )
+            }
         } else {
             Text("点击播放按钮开始", color = textColor.copy(alpha = 0.5f))
         }
@@ -1376,33 +1427,54 @@ fun SplitReadingView(
     textColor: Color,
     translationAlpha: Float = 0.85f,
     onWordClick: (String) -> Unit,
+    onVisibleParagraphChanged: (Int) -> Unit = {},
 ) {
     // 单滚动容器 + 逐段并排：原实现左右两个独立滚动列，
-    // 滚一边另一边不动，原文第 N 段会对上译文第 M 段
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-    ) {
-        Row(modifier = Modifier.fillMaxWidth()) {
-            Text(
-                "原文",
-                style = MaterialTheme.typography.labelSmall,
-                color = Primary,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.weight(1f),
-            )
-            Text(
-                "译文",
-                style = MaterialTheme.typography.labelSmall,
-                color = Primary,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.weight(1f),
-            )
+    // 滚一边另一边不动，原文第 N 段会对上译文第 M 段。
+    // LazyColumn 化：整书 eager Column 只布局可见段（与 NORMAL 同型修复）；
+    // 视口跟随当前段，滑动阅读反向回报 VM
+    val listState = rememberLazyListState()
+    LaunchedEffect(currentIndex) {
+        // item 0 是表头，段落索引 +1；目标已可见则不打断用户滚动
+        val target = currentIndex + 1
+        if (currentIndex in paragraphs.indices &&
+            listState.layoutInfo.visibleItemsInfo.none { it.index == target }
+        ) {
+            listState.animateScrollToItem(target)
         }
-        Spacer(modifier = Modifier.height(8.dp))
-        paragraphs.forEachIndexed { index, para ->
+    }
+    LaunchedEffect(listState) {
+        snapshotFlow { listState.firstVisibleItemIndex }
+            .collect { idx -> onVisibleParagraphChanged((idx - 1).coerceAtLeast(0)) }
+    }
+    LazyColumn(
+        state = listState,
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+    ) {
+        item {
+            Row(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    "原文",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Primary,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.weight(1f),
+                )
+                Text(
+                    "译文",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Primary,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+        }
+        itemsIndexed(
+            items = paragraphs,
+            key = { index, _ -> index }, // 段落按书加载后不可变，index 是稳定身份
+        ) { index, para ->
             val alpha = if (index == currentIndex) 1f else 0.5f
             val translation = translations[index]
             Row(
@@ -1468,19 +1540,32 @@ fun PosAnalysisView(
         else -> textColor.copy(alpha = 0.85f)
     }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(vertical = 8.dp),
+    // LazyColumn 化：整书 eager Column 每次重组都重排版全文；
+    // 词性标注串按 (段落, 透明度, 主题色) 缓存，可见窗口外不参与布局
+    val listState = rememberLazyListState()
+    LaunchedEffect(currentIndex) {
+        if (currentIndex in paragraphs.indices &&
+            listState.layoutInfo.visibleItemsInfo.none { it.index == currentIndex }
+        ) {
+            listState.animateScrollToItem(currentIndex)
+        }
+    }
+    LazyColumn(
+        state = listState,
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(vertical = 8.dp),
     ) {
-        paragraphs.forEachIndexed { index, para ->
+        itemsIndexed(
+            items = paragraphs,
+            key = { index, _ -> index },
+        ) { index, para ->
             val isCurrent = index == currentIndex
             val alpha = if (isCurrent) 1f else 0.5f
 
-            // 词性着色文本
-            TappableParagraphText(
-                text = buildAnnotatedString {
+            // 词性着色文本（remember 缓存：原实现在组合里裸建，
+            // 任何状态变化都重新切词+分类整本书）
+            val annotatedText = remember(para, alpha, textColor) {
+                buildAnnotatedString {
                     val allMatches = Regex("([a-zA-Z]+)|([^a-zA-Z]+)").findAll(para).toList()
                     allMatches.forEach { match ->
                         val token = match.value
@@ -1495,7 +1580,10 @@ fun PosAnalysisView(
                             }
                         }
                     }
-                },
+                }
+            }
+            TappableParagraphText(
+                text = annotatedText,
                 paragraph = para,
                 onWordClick = onWordClick,
                 onSentenceDoubleTap = {},
@@ -1512,19 +1600,21 @@ fun PosAnalysisView(
         }
 
         // 底部图例
-        Spacer(modifier = Modifier.height(16.dp))
-        Divider()
-        Spacer(modifier = Modifier.height(8.dp))
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            PosLegendItem("青灰", Info, "名词")
-            PosLegendItem("赤褐", Error, "动词")
-            PosLegendItem("暖金", Warning, "形容词")
-            PosLegendItem("暖棕", Primary, "副词")
+        item {
+            Spacer(modifier = Modifier.height(16.dp))
+            Divider()
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                PosLegendItem("青灰", Info, "名词")
+                PosLegendItem("赤褐", Error, "动词")
+                PosLegendItem("暖金", Warning, "形容词")
+                PosLegendItem("暖棕", Primary, "副词")
+            }
         }
     }
 }
@@ -1600,6 +1690,20 @@ fun BackTranslationView(
     // 把用户踢出回译模式还持久化了模式切换
     var revealed by rememberSaveable { mutableStateOf(false) }
 
+    // 单 LazyColumn 逐段并排（译文 | 原文）：原实现左右两个独立滚动容器
+    // 整书 eager 渲染，滚动不同步时原文第 N 段对上译文第 M 段（与分栏视图
+    // 同型缺陷），且未揭示时全书每段都挂 blur 渲染层。改单列后段落严格对齐、
+    // 只布局可见段、视口跟随当前段
+    val listState = rememberLazyListState()
+    LaunchedEffect(currentIndex) {
+        val target = currentIndex + 1
+        if (currentIndex in paragraphs.indices &&
+            listState.layoutInfo.visibleItemsInfo.none { it.index == target }
+        ) {
+            listState.animateScrollToItem(target)
+        }
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -1644,87 +1748,80 @@ fun BackTranslationView(
             }
         }
 
-        Row(
+        LazyColumn(
+            state = listState,
             modifier = Modifier
                 .fillMaxSize()
                 .padding(bottom = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            // 左栏：中文译文
-            Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxSize()
-                    .verticalScroll(rememberScrollState()),
-            ) {
-                Text(
-                    "中文译文",
-                    style = MaterialTheme.typography.labelSmall,
-                    fontWeight = FontWeight.Bold,
-                    color = primaryColor,
-                )
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        "中文译文",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = primaryColor,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Row(
+                        modifier = Modifier.weight(1f),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            "英文原文",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = textColor.copy(alpha = 0.6f),
+                        )
+                        TextButton(
+                            onClick = { revealed = !revealed },
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                        ) {
+                            Icon(
+                                if (revealed) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                null,
+                                modifier = Modifier.size(14.dp),
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                if (revealed) "隐藏原文" else "查看原文",
+                                style = MaterialTheme.typography.labelSmall,
+                            )
+                        }
+                    }
+                }
                 Spacer(modifier = Modifier.height(8.dp))
-                paragraphs.forEachIndexed { index, para ->
-                    val translation = translations[index]
-                    val alpha = if (index == currentIndex) 1f else 0.5f
+            }
+            itemsIndexed(
+                items = paragraphs,
+                key = { index, _ -> index },
+            ) { index, para ->
+                val translation = translations[index]
+                val alpha = if (index == currentIndex) 1f else 0.5f
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
                     Text(
                         text = translation ?: "...",
-                        modifier = Modifier.padding(vertical = 6.dp),
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(vertical = 6.dp),
                         style = TextStyle(
                             fontSize = fontSize.sp,
                             color = primaryColor.copy(alpha = alpha * translationAlpha),
                             lineHeight = (fontSize * 1.8).sp,
                         ),
                     )
-                    if (index < paragraphs.lastIndex) {
-                        Divider(
-                            modifier = Modifier.padding(vertical = 6.dp),
-                            color = textColor.copy(alpha = 0.1f),
-                        )
-                    }
-                }
-            }
-
-            // 右栏：模糊英文原文
-            Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxSize()
-                    .verticalScroll(rememberScrollState()),
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        "英文原文",
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = textColor.copy(alpha = 0.6f),
-                    )
-                    TextButton(
-                        onClick = { revealed = !revealed },
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
-                    ) {
-                        Icon(
-                            if (revealed) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                            null,
-                            modifier = Modifier.size(14.dp),
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(
-                            if (revealed) "隐藏原文" else "查看原文",
-                            style = MaterialTheme.typography.labelSmall,
-                        )
-                    }
-                }
-                Spacer(modifier = Modifier.height(8.dp))
-                paragraphs.forEachIndexed { index, para ->
-                    val alpha = if (index == currentIndex) 1f else 0.5f
                     Text(
                         text = para,
                         modifier = Modifier
+                            .weight(1f)
                             .padding(vertical = 6.dp)
                             // 揭示后或译文还没加载完（没东西可挡）时不模糊
                             .blur(if (revealed || !hasTranslation) 0.dp else 6.dp),
@@ -1734,12 +1831,12 @@ fun BackTranslationView(
                             lineHeight = (fontSize * 1.8).sp,
                         ),
                     )
-                    if (index < paragraphs.lastIndex) {
-                        Divider(
-                            modifier = Modifier.padding(vertical = 6.dp),
-                            color = textColor.copy(alpha = 0.1f),
-                        )
-                    }
+                }
+                if (index < paragraphs.lastIndex) {
+                    Divider(
+                        modifier = Modifier.padding(vertical = 6.dp),
+                        color = textColor.copy(alpha = 0.1f),
+                    )
                 }
             }
         }
@@ -1883,10 +1980,18 @@ fun ReadingBottomBar(
         color = MaterialTheme.colorScheme.surface,
     ) {
         Column(modifier = Modifier.padding(8.dp)) {
-            // 进度条
+            // 进度条：拖动期间只更新本地值，松手才提交。
+            // 原实现逐像素调 goToParagraph：每像素都触发 stopAllPlayback +
+            // saveProgress，挖空/模糊模式下还会逐像素重生成整段词序列
+            var seekValue by remember { mutableStateOf(uiState.currentParagraphIndex.toFloat()) }
+            // 索引被程序化推进（播放/上下段/跳转）时同步滑杆位置
+            LaunchedEffect(uiState.currentParagraphIndex) {
+                seekValue = uiState.currentParagraphIndex.toFloat()
+            }
             Slider(
-                value = uiState.currentParagraphIndex.toFloat(),
-                onValueChange = { onSeek(it.toInt()) },
+                value = seekValue,
+                onValueChange = { seekValue = it },
+                onValueChangeFinished = { onSeek(seekValue.toInt()) },
                 valueRange = 0f..(uiState.paragraphs.size - 1).coerceAtLeast(1).toFloat(),
                 modifier = Modifier.fillMaxWidth(),
                 colors = SliderDefaults.colors(
@@ -1959,19 +2064,21 @@ private fun getModeDescription(mode: ReadingMode): String = when (mode) {
 }
 
 // ── 阅读器设置对话框 ────────────────────────────
+
+// 设置弹窗文案表：提到顶层，避免每次重组都重新分配
+private val RSVP_STRENGTH_LABELS = listOf("30%", "40%", "50%", "60%", "70%")
+
 @Composable
 fun ReaderSettingsDialog(
     fontSize: Int,
     rsvpSpeed: Int,
     rsvpStrength: Int,
-    rsvpInterval: Int,
     translationAlpha: Float,
     showWordLevelColors: Boolean,
     showKnownWordsHighlight: Boolean,
     onFontSizeChange: (Int) -> Unit,
     onSpeedChange: (Int) -> Unit,
     onStrengthChange: (Int) -> Unit,
-    onIntervalChange: (Int) -> Unit,
     onTranslationAlphaChange: (Float) -> Unit,
     onWordLevelColorsToggle: () -> Unit,
     onKnownWordsHighlightToggle: () -> Unit,
@@ -1999,20 +2106,12 @@ fun ReaderSettingsDialog(
                     valueRange = 100f..800f,
                 )
                 Spacer(modifier = Modifier.height(8.dp))
-                Text("仿生阅读强度: $rsvpStrength（加粗占比 ${listOf("30%","40%","50%","60%","70%")[rsvpStrength.coerceIn(1, 5) - 1]}）")
+                Text("仿生阅读强度: $rsvpStrength（加粗占比 ${RSVP_STRENGTH_LABELS[rsvpStrength.coerceIn(1, 5) - 1]}）")
                 Slider(
                     value = rsvpStrength.toFloat().coerceIn(1f, 5f),
                     onValueChange = { onStrengthChange(it.toInt()) },
                     valueRange = 1f..5f,
                     steps = 3,
-                )
-                Text("加粗间隔: ${listOf("小间隔", "中间隔", "大间隔")[rsvpInterval.coerceIn(1, 3) - 1]}",
-                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Slider(
-                    value = rsvpInterval.toFloat().coerceIn(1f, 3f),
-                    onValueChange = { onIntervalChange(it.toInt()) },
-                    valueRange = 1f..3f,
-                    steps = 1,
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 Text("翻译透明度: ${(translationAlpha * 100).toInt()}%")
@@ -2168,11 +2267,17 @@ fun ChapterNavDialog(
     onSelect: (Int) -> Unit,
     onDismiss: () -> Unit,
 ) {
+    // 打开即定位到当前段：长书原来停在第 0 段，用户得自己翻找
+    val listState = rememberLazyListState()
+    LaunchedEffect(Unit) {
+        listState.scrollToItem(currentIndex)
+    }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("目录导航") },
         text = {
             LazyColumn(
+                state = listState,
                 modifier = Modifier.heightIn(max = 400.dp),
             ) {
                 itemsIndexed(paragraphs) { idx, para ->

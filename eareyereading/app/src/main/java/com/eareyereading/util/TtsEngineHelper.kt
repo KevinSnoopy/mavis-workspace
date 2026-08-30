@@ -143,18 +143,6 @@ object TtsEngineHelper {
     }
 
     /**
-     * 检查设备是否安装了 Google TTS。
-     */
-    fun hasGoogleTts(context: Context): Boolean {
-        return try {
-            context.packageManager.getPackageInfo("com.google.android.tts", 0)
-            true
-        } catch (e: PackageManager.NameNotFoundException) {
-            false
-        }
-    }
-
-    /**
      * 获取当前系统的默认 TTS 引擎包名。
      *
      * 通过 Settings.Secure.TTS_DEFAULT_SYNTH 直接读取系统设置中的默认引擎包名。
@@ -172,30 +160,6 @@ object TtsEngineHelper {
         } catch (e: Exception) {
             Log.w(TAG, "Failed to read TTS_DEFAULT_SYNTH", e)
             null
-        }
-    }
-
-    /**
-     * 获取当前系统的默认 TTS 引擎包名（通过 TextToSpeech API）。
-     *
-     * 会创建一个临时的 TextToSpeech 实例来获取 defaultEngine，然后立即 shutdown。
-     * 注意：这个 API 在国产手机上可能不可靠（如果 Google TTS 不存在）。
-     */
-    fun getDefaultEnginePackage(context: Context): String? {
-        val tts = TextToSpeech(context) { status ->
-            Log.i(TAG, "Probe TTS status=$status")
-        }
-        return try {
-            val pkg = tts.defaultEngine
-            Log.i(TAG, "Default TTS engine: $pkg")
-            pkg
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to query default engine", e)
-            null
-        } finally {
-            try {
-                tts.shutdown()
-            } catch (_: Exception) {}
         }
     }
 
@@ -529,40 +493,6 @@ object TtsEngineHelper {
     }
 
     /**
-     * 综合回退候选引擎（用于自动初始化）。
-     *
-     * 优先级：
-     * 1. 系统设置里选的引擎（如果真的存在）
-     * 2. 综合发现的所有 TTS 引擎（getEngines + Intent 扫描 + 已知包名）
-     */
-    fun findFallbackEngineV2(context: Context): TtsEngineInfo? {
-        // 1. 系统设置
-        val systemDefault = getSystemDefaultEnginePackage(context)
-        if (systemDefault != null) {
-            val info = checkPackage(context, systemDefault)
-            if (info != null) return info
-            // 如果 checkPackage 返回 null（包未安装），但包名是 com.google.android.tts，
-            // 仍然返回它 — 某些 ROM 上 checkPackage 抛异常但包实际存在
-            if (systemDefault == "com.google.android.tts") {
-                return TtsEngineInfo(
-                    packageName = "com.google.android.tts",
-                    displayName = "Google 文字转语音",
-                    isInstalled = true,
-                    isEnabled = true,
-                )
-            }
-        }
-
-        // 2. 综合发现（getEngines + Intent + 已知包名）
-        val discovered = discoverAllTtsEngines(context)
-        if (discovered.isNotEmpty()) {
-            return discovered.firstOrNull { it.isEnabled } ?: discovered.first()
-        }
-
-        return null
-    }
-
-    /**
      * 国内常见的第三方 TTS 应用 — 安装后这些 app 会注册一个 bindable 的 TTS 服务，
      * 即使 OEM 系统不开放内置 TTS，第三方 app 仍能使用它们的 TTS。
      *
@@ -631,21 +561,6 @@ object TtsEngineHelper {
     }
 
     /**
-     * 检查哪些第三方 TTS app 已经安装了。
-     */
-    fun listInstalledThirdPartyTtsApps(context: Context): List<ThirdPartyTtsApp> {
-        val pm = context.packageManager
-        return THIRD_PARTY_TTS_APPS.filter { app ->
-            try {
-                pm.getPackageInfo(app.packageName, 0)
-                true
-            } catch (e: PackageManager.NameNotFoundException) {
-                false
-            }
-        }
-    }
-
-    /**
      * 构造跳转到应用宝/华为应用市场/小米应用商店等下载页面的 Intent。
      * 优先尝试 Play Store，回退到浏览器。
      */
@@ -684,25 +599,6 @@ object TtsEngineHelper {
         // 通用 TTS 设置入口
         return Intent().apply {
             action = "com.android.settings.TTS_SETTINGS"
-        }
-    }
-
-    /**
-     * 构造下载安装 Google TTS 的 Intent。
-     */
-    fun buildInstallTtsIntent(): Intent {
-        // 优先使用官方 ACTION_INSTALL_TTS_DATA
-        return Intent(TextToSpeech.Engine.ACTION_INSTALL_TTS_DATA).apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        }
-    }
-
-    /**
-     * 构造跳转到系统辅助功能/无障碍设置的 Intent（兜底方案）。
-     */
-    fun buildAccessibilitySettingsIntent(): Intent {
-        return Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
     }
 

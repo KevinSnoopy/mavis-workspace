@@ -605,6 +605,10 @@ class TtsHelper @Inject constructor(
                 embeddedSpeakJob?.cancel()
                 embeddedSpeakJob = scope.launch {
                     embeddedTts.speak(text, speed = currentSpeed)
+                    // 自然播完归还音频焦点：不走 stop() 的完成路径若不归还，
+                    // 背景音乐会一直被压低。被 stop() 取消时不会执行到这里，
+                    // 那条路径已在 stop() 内归还（幂等）
+                    embeddedTts.abandonAudioFocus()
                     withContext(Dispatchers.Main) {
                         onComplete?.invoke()
                     }
@@ -686,6 +690,9 @@ class TtsHelper @Inject constructor(
                         }
                     } finally {
                         isInSentenceChain = false
+                        // 链结束（自然读完或被 stop() 取消）统一归还音频焦点：
+                        // 自然读完不走 stop()，不归还会让背景音乐一直压低（幂等）
+                        embeddedTts.abandonAudioFocus()
                         // scope 在 Dispatchers.Main 上，直接回调即可
                         onAllDone()
                     }
@@ -765,6 +772,11 @@ class TtsHelper @Inject constructor(
             }
         }
         try { embeddedTts.stop() } catch (_: Exception) {}
+        // 复位到系统模式：shutdown 后 ttsMode 残留 EMBEDDED 的话，
+        // 之后任何 speak/stop 都会继续分发到已停止的内置引擎（静默失效）。
+        // 非 suspend 上下文，直接同步两个视图，不走 updateTtsMode
+        ttsMode = TtsMode.SYSTEM
+        _ttsModeState.value = TtsMode.SYSTEM
         // P0 修复: cancel 内部协程 scope,避免 shutdown 后仍在飞的协程持有
         // Activity/Context 引用造成内存泄漏(单例生命周期 = 进程生命周期,通常不致命,
         // 但 hot reload / 单元测试 / 进程存活但 TTS 实例重建场景会泄漏 Activity 引用)

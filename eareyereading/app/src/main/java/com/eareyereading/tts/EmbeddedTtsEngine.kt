@@ -114,9 +114,21 @@ class EmbeddedTtsEngine @Inject constructor(
         }
     }
 
-    // 当前正在跑的 speak() 协程的 Job。stop() 取消它，连带释放 mutex。
+    /**
+     * 主动归还音频焦点（供调用方在一次朗读会话结束时调用）。
+     * 句子链/单段朗读自然播完不会走 stop()，若不归还，
+     * 被 duck 的背景音乐/播客会一直保持压低状态直到进程结束。
+     * 幂等：stop()/release() 已归还过时重复调用无副作用
+     */
+    fun abandonAudioFocus() {
+        abandonAudioFocusIfHeld()
+    }
+
+    // 当前正在跑的 speak() 协程的 Job 集合。stop() 全部取消，连带释放 mutex。
+    // 单值字段不够：speak A 持锁播放、speak B 挂在锁上等待时，
+    // stop() 只会取消后注册的 B，A 的句循环跨过下一句继续出声——停止看似无效
     private val speakJobLock = Any()
-    private var currentSpeakJob: Job? = null
+    private val activeSpeakJobs = mutableSetOf<Job>()
 
     // 引擎状态（用于 UI 显示）
     private val _state = MutableStateFlow<EngineState>(EngineState.NOT_INITIALIZED)
@@ -455,42 +467,6 @@ private fun digitsToWords(digits: String): String {
     return digits.mapNotNull { names[it] }.joinToString(" ").ifEmpty { "zero" }
 }
 
-private fun splitForTts(text: String, maxChunkLen: Int = 200): List<String> {
-    if (text.length <= maxChunkLen) return listOf(text)
-
-    // 用同一个"句末 + 大写开头"的边界切
-    val sentenceBoundary = Regex("(?<=[.!?])\\s+(?=[A-Z\"\\(])")
-    val sentences = text.split(sentenceBoundary).filter { it.isNotBlank() }
-
-    val chunks = mutableListOf<String>()
-    val sb = StringBuilder()
-    for (s in sentences) {
-        // 单句已经超过 maxChunkLen（极少见，如超长标题）：硬切到 maxChunkLen
-        if (s.length > maxChunkLen) {
-            if (sb.isNotEmpty()) {
-                chunks.add(sb.toString().trim())
-                sb.clear()
-            }
-            var i = 0
-            while (i < s.length) {
-                val end = (i + maxChunkLen).coerceAtMost(s.length)
-                chunks.add(s.substring(i, end))
-                i = end
-            }
-            continue
-        }
-        // 累积句直到再加就会超过 maxChunkLen
-        if (sb.isNotEmpty() && sb.length + 1 + s.length > maxChunkLen) {
-            chunks.add(sb.toString().trim())
-            sb.clear()
-        }
-        if (sb.isNotEmpty()) sb.append(' ')
-        sb.append(s)
-    }
-    if (sb.isNotEmpty()) chunks.add(sb.toString().trim())
-    return chunks
-}
-
 /**
  * 纯逐句切分（不累积）。
  * 中文全角句点 。！？；（允许尾随闭引号/括号）：中文散文不靠空白分句，
@@ -671,7 +647,9 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
                 if (!fileOk) {
                     _state.value = EngineState.DOWNLOAD_FAILED("下载失败：${file.relativePath}（所有镜像均不可用）")
                     _downloadProgress.value = null
-                    showDownloadNotification(null, "下载失败，请重试")
+                    // 终态通知必须可划掉：showDownloadNotification 是 ongoing 的，
+                    // 失败时留着一条划不掉的"下载失败"通知只能杀进程消失
+                    cancelDownloadNotification()
                     return@withContext false
                 }
             }
@@ -689,7 +667,7 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
             Log.e(TAG, "downloadModel failed", e)
             _state.value = EngineState.DOWNLOAD_FAILED(e.message ?: "未知错误")
             _downloadProgress.value = null
-            showDownloadNotification(null, "下载失败：${e.message ?: "未知错误"}")
+            cancelDownloadNotification()
             false
         }
     }
@@ -814,7 +792,11 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
             throw e
         } catch (e: Exception) {
             Log.e(TAG, "解压失败", e)
-            showDownloadNotification(null, "解压失败")
+            // 删掉损坏的 tarball 与完成标记：否则下次进来标记检查直接跳过
+            // 下载、反复解压同一个坏归档，失败回退路径还可能让 ~100MB 永久驻盘
+            if (tarballFile.exists()) tarballFile.delete()
+            if (tarballComplete.exists()) tarballComplete.delete()
+            cancelDownloadNotification()
             return false
         }
 
@@ -827,6 +809,9 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
                 File(modelsDir, f.relativePath + COMPLETE_SUFFIX).createNewFile()
             } else {
                 Log.e(TAG, "解压后文件缺失或为空：${f.relativePath}")
+                // 归档缺文件：同样清掉 tarball，强制下次重新下载而不是重复解压
+                if (tarballFile.exists()) tarballFile.delete()
+                if (tarballComplete.exists()) tarballComplete.delete()
                 return false
             }
         }
@@ -1026,18 +1011,33 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
                 // 只加 synchronized(this) 时，另一个协程可能正持有 speakMutex
                 // 在 generate() 里使用旧实例 → release() 直接 JNI use-after-free
                 // （正是注释里说的 SIGSEGV 类别）。构造在锁外完成，仅替换进锁。
-                speakMutex.withLock {
-                    synchronized(this) {
-                        // 替换前 shutdown 旧的
-                        tts?.let { try { it.release() } catch (_: Exception) {} }
-                        tts = newTts
-                        currentModelName = modelInfo.id
-                        sampleRate = newTts.sampleRate()
+                var assigned = false
+                try {
+                    speakMutex.withLock {
+                        synchronized(this) {
+                            // 替换前 shutdown 旧的
+                            tts?.let { try { it.release() } catch (_: Exception) {} }
+                            tts = newTts
+                            assigned = true
+                            currentModelName = modelInfo.id
+                            sampleRate = newTts.sampleRate()
+                            // 状态写入也进锁：出锁再写会与 release()（同锁内置
+                            // tts=null + NOT_INITIALIZED）交错出 READY∧tts=null 的
+                            // 说谎状态——之后所有 speak 静默失败而 UI 显示就绪
+                            _state.value = EngineState.READY(modelInfo.id)
+                        }
+                    }
+                } finally {
+                    // 构造成功但从未赋值（等锁时被取消/异常）：显式释放，
+                    // 上百 MB 的 native 模型不该只等 GC finalizer
+                    if (!assigned) {
+                        try { newTts.release() } catch (_: Exception) {}
                     }
                 }
-                _state.value = EngineState.READY(modelInfo.id)
                 Log.i(TAG, "Initialized sherpa-onnx OfflineTts: model=${modelInfo.id}, sampleRate=$sampleRate")
                 true
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Log.e(TAG, "initialize failed", e)
                 // 新实例构造失败但旧引擎还在时，状态回到"旧模型就绪"，
@@ -1069,9 +1069,10 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
         // 之前 TtsHelper.speak() 在 scope.launch 里多次并发调用，
         // 两个 IO 协程同时调 generate() → JNI 段错误 SIGSEGV。
         // 用 Mutex 串行化整个 speak 调用。
-        // 同步 currentSpeakJob，stop() 可以取消当前播放（连同 mutex 一起释放）。
+        // 注册进 activeSpeakJobs：stop() 取消所有调用者（含正在播的与等锁的）
+        val myJob = coroutineContext[Job]
         synchronized(speakJobLock) {
-            currentSpeakJob = coroutineContext[Job]
+            myJob?.let { activeSpeakJobs.add(it) }
         }
         try {
             speakMutex.withLock {
@@ -1079,9 +1080,7 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
             }
         } finally {
             synchronized(speakJobLock) {
-                if (currentSpeakJob === coroutineContext[Job]) {
-                    currentSpeakJob = null
-                }
+                myJob?.let { activeSpeakJobs.remove(it) }
             }
         }
     }
@@ -1175,13 +1174,15 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
      * 停止当前播放。
      */
     fun stop() {
-        // 取消当前 speak 协程：让 doSpeakLocked 立刻退出（协程取消时
+        // 取消全部 speak 协程：让 doSpeakLocked 立刻退出（协程取消时
         // kotlinx coroutines Mutex.withLock 会在 finally 释放锁）。
         // 之前只停 AudioTrack 会导致旧 speak 继续在 mutex 里跑完整段，
         // 用户的"停止"按钮实际无效——新的 speak 必须等旧协程跑完才能进。
+        // 必须取消"所有"调用者：正在出声的与挂在锁上等待的，
+        // 只取消一个时另一个会跨过下一句继续播
         synchronized(speakJobLock) {
-            currentSpeakJob?.cancel()
-            currentSpeakJob = null
+            activeSpeakJobs.forEach { it.cancel() }
+            activeSpeakJobs.clear()
         }
         synchronized(audioTrackLock) {
             try {
@@ -1284,18 +1285,30 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
         // 等待播放完成
         val durationMs = (pcm16.size * 1000L) / sampleRate
         var elapsed = 0L
-        while (elapsed < durationMs) {
-            // delay 而非 Thread.sleep：释放 IO 线程，且能响应协程取消。
-            // delay 在协程被 cancel 时会抛 CancellationException，自动退出循环。
-            kotlinx.coroutines.delay(50)
-            elapsed += 50
-            synchronized(audioTrackLock) {
-                if (audioTrack !== track) {
-                    // 被 stop()/新的 playPcm 接管：对方已在锁内 release 过这个 track。
-                    // 这里不能再 release（双重释放会抛 IllegalStateException）
-                    return
+        try {
+            while (elapsed < durationMs) {
+                // delay 而非 Thread.sleep：释放 IO 线程，且能响应协程取消。
+                // delay 在协程被 cancel 时会抛 CancellationException，自动退出循环。
+                kotlinx.coroutines.delay(50)
+                elapsed += 50
+                synchronized(audioTrackLock) {
+                    if (audioTrack !== track) {
+                        // 被 stop()/新的 playPcm 接管：对方已在锁内 release 过这个 track。
+                        // 这里不能再 release（双重释放会抛 IllegalStateException）
+                        return
+                    }
                 }
             }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            // scope 销毁等取消路径：若 track 仍是当前则释放，
+            // 否则 MODE_STATIC 音频会继续播完且 native 资源悬挂到 GC
+            synchronized(audioTrackLock) {
+                if (audioTrack === track) {
+                    audioTrack = null
+                    try { track.release() } catch (_: Exception) {}
+                }
+            }
+            throw e
         }
         // 自然播完：在锁内确认仍是当前 track 才释放，避免与 stop() 竞态双重释放
         synchronized(audioTrackLock) {
