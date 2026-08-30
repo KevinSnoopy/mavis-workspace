@@ -25,6 +25,16 @@ jobs:
       - uses: android-actions/setup-android@v3
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v3
+      # 诊断：确认 runner 到关键制品库的可达性（历史问题：KSP 插件解析失败）
+      - name: Probe artifact repositories
+        run: |
+          for u in \
+            "https://plugins.gradle.org/m2/com/google/devtools/ksp/com.google.devtools.ksp.gradle.plugin/1.9.20-1.0.14/com.google.devtools.ksp.gradle.plugin-1.9.20-1.0.14.pom" \
+            "https://repo.maven.apache.org/maven2/com/google/devtools/ksp/com.google.devtools.ksp.gradle.plugin/1.9.20-1.0.14/com.google.devtools.ksp.gradle.plugin-1.9.20-1.0.14.pom" \
+            "https://maven.aliyun.com/repository/gradle-plugin/com/google/devtools/ksp/com.google.devtools.ksp.gradle.plugin/1.9.20-1.0.14/com.google.devtools.ksp.gradle.plugin-1.9.20-1.0.14.pom"; do
+            code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 20 -L "$u" || echo "ERR")
+            echo "$code $u"
+          done
       # 使用仓库 wrapper（与本地行为一致），不再另装独立 Gradle 8.5
       - name: Run Detekt
         working-directory: eareyereading
