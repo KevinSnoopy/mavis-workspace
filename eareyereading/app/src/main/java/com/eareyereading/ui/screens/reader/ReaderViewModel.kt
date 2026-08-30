@@ -883,9 +883,9 @@ class ReaderViewModel @Inject constructor(
     }
 
     /**
-     * 英文书但内置引擎回退到了中英双语声（纯英文模型未下载）时给一次性提示：
-     * 双语模型实为中文说话人，读英文口音重、数字带中文音，
-     * 提示用户去设置下载纯英文语音。会话内只提示一次。
+     * 内置音色与本书语言不匹配时给一次性提示（会话内只提示一次）：
+     * 英文书落在中文声 → 口音重、数字带中文音；
+     * 中文书落在英文声 → 中文字读不出（静音）。都引导去设置下载对应模型。
      */
     private var embeddedVoiceMismatchHintShown = false
     private fun hintEmbeddedVoiceMismatchIfNeeded() {
@@ -893,9 +893,14 @@ class ReaderViewModel @Inject constructor(
         if (ttsHelper.ttsMode != TtsHelper.TtsMode.EMBEDDED) return
         val bookLang = _uiState.value.book?.language ?: "en"
         val model = ttsHelper.getEmbeddedEngine().getCurrentModelInfo()
-        if (bookLang.lowercase(java.util.Locale.ROOT).startsWith("en") && model.language != "en") {
-            embeddedVoiceMismatchHintShown = true
+        val wantsEnglish = bookLang.lowercase(java.util.Locale.ROOT).startsWith("en")
+        val modelIsEnglish = model.language == "en"
+        if (wantsEnglish == modelIsEnglish) return
+        embeddedVoiceMismatchHintShown = true
+        if (wantsEnglish) {
             showToast("当前用中英双语语音朗读英文，音色偏中文；可在「设置」下载纯英文语音模型改善")
+        } else {
+            showToast("当前英文语音无法朗读中文；可在「设置」下载中英双语语音模型")
         }
     }
 

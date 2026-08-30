@@ -48,11 +48,12 @@ import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
  * sherpa-onnx 是一个**完全自包含**的离线 TTS 库，把神经网络模型直接打包进 app，无需
  * 系统 TTS 服务，从根本上绕过了这个限制。
  *
- * **模型选择**：
- * - 英文：VITS-LJS（单说话人女声，约30MB）
- * - 中文：VITS-MeloTTS-zh_en（中英双语，约100MB，最匹配本 app 的双语场景）
+ * **模型选择**（按书籍语言路由，见 resolveModelForLanguage）：
+ * - 英文：Piper en_US-lessac-medium（韵律自然，约 66MB）——默认内置模型
+ * - 中文：VITS-MeloTTS-zh_en（中英双语、中文说话人，约 167MB，仅中文书使用；
+ *   它读英文口音重、数字带中文音，不做英文默认）
  *
- * 模型文件从 CDN 下载到 app 的私有目录（首次启动约 60-100MB 下载）。
+ * 模型文件从 CDN 下载到 app 的私有目录（首次约 66-167MB，按书语言）。
  */
 @Singleton
 class EmbeddedTtsEngine @Inject constructor(
@@ -206,15 +207,13 @@ class EmbeddedTtsEngine @Inject constructor(
         /**
          * 内置可用模型列表。
          *
-         * 默认推荐 MeloTTS-zh_en：中英双语，最适合中文书/混合场景。
-         * 注意：vits-melo-tts-zh_en 由 MeloTTS-Chinese 导出、只有 1 个中文说话人
-         * （官方文档明确），用它读英文口音重、语调平，英文数字词会被读出
-         * 中文音——纯英文书应路由到 language="en" 的纯英文模型
-         * （见 resolveModelForLanguage，按列表顺序取第一个 "en"）。
+         * 默认内置模型 = Piper lessac-medium（见 DEFAULT_MODEL_ID）：
+         * 韵律自然、英文发音地道，G2P 走 espeak-ng（归档自带
+         * espeak-ng-data/），仅归档下载（文件是整目录树，无逐文件镜像）。
          *
-         * 英文首选 Piper lessac-medium：韵律明显比 MeloTTS/LJS 自然，
-         * G2P 走 espeak-ng（归档自带 espeak-ng-data/）。仅归档下载
-         * （文件是整目录树，无逐文件镜像）。
+         * MeloTTS-zh_en 保留给中文书：它由 MeloTTS-Chinese 导出、只有 1 个
+         * 中文说话人（官方文档明确），读英文口音重、语调平、英文数字词
+         * 带中文音——语言路由只对非英文书使用它（见 resolveModelForLanguage）。
          */
         val AVAILABLE_MODELS = listOf(
             ModelInfo(
@@ -272,42 +271,12 @@ class EmbeddedTtsEngine @Inject constructor(
                     ),
                 ),
             ),
-            ModelInfo(
-                id = "vits-ljs",
-                displayName = "VITS LJS 纯英文女声（约 109MB）",
-                language = "en",
-                sizeBytes = 109_000_000L,
-                tarballUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-ljs.tar.bz2",
-                files = listOf(
-                    // 注意：HF 仓库只有 int8 量化版（vits-ljs.int8.onnx），
-                    // fp32 版只在 GitHub tarball 里。逐文件回退下载 int8 存为
-                    // model.onnx——sherpa-onnx 两种精度都能加载
-                    ModelFile(
-                        "vits-ljs/model.onnx",
-                        url = "https://hf-mirror.com/csukuangfj/vits-ljs/resolve/main/vits-ljs.int8.onnx",
-                        mirrorUrls = listOf(
-                            "https://huggingface.co/csukuangfj/vits-ljs/resolve/main/vits-ljs.int8.onnx",
-                        ),
-                    ),
-                    ModelFile(
-                        "vits-ljs/tokens.txt",
-                        url = "https://hf-mirror.com/csukuangfj/vits-ljs/resolve/main/tokens.txt",
-                        mirrorUrls = listOf(
-                            "https://huggingface.co/csukuangfj/vits-ljs/resolve/main/tokens.txt",
-                        ),
-                    ),
-                    ModelFile(
-                        "vits-ljs/lexicon.txt",
-                        url = "https://hf-mirror.com/csukuangfj/vits-ljs/resolve/main/lexicon.txt",
-                        mirrorUrls = listOf(
-                            "https://huggingface.co/csukuangfj/vits-ljs/resolve/main/lexicon.txt",
-                        ),
-                    ),
-                ),
-            ),
         )
 
-        val DEFAULT_MODEL_ID = "vits-melo-tts-zh_en"
+        // 内置默认 = Piper 英文声（此前默认的 MeloTTS-zh_en 实为中文说话人，
+        // 读英文语调平、数字带中文音，已被替换；melo 仅保留给中文书，
+        // 过渡用的 VITS-LJS 随之移除）
+        val DEFAULT_MODEL_ID = "vits-piper-en_US-lessac-medium"
 
         /** 用户当前选中的模型 ID（用 SharedPreferences 持久化） */
         private const val PREFS_NAME = "embedded_tts_prefs"
@@ -558,33 +527,38 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
 
     /**
      * 按书籍语言解析理想模型（不保证已下载）：
-     * 纯英文书优先纯英文模型——默认的中英双语模型实际是中文说话人
-     * （MeloTTS-Chinese 导出），读英文语调平、数字词带中文音；
-     * 中文/其他语言用当前选择/默认的中英双语模型。
+     * 英文书 → 纯英文模型（Piper）；中文/其他 → 中英双语模型（MeloTTS，
+     * 唯一能读中文的内置声）。注意默认模型已是 Piper，这里绝不能
+     * 直接落回 getCurrentModelInfo()——中文书会被路由到读不了中文的英文声。
      * 引导弹窗/下载入口用它决定给用户推荐哪个模型。
      */
     fun resolveModelForLanguage(language: String?): ModelInfo {
-        if (language?.lowercase(java.util.Locale.ROOT)?.startsWith("en") == true) {
-            AVAILABLE_MODELS.firstOrNull { it.language == "en" }?.let { return it }
+        val isEnglish = language?.lowercase(java.util.Locale.ROOT)?.startsWith("en") == true
+        val byLang = if (isEnglish) {
+            AVAILABLE_MODELS.firstOrNull { it.language == "en" }
+        } else {
+            AVAILABLE_MODELS.firstOrNull { it.language != "en" }
         }
-        return getCurrentModelInfo()
+        return byLang ?: getCurrentModelInfo()
     }
 
     /**
      * 初始化时实际可加载的模型：语言对应的理想模型已下载则用它，
-     * 否则退回用户选择/默认模型（已下载时），都不可用返回 null。
+     * 否则在同语言已下载模型里挑；再不行：英文书退回中英双语声
+     * （带口音但能出声），中文书只有英文声时宁可返回 null 走下载引导
+     * （英文声读中文是静音，不如明确引导下载双语模型）。
      */
     fun modelForInitialize(language: String?): ModelInfo? {
         val ideal = resolveModelForLanguage(language)
         if (isModelDownloaded(ideal)) return ideal
-        // 理想模型没下载时，优先同语言的其它已下载模型
-        // （如英文书：Piper 没下但 LJS 下过，不该退回中文声）
-        if (language?.lowercase(java.util.Locale.ROOT)?.startsWith("en") == true) {
+        val isEnglish = language?.lowercase(java.util.Locale.ROOT)?.startsWith("en") == true
+        if (isEnglish) {
             AVAILABLE_MODELS.firstOrNull { it.language == "en" && isModelDownloaded(it) }
                 ?.let { return it }
+            val fallback = getCurrentModelInfo()
+            return if (isModelDownloaded(fallback)) fallback else null
         }
-        val fallback = getCurrentModelInfo()
-        return if (isModelDownloaded(fallback)) fallback else null
+        return AVAILABLE_MODELS.firstOrNull { it.language != "en" && isModelDownloaded(it) }
     }
 
     /**

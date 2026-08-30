@@ -169,24 +169,29 @@ BUILD SUCCESSFUL
 **遗留**（记入延期）：设置页缺少模型选择列表（当前仅当前模型的
 下载/删除，自动路由已覆盖主场景）。
 
-## 6. 附录二：Piper 英文模型接入（语调改善，用户跟进需求）
+## 6. 附录二：内置模型替换为 Piper（用户跟进要求"替换"而非"新增"）
 
-语言路由落地后英文声用的是 VITS-LJS（LJSpeech 单说话人），韵律仍偏平。
-按用户要求引入 **Piper `en_US-lessac-medium`**（sherpa-onnx 官方归档，
-韵律明显更自然，~66MB，已验证发布物可达）：
+语言路由落地后英文声用的是过渡方案 VITS-LJS，韵律仍偏平。按用户要求，
+**默认内置模型直接替换**为 **Piper `en_US-lessac-medium`**（sherpa-onnx
+官方归档，韵律明显更自然，~66MB，已验证发布物可达）：
 
+- `DEFAULT_MODEL_ID` = Piper；**移除过渡用的 VITS-LJS**（列表只剩两个：
+  Piper 英文声 + MeloTTS 双语声）
+- 路由语义随之修正：默认模型变英文声后，`resolveModelForLanguage` /
+  `modelForInitialize` 不能再落回 `getCurrentModelInfo()`——中文书会被
+  路由到读不了中文的 Piper。现在：英文书 → Piper（未下载才回退双语声
+  并提示）；中文书 → MeloTTS 双语（只下载了英文声时返回 null 走下载
+  引导，英文声读中文是静音，不如明确引导）；音色不匹配 toast 改双向
 - `ModelInfo.usesEspeakNg` 标志：Piper 的 G2P 走 espeak-ng，归档自带
   `espeak-ng-data/` 目录树（392 个文件），初始化时 `dataDir` 指向该目录、
   不使用 lexicon
 - `initialize()` 泛化：主模型按 `.onnx` 后缀查找（Piper 文件名是
   `en_US-lessac-medium.onnx` 而非 `model.onnx`）；`dataDir` 按模型类型分派
-- Piper 排在模型列表首位 → `resolveModelForLanguage` 英文书首选 Piper；
-  `modelForInitialize` 增加同语言回退（Piper 未下载但 LJS 已下载时不回退
-  到中文声）
 - 仅归档下载（目录树无逐文件镜像）：归档失败直接报失败，不进空 URL 的
   逐文件路径；`deleteModel` 改递归删除（espeak-ng-data 目录）；
   tarball 下载阶段进度发 0f 而非 null（UI 正确显示"下载中"）
 
-验证：编译通过、detekt 0 issue、73 单测全过。实机听感待用户确认
-（英文书引导弹窗将推荐下载 Piper；已装 LJS 的用户切书即自动优先 Piper
-需先下载，未下载则继续用 LJS，不回退中文声）。
+验证：编译通过、detekt 0 issue、73 单测全过。实机听感待用户确认：
+新用户/英文书用户的引导弹窗与设置页下载的都是 Piper（~66MB，比原
+167MB 双语模型还小）；已下载 MeloTTS 的老用户读英文书时引导下载 Piper，
+中文书继续用已下载的双语模型。
