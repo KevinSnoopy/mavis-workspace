@@ -42,6 +42,9 @@ fun HomeScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
 
+    // 日期文本只在进入页面时算一次：原实现在每次重组都 new SimpleDateFormat
+    val dateText = remember { SimpleDateFormat("MM月dd日 E", Locale.CHINA).format(Date()) }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -53,7 +56,7 @@ fun HomeScreen(
                             fontWeight = FontWeight.Bold,
                         )
                         Text(
-                            SimpleDateFormat("MM月dd日 E", Locale.CHINA).format(Date()),
+                            dateText,
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )

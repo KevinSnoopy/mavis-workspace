@@ -55,8 +55,24 @@ class TtsHelper @Inject constructor(
     val ttsModeState: StateFlow<TtsMode> = _ttsModeState.asStateFlow()
     // 使用 CopyOnWriteArrayList 保证多协程/回调线程并发访问安全
     private val pendingContinuations = CopyOnWriteArrayList<kotlin.coroutines.Continuation<Boolean>>()
-    // 协程作用域（用于 embedded TTS 的异步朗读）
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    // 协程作用域（用于 embedded TTS 的异步朗读）。
+    // 用 var 而非 val：shutdown() 会 cancel 掉旧 scope，若不换新，
+    // 之后所有 launch 都落进已取消的 scope，embedded TTS 将永久静默失效。
+    @Volatile
+    private var scope = newScope()
+
+    private fun newScope(): CoroutineScope =
+        CoroutineScope(SupervisorJob() + Dispatchers.Main)
+
+    // 当前 embedded 单句朗读的协程，用于在 stop()/新 speak() 时取消停留在
+    // speakMutex 上的过期朗读，避免旧文本在新朗读之后才播出（乱序）
+    @Volatile
+    private var embeddedSpeakJob: kotlinx.coroutines.Job? = null
+
+    // SYSTEM 句子链的终止回调：tts.stop() 后引擎只回 onStop 不回 onDone/onError，
+    // 链上回调会被孤立；stop() 时从这里补偿调用
+    @Volatile
+    private var activeChainOnAllDone: (() -> Unit)? = null
 
     // 标记是否正在自动朗读句子链，防止 speak() 打断
     @Volatile
@@ -75,6 +91,11 @@ class TtsHelper @Inject constructor(
     private fun updateTtsMode(mode: TtsMode) {
         ttsMode = mode
         _ttsModeState.value = mode
+        if (mode == TtsMode.SYSTEM) {
+            // 切回系统 TTS 时释放已加载的 sherpa-onnx 模型（上百 MB native 内存），
+            // 反向切换（→EMBEDDED）的释放已在 initializeEmbeddedForced 处理
+            try { embeddedTts.release() } catch (_: Exception) {}
+        }
     }
 
     /**
@@ -149,8 +170,12 @@ class TtsHelper @Inject constructor(
         }
         if (!allowFallback || enginePackage != null) return false
 
-        // 默认引擎失败 — 综合扫描（getEngines API + Intent 扫描 + 已知包名）
-        val discovered = TtsEngineHelper.discoverAllTtsEngines(context)
+        // 默认引擎失败 — 综合扫描（getEngines API + Intent 扫描 + 已知包名）。
+        // 扫描涉及 binder/PackageManager 查询且可能遍历多个引擎，放 IO 线程，
+        // 避免初始化走 Main 调度器时卡 UI
+        val discovered = withContext(Dispatchers.IO) {
+            TtsEngineHelper.discoverAllTtsEngines(context)
+        }
         android.util.Log.w(
             TAG,
             "Default TTS engine failed. Comprehensive scan found ${discovered.size} engines: " +
@@ -356,8 +381,19 @@ class TtsHelper @Inject constructor(
                 result == TextToSpeech.LANG_NOT_SUPPORTED
             ) {
                 android.util.Log.w(TAG, "TTS does not support locale $currentLocale, status=$result")
-                tts?.setLanguage(Locale.US)
-                InitFailureReason.LANGUAGE_UNSUPPORTED
+                // 尝试回退到英语：只有连英语也不支持才算语言不可用。
+                // 原实现在 setLanguage(Locale.US) 成功后仍然销毁引擎，
+                // 导致 isInitialized=true 但 tts=null，之后所有朗读永久静默。
+                val usResult = tts?.setLanguage(Locale.US)
+                if (usResult == TextToSpeech.LANG_MISSING_DATA ||
+                    usResult == TextToSpeech.LANG_NOT_SUPPORTED
+                ) {
+                    InitFailureReason.LANGUAGE_UNSUPPORTED
+                } else {
+                    currentLocale = Locale.US
+                    tts?.setSpeechRate(1.0f)
+                    null
+                }
             } else {
                 tts?.setSpeechRate(1.0f)
                 null
@@ -478,8 +514,10 @@ class TtsHelper @Inject constructor(
                 tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "utterance_${System.currentTimeMillis()}")
             }
             TtsMode.EMBEDDED -> {
-                // speak() 是 suspend 且在 IO 线程阻塞到播放完成；完成后切回主线程回调
-                scope.launch {
+                // speak() 是 suspend 且在 IO 线程阻塞到播放完成；完成后切回主线程回调。
+                // 先取消仍挂在 speakMutex 上的上一次朗读，避免旧文本在新朗读之后才播出
+                embeddedSpeakJob?.cancel()
+                embeddedSpeakJob = scope.launch {
                     embeddedTts.speak(text, speed = currentSpeed)
                     withContext(Dispatchers.Main) {
                         onComplete?.invoke()
@@ -503,10 +541,14 @@ class TtsHelper @Inject constructor(
 
         when (ttsMode) {
             TtsMode.SYSTEM -> {
+                // 记录链的终止回调：tts.stop() 后引擎只回调 onStop，
+                // onDone/onError 不再触发，链会永久悬挂；stop() 从这里补偿调用
+                activeChainOnAllDone = onAllDone
                 var index = 0
                 fun speakNext() {
                     if (index >= sentences.size) {
                         isInSentenceChain = false
+                        activeChainOnAllDone = null
                         onAllDone()
                         return
                     }
@@ -530,20 +572,26 @@ class TtsHelper @Inject constructor(
                 speakNext()
             }
             TtsMode.EMBEDDED -> {
-                // Embedded 模式：逐句异步朗读
+                // Embedded 模式：逐句异步朗读。
+                // try/finally 保证被 stop() 取消（CancellationException 直接穿透 for 循环）
+                // 时 onAllDone 仍然触发，否则阅读页会永久卡在"朗读中"状态
                 scope.launch {
-                    for ((index, sentence) in sentences.withIndex()) {
-                        if (!isInSentenceChain) {
-                            // 被 stop() 打断
-                            break
+                    try {
+                        for ((index, sentence) in sentences.withIndex()) {
+                            if (!isInSentenceChain) {
+                                // 被 stop() 打断
+                                break
+                            }
+                            embeddedTts.speak(sentence, speed = currentSpeed)
+                            withContext(Dispatchers.Main) {
+                                onSentenceDone(index)
+                            }
                         }
-                        embeddedTts.speak(sentence, speed = currentSpeed)
-                        withContext(Dispatchers.Main) {
-                            onSentenceDone(index)
-                        }
+                    } finally {
+                        isInSentenceChain = false
+                        // scope 在 Dispatchers.Main 上，直接回调即可
+                        onAllDone()
                     }
-                    isInSentenceChain = false
-                    onAllDone()
                 }
             }
         }
@@ -552,8 +600,21 @@ class TtsHelper @Inject constructor(
     fun stop() {
         isInSentenceChain = false
         when (ttsMode) {
-            TtsMode.SYSTEM -> tts?.stop()
-            TtsMode.EMBEDDED -> embeddedTts.stop()
+            TtsMode.SYSTEM -> {
+                tts?.stop()
+                // tts.stop() 不会触发 onDone/onError（只有 onStop），
+                // 句子链回调被孤立；补偿调用当前链的终止回调
+                activeChainOnAllDone?.let { cb ->
+                    activeChainOnAllDone = null
+                    cb()
+                }
+            }
+            TtsMode.EMBEDDED -> {
+                // 取消停在 speakMutex 上的过期朗读 + 当前朗读
+                embeddedSpeakJob?.cancel()
+                embeddedSpeakJob = null
+                embeddedTts.stop()
+            }
         }
     }
 
@@ -576,17 +637,32 @@ class TtsHelper @Inject constructor(
 
     fun shutdown() {
         isInSentenceChain = false
+        activeChainOnAllDone = null
+        embeddedSpeakJob?.cancel()
+        embeddedSpeakJob = null
         try { tts?.stop(); tts?.shutdown() } catch (_: Exception) {}
         tts = null
         isInitialized = false
         initPending = false
         ttsGeneration++
+        // 唤醒所有等待初始化的协程（返回 false），否则它们要挂到 15s 超时，
+        // 超时后的清理回调还可能误伤新建的实例
+        val pending = pendingContinuations.toList()
         pendingContinuations.clear()
+        pending.forEach { c ->
+            try { c.resume(false) } catch (_: IllegalStateException) {
+                // 协程已被取消/已完成，忽略
+            }
+        }
         try { embeddedTts.stop() } catch (_: Exception) {}
         // P0 修复: cancel 内部协程 scope,避免 shutdown 后仍在飞的协程持有
         // Activity/Context 引用造成内存泄漏(单例生命周期 = 进程生命周期,通常不致命,
         // 但 hot reload / 单元测试 / 进程存活但 TTS 实例重建场景会泄漏 Activity 引用)
-        scope.cancel()
+        // 注意：先换新 scope 再 cancel 旧的 — scope 是 val 时，shutdown 后
+        // 所有后续 launch 都落进已取消的 scope，embedded TTS 会永久静默失效
+        val oldScope = scope
+        scope = newScope()
+        oldScope.cancel()
     }
 
     /**

@@ -306,8 +306,9 @@ fun WordCard(
 ) {
     var expanded by remember { mutableStateOf(false) }
     var showNoteDialog by remember { mutableStateOf(false) }
-    var noteText by remember { mutableStateOf(vocabulary.note ?: "") }
-    var exampleText by remember { mutableStateOf(vocabulary.example ?: "") }
+    // 带上数据键：单词的笔记/例句被外部路径更新后，对话框不再显示陈旧初值
+    var noteText by remember(vocabulary.id, vocabulary.note) { mutableStateOf(vocabulary.note ?: "") }
+    var exampleText by remember(vocabulary.id, vocabulary.example) { mutableStateOf(vocabulary.example ?: "") }
 
     if (showNoteDialog) {
         AlertDialog(

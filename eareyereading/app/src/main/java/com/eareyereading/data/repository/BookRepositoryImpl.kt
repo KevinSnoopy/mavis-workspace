@@ -1,11 +1,11 @@
 package com.eareyereading.data.repository
 
-import android.util.Log
 import androidx.room.withTransaction
 import com.eareyereading.data.local.dao.BookDao
 import com.eareyereading.data.local.dao.BookmarkDao
 import com.eareyereading.data.local.dao.HighlightDao
 import com.eareyereading.data.local.dao.ReadingStateDao
+import com.eareyereading.data.local.dao.ReadingStatsDao
 import com.eareyereading.data.local.dao.WordFrequencyDao
 import com.eareyereading.data.local.database.AppDatabase
 import com.eareyereading.data.local.entity.BookEntity
@@ -24,6 +24,7 @@ class BookRepositoryImpl @Inject constructor(
     private val bookmarkDao: BookmarkDao,
     private val highlightDao: HighlightDao,
     private val readingStateDao: ReadingStateDao,
+    private val readingStatsDao: ReadingStatsDao,
     private val wordFrequencyDao: WordFrequencyDao,
     private val database: AppDatabase,
 ) : BookRepository {
@@ -38,16 +39,18 @@ class BookRepositoryImpl @Inject constructor(
         bookDao.getBookByIdFlow(id).map { it?.toDomain() }
 
     override suspend fun addBook(book: Book): Long {
-        val paragraphs = try {
-            if (book.content.isNotBlank()) {
-                book.content.split("\n\n").filter { it.isNotBlank() }
-            } else if (book.filePath.isNotBlank()) {
-                epubParser.parseBook(book.filePath)
-            } else {
-                emptyList()
+        val paragraphs = if (book.content.isNotBlank()) {
+            book.content.split("\n\n").filter { it.isNotBlank() }
+        } else if (book.filePath.isNotBlank()) {
+            // parseBook 内部吞掉 IO 错误返回空列表；空结果即文件不可解析。
+            // 这里必须让调用方感知，否则会静默创建一本 0 词的空书，
+            // 且调用方拿到的 rowId 与成功导入无法区分。
+            val parsed = epubParser.parseBook(book.filePath)
+            if (parsed.isEmpty()) {
+                throw java.io.IOException("Failed to parse book file: ${book.filePath}")
             }
-        } catch (e: Exception) {
-            Log.e("BookRepository", "Failed to parse book", e)
+            parsed
+        } else {
             emptyList()
         }
 
@@ -83,6 +86,7 @@ class BookRepositoryImpl @Inject constructor(
             bookmarkDao.deleteAllForBook(bookId)
             highlightDao.deleteAllForBook(bookId)
             readingStateDao.deleteForBook(bookId)
+            readingStatsDao.deleteForBook(bookId)
             wordFrequencyDao.deleteForBook(bookId)
             bookDao.getBookById(bookId)?.let { bookDao.delete(it) }
         }

@@ -12,6 +12,9 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
+import java.util.Locale
+import java.util.concurrent.atomic.AtomicBoolean
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.coroutines.resume
@@ -30,8 +33,9 @@ class TranslationHelper @Inject constructor(
     private var mlkitTranslator: com.google.mlkit.nl.translate.Translator? = null
     @Volatile
     private var mlkitReady = false
-    @Volatile
-    private var initAttempted = false
+
+    /** CAS 保证并发首次翻译时只初始化一次，避免重复创建 Translator 泄漏。 */
+    private val initAttempted = AtomicBoolean(false)
     @Volatile
     private var mlkitReadyDeferred: CompletableDeferred<Boolean>? = null
 
@@ -66,8 +70,8 @@ class TranslationHelper @Inject constructor(
 
     // ── 懒加载初始化（线程安全）─────────────────────
     private suspend fun ensureInitialized() {
-        if (initAttempted) return
-        initAttempted = true
+        // compareAndSet：并发首次翻译只允许一个线程进入初始化
+        if (!initAttempted.compareAndSet(false, true)) return
 
         // 使用 ML Kit（后台预加载模型）
         initMlKitAsync()
@@ -128,15 +132,28 @@ class TranslationHelper @Inject constructor(
             android.util.Log.d("TranslationHelper", "ML Kit not ready, using dict fallback")
             return lookupLocalDict(text)
         }
-        // ML Kit 翻译；失败时回退到本地词典
-        val mlkitResult = suspendCancellableCoroutine { cont ->
-            mlkitTranslator?.translate(text)
-                ?.addOnSuccessListener { translated -> cont.resume(translated) }
-                ?.addOnFailureListener {
-                    android.util.Log.w("TranslationHelper", "ML Kit translate failed: ${it.message}")
+        // ML Kit 翻译；失败/超时/并发 close 时回退到本地词典。
+        // 外层 20s 超时：GMS Task 挂死时不再无限挂起调用方。
+        val mlkitResult = withTimeoutOrNull(20_000) {
+            suspendCancellableCoroutine { cont ->
+                val translator = mlkitTranslator
+                if (translator == null) {
+                    cont.resume(null)
+                    return@suspendCancellableCoroutine
+                }
+                try {
+                    translator.translate(text)
+                        .addOnSuccessListener { translated -> cont.resume(translated) }
+                        .addOnFailureListener {
+                            android.util.Log.w("TranslationHelper", "ML Kit translate failed: ${it.message}")
+                            cont.resume(null)
+                        }
+                } catch (e: java.lang.RuntimeException) {
+                    // close() 与 translate() 并发时 ML Kit 可能抛 IllegalStateException 等
+                    android.util.Log.w("TranslationHelper", "ML Kit translate threw: ${e.message}")
                     cont.resume(null)
                 }
-                ?: cont.resume(null)
+            }
         }
         return mlkitResult ?: lookupLocalDict(text)
     }
@@ -163,7 +180,8 @@ class TranslationHelper @Inject constructor(
 
     // ── 本地词典（用户下载的分级词典 + 内置兜底）───────────
     private suspend fun lookupLocalDict(text: String): String? {
-        val clean = text.trim().lowercase().replace(Regex("[^a-z]"), "")
+        // Locale.ROOT：避免土耳其语等 locale 下 lowercase 的 I→ı 变体破坏查词
+        val clean = text.trim().lowercase(Locale.ROOT).replace(Regex("[^a-z]"), "")
         if (clean.length < 2) return null
         // 优先查用户选中的下载词典
         dictionaryManager.lookup(clean)?.let { return it }
@@ -175,7 +193,7 @@ class TranslationHelper @Inject constructor(
         mlkitTranslator?.close()
         mlkitTranslator = null
         mlkitReady = false
-        initAttempted = false  // 允许重新初始化
+        initAttempted.set(false)  // 允许重新初始化
     }
 
     private companion object {

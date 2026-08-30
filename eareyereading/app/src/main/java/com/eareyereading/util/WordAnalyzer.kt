@@ -1,5 +1,6 @@
 package com.eareyereading.util
 
+import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -52,8 +53,8 @@ class WordAnalyzer @Inject constructor() {
     fun calculateWordFrequencies(text: String): Map<String, Int> {
         val words = extractWords(text)
         return words
-            .filter { it.length > 2 && it.lowercase() !in stopWords }
-            .groupingBy { it.lowercase() }
+            .filter { it.length > 2 && it.lowercase(Locale.ROOT) !in stopWords }
+            .groupingBy { it.lowercase(Locale.ROOT) }
             .eachCount()
     }
 
@@ -70,7 +71,7 @@ class WordAnalyzer @Inject constructor() {
     fun extractKeyWords(sentence: String): List<String> {
         val words = extractWords(sentence)
         return words.filter {
-            it.length >= 5 && it.lowercase() !in stopWords
+            it.length >= 5 && it.lowercase(Locale.ROOT) !in stopWords
         }
     }
 
@@ -107,10 +108,13 @@ class WordAnalyzer @Inject constructor() {
         var pos = 0
 
         val hideWords = wordsToHide ?: if (ratio > 0) {
-            words.filter { it.length > 3 && it.lowercase() !in stopWords }
+            // 先去重再采样：否则重复出现的词会占掉多个隐藏名额，
+            // 实际隐藏比例明显低于请求的 ratio
+            words.map { it.lowercase(Locale.ROOT) }
+                .filter { it.length > 3 && it !in stopWords }
+                .distinct()
                 .shuffled()
                 .take((words.size * ratio).toInt().coerceAtLeast(1))
-                .map { it.lowercase() }
                 .toSet()
         } else emptySet()
 
@@ -128,7 +132,7 @@ class WordAnalyzer @Inject constructor() {
                 result.add(ClozeWord(text.substring(pos, start), isHidden = false, isWord = false))
             }
 
-            val lower = word.lowercase()
+            val lower = word.lowercase(Locale.ROOT)
             val isHidden = lower in hideWords
             result.add(ClozeWord(word, isHidden = isHidden, isWord = true))
             pos = start + word.length
@@ -165,8 +169,9 @@ class WordAnalyzer @Inject constructor() {
                 result.add(FuzzyWord(text.substring(pos, start), isBlurred = true, isWord = false))
             }
 
-            // 随机决定是否模糊
-            val isBlurred = kotlin.random.Random.nextFloat() > visibleRatio
+            // 随机决定是否模糊。用 "< (1 - visibleRatio)" 而不是 "> visibleRatio"：
+            // 后者在 visibleRatio=0 时 nextFloat()==0.0 会漏出可见词（边界概率事件）
+            val isBlurred = kotlin.random.Random.nextFloat() < (1f - visibleRatio)
             result.add(FuzzyWord(word, isBlurred = isBlurred, isWord = true))
             pos = start + word.length
         }
@@ -183,6 +188,8 @@ class WordAnalyzer @Inject constructor() {
      */
     fun estimateReadingLevel(text: String): String {
         val words = extractWords(text)
+        // 空输入：average() 为 NaN，所有比较为 false 会落进 else 误报 "Advanced"
+        if (words.isEmpty()) return "Easy"
         val avgLength = words.map { it.length }.average()
         return when {
             avgLength < 4.5 -> "Easy"

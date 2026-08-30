@@ -133,16 +133,22 @@ class NotificationHelper @Inject constructor(
      */
     fun cancelReminder() {
         val intent = Intent(context, NotificationReceiver::class.java)
+        // FLAG_NO_CREATE：不存在时返回 null，避免为了取消反而创建/刷新 PendingIntent
         val pendingIntent = PendingIntent.getBroadcast(
             context,
             REQUEST_CODE,
             intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE,
         )
         // P1 修复: 同上
         val am = alarmManager
+        if (pendingIntent == null) {
+            android.util.Log.d("NotificationHelper", "No scheduled reminder to cancel")
+            return
+        }
         if (am != null) {
             am.cancel(pendingIntent)
+            pendingIntent.cancel()
         } else {
             android.util.Log.w("NotificationHelper", "AlarmManager not available, cannot cancel reminder")
         }

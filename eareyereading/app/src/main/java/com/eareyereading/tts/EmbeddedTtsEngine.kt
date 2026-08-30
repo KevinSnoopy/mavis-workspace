@@ -20,6 +20,7 @@ import com.k2fsa.sherpa.onnx.OfflineTtsVitsModelConfig
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -121,6 +122,9 @@ class EmbeddedTtsEngine @Inject constructor(
     ) {
         fun tarballAllUrls(): List<String> =
             (listOfNotNull(tarballUrl) + tarballMirrorUrls)
+                // 镜像列表里历史上混入过裸 model.onnx URL：它会被写成 .tar.bz2
+                // 导致 bzip2 解压必然失败，还白白下载上百 MB。这里只接受 tarball。
+                .filter { it.endsWith(".tar.bz2") }
     }
 
     data class ModelFile(
@@ -443,8 +447,11 @@ private fun splitSentences(text: String): List<String> {
     }
 
     fun getCurrentModelInfo(): ModelInfo {
+        // firstOrNull 全程兜底：持久化的模型 id 可能已被新版本移除，
+        // first{} 会直接抛 NoSuchElementException（且本方法会在 Compose 组合期被调用）
         return AVAILABLE_MODELS.firstOrNull { it.id == currentModelName }
-            ?: AVAILABLE_MODELS.first { it.id == getSelectedModelId() }
+            ?: AVAILABLE_MODELS.firstOrNull { it.id == getSelectedModelId() }
+            ?: AVAILABLE_MODELS.first()
     }
 
     /**
@@ -501,7 +508,7 @@ private fun splitSentences(text: String): List<String> {
                 val ok = downloadAndExtractTarball(modelInfo, dir, onProgress)
                 if (ok) {
                     _downloadProgress.value = 1f
-                    showDownloadNotification(1f, "下载完成，正在启用...")
+                    showDownloadCompleteNotification("下载完成，正在启用...")
                     return@withContext true
                 }
                 Log.w(TAG, "tarball 下载/解压失败，回退到逐文件下载")
@@ -559,8 +566,13 @@ private fun splitSentences(text: String): List<String> {
                 }
             }
             _downloadProgress.value = 1f
-            showDownloadNotification(1f, "下载完成，正在启用...")
+            showDownloadCompleteNotification("下载完成，正在启用...")
             true
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            // 调用方取消（离开页面等）：清掉 ongoing 通知后向上传播
+            cancelDownloadNotification()
+            _downloadProgress.value = null
+            throw e
         } catch (e: Exception) {
             Log.e(TAG, "downloadModel failed", e)
             _state.value = EngineState.DOWNLOAD_FAILED(e.message ?: "未知错误")
@@ -575,7 +587,7 @@ private fun splitSentences(text: String): List<String> {
      * tarball 内顶层目录应为模型 id（如 vits-melo-tts-zh_en/），解压后路径与 files.relativePath 对齐。
      * 下载到临时文件（支持断点续传），解压成功后删除 tarball 并为每个文件写 .complete 标记。
      */
-    private fun downloadAndExtractTarball(
+    private suspend fun downloadAndExtractTarball(
         modelInfo: ModelInfo,
         modelsDir: File,
         onProgress: (Float) -> Unit,
@@ -629,14 +641,20 @@ private fun splitSentences(text: String): List<String> {
         // 解压
         showDownloadNotification(null, "解压中...")
         try {
+            val canonicalRoot = modelsDir.canonicalPath + File.separator
             java.io.FileInputStream(tarballFile).use { fis ->
                 BZip2CompressorInputStream(fis).use { bzis ->
                     TarArchiveInputStream(bzis).use { tis ->
                         var entry = tis.nextEntry
                         while (entry != null) {
                             val name = entry.name
-                            // 安全：跳过 .. 路径
-                            if (name.contains("..")) {
+                            // 安全：entry 名来自远端 CDN 归档，不可信。
+                            // 只接受常规文件/目录（跳过符号链接/硬链接等特殊条目），
+                            // 并用 canonical 路径校验落点必须在 modelsDir 内，
+                            // 替代只查 ".." 子串的旧检查（会误杀 foo..bar、漏掉符号链接）
+                            if ((!entry.isFile && !entry.isDirectory) ||
+                                !File(modelsDir, name).canonicalPath.startsWith(canonicalRoot)
+                            ) {
                                 entry = tis.nextEntry
                                 continue
                             }
@@ -684,7 +702,7 @@ private fun splitSentences(text: String): List<String> {
      * 若 target 已存在部分内容，通过 Range: bytes=offset- 请求续传。
      * 服务器不支持 Range 时回退为全量覆盖下载。
      */
-    private fun downloadFileWithResume(
+    private suspend fun downloadFileWithResume(
         url: String,
         target: File,
         onChunkDownloaded: (Int) -> Unit,
@@ -717,6 +735,9 @@ private fun splitSentences(text: String): List<String> {
                     false
                 }
             }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            // 调用方协程已取消（如离开下载页面）：向上传播，不能吞掉
+            throw e
         } catch (e: Exception) {
             Log.e(TAG, "downloadFile failed for $url", e)
             false
@@ -725,7 +746,7 @@ private fun splitSentences(text: String): List<String> {
         }
     }
 
-    private fun appendStream(
+    private suspend fun appendStream(
         conn: HttpURLConnection,
         target: File,
         existingLen: Long,
@@ -745,22 +766,33 @@ private fun splitSentences(text: String): List<String> {
             conn.inputStream.use { input ->
                 java.io.FileOutputStream(target, /* append = */ true).use { output ->
                     val buffer = ByteArray(8192)
+                    var sinceCheck = 0
                     while (true) {
                         val read = input.read(buffer)
                         if (read == -1) break
                         output.write(buffer, 0, read)
                         onChunkDownloaded(read)
+                        // 协作式取消：字节循环本身无挂起点，取消的协程会把
+                        // 整个大文件下完才退出。每 256KB 检查一次。
+                        sinceCheck += read
+                        if (sinceCheck >= 262144) {
+                            sinceCheck = 0
+                            kotlin.coroutines.coroutineContext[kotlinx.coroutines.Job]
+                                ?.ensureActive()
+                        }
                     }
                 }
             }
             true
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
             Log.e(TAG, "appendStream failed", e)
             false
         }
     }
 
-    private fun fullStream(
+    private suspend fun fullStream(
         conn: HttpURLConnection,
         target: File,
         onChunkDownloaded: (Int) -> Unit,
@@ -769,15 +801,25 @@ private fun splitSentences(text: String): List<String> {
             conn.inputStream.use { input ->
                 java.io.FileOutputStream(target, /* append = */ false).use { output ->
                     val buffer = ByteArray(8192)
+                    var sinceCheck = 0
                     while (true) {
                         val read = input.read(buffer)
                         if (read == -1) break
                         output.write(buffer, 0, read)
                         onChunkDownloaded(read)
+                        // 同 appendStream：周期性响应协程取消
+                        sinceCheck += read
+                        if (sinceCheck >= 262144) {
+                            sinceCheck = 0
+                            kotlin.coroutines.coroutineContext[kotlinx.coroutines.Job]
+                                ?.ensureActive()
+                        }
                     }
                 }
             }
             true
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
             Log.e(TAG, "fullStream failed", e)
             false
@@ -831,12 +873,18 @@ private fun splitSentences(text: String): List<String> {
                 )
                 val config = OfflineTtsConfig(model = modelConfig)
                 val newTts = OfflineTts(config = config)
-                synchronized(this) {
-                    // 替换前 shutdown 旧的
-                    tts?.let { try { it.release() } catch (_: Exception) {} }
-                    tts = newTts
-                    currentModelName = modelInfo.id
-                    sampleRate = newTts.sampleRate()
+                // 关键：替换/释放旧 native 实例必须与 generate() 互斥。
+                // 只加 synchronized(this) 时，另一个协程可能正持有 speakMutex
+                // 在 generate() 里使用旧实例 → release() 直接 JNI use-after-free
+                // （正是注释里说的 SIGSEGV 类别）。构造在锁外完成，仅替换进锁。
+                speakMutex.withLock {
+                    synchronized(this) {
+                        // 替换前 shutdown 旧的
+                        tts?.let { try { it.release() } catch (_: Exception) {} }
+                        tts = newTts
+                        currentModelName = modelInfo.id
+                        sampleRate = newTts.sampleRate()
+                    }
                 }
                 _state.value = EngineState.READY(modelInfo.id)
                 Log.i(TAG, "Initialized sherpa-onnx OfflineTts: model=${modelInfo.id}, sampleRate=$sampleRate")
@@ -1041,15 +1089,18 @@ private fun splitSentences(text: String): List<String> {
             elapsed += 50
             synchronized(audioTrackLock) {
                 if (audioTrack !== track) {
-                    // 被 stop() 打断（新 track 或 null）
-                    track.release()
+                    // 被 stop()/新的 playPcm 接管：对方已在锁内 release 过这个 track。
+                    // 这里不能再 release（双重释放会抛 IllegalStateException）
                     return
                 }
             }
         }
-        track.release()
+        // 自然播完：在锁内确认仍是当前 track 才释放，避免与 stop() 竞态双重释放
         synchronized(audioTrackLock) {
-            if (audioTrack === track) audioTrack = null
+            if (audioTrack === track) {
+                audioTrack = null
+                track.release()
+            }
         }
     }
 
@@ -1116,6 +1167,29 @@ private fun splitSentences(text: String): List<String> {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
         builder.setContentIntent(pi)
+        nm.notify(DL_NOTIFICATION_ID, builder.build())
+    }
+
+    /**
+     * 下载成功后的收尾通知：替换掉 ongoing 的进度通知。
+     * 原实现成功后只重发 setOngoing(true) 的通知，永远不可划掉；
+     * 这里改为普通通知 + autoCancel，同时结束进度通知的常驻状态。
+     */
+    private fun showDownloadCompleteNotification(contentText: String) {
+        ensureDownloadChannel()
+        val nm = notificationManager ?: run {
+            // 服务不可用时至少要把 ongoing 进度通知撤掉
+            cancelDownloadNotification()
+            return
+        }
+        val builder = NotificationCompat.Builder(context, DL_CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.stat_sys_download_done)
+            .setContentTitle("内置语音模型")
+            .setContentText(contentText)
+            .setOngoing(false)
+            .setAutoCancel(true)
+            .setOnlyAlertOnce(true)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
         nm.notify(DL_NOTIFICATION_ID, builder.build())
     }
 

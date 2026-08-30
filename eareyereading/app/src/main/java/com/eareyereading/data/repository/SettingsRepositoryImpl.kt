@@ -1,9 +1,12 @@
 package com.eareyereading.data.repository
 
+import android.content.Context
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.*
 import com.eareyereading.domain.model.ReadingTheme
 import com.eareyereading.domain.repository.SettingsRepository
+import com.eareyereading.util.ReminderPrefs
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import javax.inject.Inject
@@ -12,6 +15,7 @@ import javax.inject.Singleton
 @Singleton
 class SettingsRepositoryImpl @Inject constructor(
     private val dataStore: DataStore<Preferences>,
+    @ApplicationContext private val context: Context,
 ) : SettingsRepository {
 
     companion object {
@@ -94,6 +98,8 @@ class SettingsRepositoryImpl @Inject constructor(
 
     override suspend fun setNotifications(enabled: Boolean) {
         dataStore.edit { it[NOTIFICATIONS] = enabled }
+        // 同步镜像：开机/时区广播里的 Receiver 无法挂起读 DataStore
+        ReminderPrefs.setEnabled(context, enabled)
     }
 
     override suspend fun setCollinsHighlight(enabled: Boolean) {
@@ -107,5 +113,7 @@ class SettingsRepositoryImpl @Inject constructor(
 
     override suspend fun clearAll() {
         dataStore.edit { it.clear() }
+        // clear 后 getNotifications 回退默认 true，镜像保持一致
+        ReminderPrefs.setEnabled(context, true)
     }
 }

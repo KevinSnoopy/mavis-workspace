@@ -30,34 +30,41 @@ class VocabularyViewModel @Inject constructor(
 
     init {
         viewModelScope.launch {
-            combine(
-                vocabularyRepository.getAllVocabulary(),
-                vocabularyRepository.getTotalCount(),
-                vocabularyRepository.getLearnedCount(),
-                searchQuery,
-            ) { words, total, learned, query ->
-                val filtered = if (query.isBlank()) words
-                else words.filter {
-                    it.word.contains(query, ignoreCase = true) ||
-                    it.definition?.contains(query, ignoreCase = true) == true
-                }
-                VocabularyUiState(
-                    allWords = filtered,
-                    filteredWords = filtered,
-                    totalCount = total,
-                    learnedCount = learned,
-                    searchQuery = query,
-                )
-            }.collect { state ->
-                _uiState.update {
-                    it.copy(
-                        allWords = state.allWords,
-                        filteredWords = state.filteredWords,
-                        totalCount = state.totalCount,
-                        learnedCount = state.learnedCount,
-                        searchQuery = state.searchQuery,
+            try {
+                combine(
+                    vocabularyRepository.getAllVocabulary(),
+                    vocabularyRepository.getTotalCount(),
+                    vocabularyRepository.getLearnedCount(),
+                    searchQuery,
+                ) { words, total, learned, query ->
+                    val filtered = if (query.isBlank()) words
+                    else words.filter {
+                        it.word.contains(query, ignoreCase = true) ||
+                        it.definition?.contains(query, ignoreCase = true) == true
+                    }
+                    VocabularyUiState(
+                        allWords = filtered,
+                        filteredWords = filtered,
+                        totalCount = total,
+                        learnedCount = learned,
+                        searchQuery = query,
                     )
+                }.collect { state ->
+                    _uiState.update {
+                        it.copy(
+                            allWords = state.allWords,
+                            filteredWords = state.filteredWords,
+                            totalCount = state.totalCount,
+                            learnedCount = state.learnedCount,
+                            searchQuery = state.searchQuery,
+                        )
+                    }
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // 数据层异常不再让 viewModelScope 未捕获异常崩 App
+                android.util.Log.e("VocabularyViewModel", "vocabulary combine failed", e)
             }
         }
     }

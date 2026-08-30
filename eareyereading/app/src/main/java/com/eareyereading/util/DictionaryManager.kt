@@ -7,6 +7,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
@@ -142,14 +143,30 @@ class DictionaryManager @Inject constructor(
         val manifest = parseManifest() ?: return
         val active = _activeDictId.value
         _statuses.value = manifest.dictionaries.map { info ->
-            val file = File(dictDir, info.fileName)
+            val file = safeDictFile(info.fileName)
             DictionaryStatus(
                 info = info,
-                downloaded = file.exists(),
+                downloaded = file?.exists() == true,
                 downloading = false,
                 progress = 0f,
                 active = info.id == active,
             )
+        }
+    }
+
+    /**
+     * 把 manifest 里的 fileName 落到 dictDir 内的安全文件。
+     * manifest 来自远端 CDN，fileName 不可信：去掉路径段并校验
+     * canonical 路径仍在 dictDir 内，防路径穿越写入/删除沙箱内任意文件。
+     */
+    private fun safeDictFile(fileName: String): File? {
+        val name = fileName.substringAfterLast('/')
+        if (name.isEmpty() || name == "." || name == "..") return null
+        val file = File(dictDir, name)
+        return try {
+            if (file.canonicalPath.startsWith(dictDir.canonicalPath + File.separator)) file else null
+        } catch (_: java.io.IOException) {
+            null
         }
     }
 
@@ -162,6 +179,11 @@ class DictionaryManager @Inject constructor(
             val manifest = parseManifest() ?: return@withContext false
             val info = manifest.dictionaries.find { it.id == dictId }
                 ?: return@withContext false
+            val dest = safeDictFile(info.fileName)
+            if (dest == null) {
+                android.util.Log.w("DictionaryManager", "词典 ${info.name} 的文件名非法: ${info.fileName}")
+                return@withContext false
+            }
             if (info.downloadUrl.startsWith("REPLACE_WITH")) {
                 android.util.Log.w("DictionaryManager", "词典 ${info.name} 的下载地址未配置")
                 return@withContext false
@@ -170,7 +192,7 @@ class DictionaryManager @Inject constructor(
             // 标记下载中
             updateStatusDownloading(dictId, true, 0f)
             try {
-                downloadFile(info.downloadUrl, File(dictDir, info.fileName)) { p ->
+                downloadFile(info.downloadUrl, dest) { p ->
                     updateStatusDownloading(dictId, true, p)
                     onProgress(p)
                 }
@@ -190,9 +212,9 @@ class DictionaryManager @Inject constructor(
     suspend fun delete(dictId: String): Boolean = withContext(Dispatchers.IO) {
         val manifest = parseManifest()
         val info = manifest?.dictionaries?.find { it.id == dictId }
-        val fileName = info?.fileName ?: "$dictId.txt"
-        val file = File(dictDir, fileName)
-        val ok = file.delete()
+        // manifest 的 fileName 不可信，同样走安全解析；拿不到时用 id 兜底（再过一次校验）
+        val file = safeDictFile(info?.fileName ?: "") ?: safeDictFile("$dictId.txt")
+        val ok = file?.delete() == true
         if (ok && _activeDictId.value == dictId) {
             setActiveDict(null)
         }
@@ -223,7 +245,7 @@ class DictionaryManager @Inject constructor(
 
         val manifest = parseManifest() ?: return@withContext null
         val info = manifest.dictionaries.find { it.id == activeId } ?: return@withContext null
-        val file = File(dictDir, info.fileName)
+        val file = safeDictFile(info.fileName) ?: return@withContext null
         if (!file.exists()) return@withContext null
 
         val map = linkedMapOf<String, String>()
@@ -247,15 +269,19 @@ class DictionaryManager @Inject constructor(
      */
     suspend fun lookup(word: String): String? {
         val dict = getActiveDict() ?: return null
-        val clean = word.trim().lowercase().replace(Regex("[^a-z]"), "")
+        // Locale.ROOT：避免土耳其语等 locale 的 lowercase 变体（I→ı）破坏查词
+        val clean = word.trim().lowercase(java.util.Locale.ROOT).replace(Regex("[^a-z]"), "")
         if (clean.length < 2) return null
         return dict[clean]
     }
 
     private fun updateStatusDownloading(dictId: String, downloading: Boolean, progress: Float) {
-        _statuses.value = _statuses.value.map { s ->
-            if (s.info.id == dictId) s.copy(downloading = downloading, progress = progress)
-            else s
+        // 原子 CAS 更新：并发下载/并发刷新状态时不丢更新
+        _statuses.update { list ->
+            list.map { s ->
+                if (s.info.id == dictId) s.copy(downloading = downloading, progress = progress)
+                else s
+            }
         }
     }
 
@@ -267,28 +293,53 @@ class DictionaryManager @Inject constructor(
             readTimeout = 30_000
             setRequestProperty("User-Agent", "Mozilla/5.0")
         }
-        return conn.inputStream.bufferedReader().use { it.readText() }
+        try {
+            if (conn.responseCode != HttpURLConnection.HTTP_OK) {
+                throw java.io.IOException("HTTP ${conn.responseCode} for $urlStr")
+            }
+            return conn.inputStream.bufferedReader().use { it.readText() }
+        } finally {
+            conn.disconnect()
+        }
     }
 
+    /**
+     * 下载文件：先写 .tmp 再原子改名，避免中途失败留下半截文件被当成完整词典加载。
+     */
     private fun downloadFile(urlStr: String, dest: File, onProgress: (Float) -> Unit) {
         val conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
             connectTimeout = 15_000
             readTimeout = 60_000
             setRequestProperty("User-Agent", "Mozilla/5.0")
         }
-        val total = conn.contentLengthLong
-        var done = 0L
-        conn.inputStream.use { input ->
-            FileOutputStream(dest).use { output ->
-                val buf = ByteArray(262144)
-                while (true) {
-                    val n = input.read(buf)
-                    if (n <= 0) break
-                    output.write(buf, 0, n)
-                    done += n
-                    if (total > 0) onProgress(done.toFloat() / total)
+        val tmp = File(dest.parentFile, dest.name + ".tmp")
+        try {
+            if (conn.responseCode != HttpURLConnection.HTTP_OK) {
+                throw java.io.IOException("HTTP ${conn.responseCode} for $urlStr")
+            }
+            val total = conn.contentLengthLong
+            var done = 0L
+            conn.inputStream.use { input ->
+                FileOutputStream(tmp).use { output ->
+                    val buf = ByteArray(262144)
+                    while (true) {
+                        val n = input.read(buf)
+                        if (n <= 0) break
+                        output.write(buf, 0, n)
+                        done += n
+                        if (total > 0) onProgress(done.toFloat() / total)
+                    }
                 }
             }
+            if (!tmp.renameTo(dest)) {
+                tmp.copyTo(dest, overwrite = true)
+                tmp.delete()
+            }
+        } catch (e: Exception) {
+            tmp.delete()
+            throw e
+        } finally {
+            conn.disconnect()
         }
     }
 }

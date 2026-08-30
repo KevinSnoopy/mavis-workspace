@@ -35,7 +35,7 @@ interface ReadingRepository {
     suspend fun getState(bookId: Long): ReadingState?
     fun getStateFlow(bookId: Long): Flow<ReadingState?>
     suspend fun saveState(state: ReadingState)
-    suspend fun updatePosition(bookId: Long, position: Int)
+    suspend fun updatePosition(bookId: Long, paragraph: Int, position: Int)
     suspend fun updateMode(bookId: Long, mode: ReadingMode)
     suspend fun updateRsvpSpeed(bookId: Long, speed: Int)
 }

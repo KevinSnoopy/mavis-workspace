@@ -26,8 +26,9 @@ class ReadingRepositoryImpl @Inject constructor(
         readingStateDao.upsert(state.toEntity())
     }
 
-    override suspend fun updatePosition(bookId: Long, position: Int) {
-        readingStateDao.updateProgress(bookId, 0, position)
+    override suspend fun updatePosition(bookId: Long, paragraph: Int, position: Int) {
+        // 不再硬编码 paragraph = 0：原实现会把已保存的段落进度抹掉
+        readingStateDao.updateProgress(bookId, paragraph, position)
     }
 
     override suspend fun updateMode(bookId: Long, mode: ReadingMode) {

@@ -31,6 +31,9 @@ class ArticleParser @Inject constructor() {
         private const val USER_AGENT = "Mozilla/5.0 (compatible; EareyeReader/1.0)"
         private const val ACCEPT_HEADER = "text/html,application/xhtml+xml"
         private const val DEFAULT_CHARSET = "UTF-8"
+
+        /** 页面正文读取上限（字符数），防止超大页面撑爆内存；超出部分直接截断。 */
+        private const val MAX_HTML_CHARS = 5_000_000
     }
 
     /**
@@ -52,7 +55,7 @@ class ArticleParser @Inject constructor() {
 
             try {
                 val charset = detectCharset(conn) ?: DEFAULT_CHARSET
-                val html = BufferedReader(InputStreamReader(conn.inputStream, charset)).use { it.readText() }
+                val html = readHtmlCapped(BufferedReader(InputStreamReader(conn.inputStream, charset)))
                 extractArticle(html)
             } finally {
                 conn.disconnect()
@@ -85,8 +88,8 @@ class ArticleParser @Inject constructor() {
             }
             try {
                 val charset = detectCharset(conn) ?: DEFAULT_CHARSET
-                val html = BufferedReader(InputStreamReader(conn.inputStream, charset)).use { it.readText() }
-                extractLinksFromHtml(html)
+                val html = readHtmlCapped(BufferedReader(InputStreamReader(conn.inputStream, charset)))
+                extractLinksFromHtml(html, urlStr)
             } finally {
                 conn.disconnect()
             }
@@ -105,7 +108,7 @@ class ArticleParser @Inject constructor() {
         }
     }
 
-    private fun extractLinksFromHtml(html: String): ArticleLinkResult? {
+    private fun extractLinksFromHtml(html: String, baseUrl: String): ArticleLinkResult? {
         val title = extractTitle(html)
         // 过滤规则：排除导航、登录、注册等非文章链接
         val excludePattern = Regex("""(login|sign[-]?in|sign[-]?up|register|about|contact|privacy|terms|category|tag|author|profile|feed|rss|xml|sitemap|css|js|png|jpg|gif|svg|ico|pdf|zip)""", RegexOption.IGNORE_CASE)
@@ -124,8 +127,16 @@ class ArticleParser @Inject constructor() {
             if (href.startsWith("#") || href.startsWith("javascript:")) continue
             if (seen.contains(href)) continue
 
-            // 补全相对 URL
-            val absoluteUrl = if (href.startsWith("http")) href else href
+            // 补全相对 URL：以列表页 URL 为 base 解析；解析失败时保留原值
+            val absoluteUrl = if (href.startsWith("http")) {
+                href
+            } else {
+                try {
+                    java.net.URI(baseUrl).resolve(href).toString()
+                } catch (_: Exception) {
+                    href
+                }
+            }
             seen.add(href)
 
             links.add(ArticleLink(
@@ -145,9 +156,55 @@ class ArticleParser @Inject constructor() {
      */
     private fun detectCharset(conn: HttpURLConnection): String? {
         conn.getHeaderField("Content-Type")?.let { ct ->
-            Regex("charset=([^;\\s]+)").find(ct)?.let { return it.groupValues[1] }
+            // charset="utf-8" 带引号是 RFC 合法写法，需去掉引号再交给 InputStreamReader
+            Regex("charset=([^;\\s]+)").find(ct)?.let { return it.groupValues[1].trim('"', '\'') }
         }
         return null
+    }
+
+    /** 有上限地读取页面：超过 [MAX_HTML_CHARS] 截断，防止超大页面 OOM。 */
+    private fun readHtmlCapped(reader: BufferedReader): String {
+        reader.use { r ->
+            val sb = StringBuilder()
+            val buf = CharArray(8192)
+            while (sb.length < MAX_HTML_CHARS) {
+                val n = r.read(buf)
+                if (n < 0) break
+                sb.append(buf, 0, minOf(n, MAX_HTML_CHARS - sb.length))
+            }
+            return sb.toString()
+        }
+    }
+
+    /** 还原 JSON 字符串里最常见的转义序列（articleBody 场景）。 */
+    private fun unescapeJson(s: String): String {
+        val sb = StringBuilder(s.length)
+        var i = 0
+        while (i < s.length) {
+            val c = s[i]
+            if (c == '\\' && i + 1 < s.length) {
+                when (val next = s[i + 1]) {
+                    '"', '\\', '/' -> { sb.append(next); i += 2 }
+                    'n' -> { sb.append('\n'); i += 2 }
+                    't' -> { sb.append('\t'); i += 2 }
+                    'r' -> { sb.append('\r'); i += 2 }
+                    'u' -> {
+                        val hex = s.getOrNull(i + 2)?.toString() ?: ""
+                        val hex4 = s.substring(i + 2, minOf(i + 6, s.length))
+                        val code = hex4.toIntOrNull(16)
+                        if (hex.isNotEmpty() && code != null && hex4.length == 4) {
+                            sb.append(code.toChar()); i += 6
+                        } else {
+                            sb.append(c); i += 1
+                        }
+                    }
+                    else -> { sb.append(c); i += 1 }
+                }
+            } else {
+                sb.append(c); i += 1
+            }
+        }
+        return sb.toString()
     }
 
     /**
@@ -201,8 +258,9 @@ class ArticleParser @Inject constructor() {
         }
 
         // 策略3: JSON-LD structured data
-        Regex(""""articleBody"\s*:\s*"([^"]{100,})"""", RegexOption.DOT_MATCHES_ALL).find(html)?.let {
-            val raw = it.groupValues[1].replace("\\\"", "\"")
+        // 匹配时跳过转义序列（\" 等），否则正文里第一个转义引号就会截断匹配
+        Regex(""""articleBody"\s*:\s*"((?:\\.|[^"\\]){100,})"""", RegexOption.DOT_MATCHES_ALL).find(html)?.let {
+            val raw = unescapeJson(it.groupValues[1])
             return raw.split(Regex("(?<=[.!?])\\s+")).filter { s -> s.length > 20 }.map { it.trim() }
         }
 

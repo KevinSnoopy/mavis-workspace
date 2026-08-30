@@ -7,15 +7,28 @@ import android.content.Context
 import android.content.Intent
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
 import com.eareyereading.MainActivity
 import com.eareyereading.R
 import com.eareyereading.util.NotificationHelper
+import com.eareyereading.util.ReminderPrefs
 
 /**
  * 接收闹钟广播，发送复习提醒通知
  */
 class NotificationReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
+        // 用户关闭了提醒（或关闭了系统通知权限）时，终止每日提醒链，
+        // 不再"发不出通知却永远重排明天的闹钟"
+        if (!ReminderPrefs.isEnabled(context)) {
+            Log.d(TAG, "Reminders disabled by user, stop reminder chain")
+            return
+        }
+        if (!NotificationManagerCompat.from(context).areNotificationsEnabled()) {
+            Log.d(TAG, "System notifications disabled, stop reminder chain")
+            return
+        }
+
         val pendingIntent = PendingIntent.getActivity(
             context,
             0,

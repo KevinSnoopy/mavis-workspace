@@ -41,13 +41,25 @@ class DictionaryViewModel @Inject constructor(
 
     init {
         viewModelScope.launch {
-            dictionaryManager.statuses.collect { statuses ->
-                _uiState.update { it.copy(statuses = statuses) }
+            try {
+                dictionaryManager.statuses.collect { statuses ->
+                    _uiState.update { it.copy(statuses = statuses) }
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                android.util.Log.e("DictionaryViewModel", "statuses collect failed", e)
             }
         }
         viewModelScope.launch {
-            dictionaryManager.activeDictId.collect { activeId ->
-                _uiState.update { it.copy(activeDictId = activeId) }
+            try {
+                dictionaryManager.activeDictId.collect { activeId ->
+                    _uiState.update { it.copy(activeDictId = activeId) }
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                android.util.Log.e("DictionaryViewModel", "activeDictId collect failed", e)
             }
         }
         // 首次进入时刷新词典列表
@@ -57,31 +69,52 @@ class DictionaryViewModel @Inject constructor(
     fun refresh() {
         if (_uiState.value.loading) return
         viewModelScope.launch {
-            _uiState.update { it.copy(loading = true) }
-            val ok = dictionaryManager.refreshManifest()
-            _uiState.update {
-                it.copy(
-                    loading = false,
-                    snackbarMessage = if (!ok && dictionaryManager.manifestError.value != null)
-                        dictionaryManager.manifestError.value else null,
-                )
+            try {
+                _uiState.update { it.copy(loading = true) }
+                val ok = dictionaryManager.refreshManifest()
+                _uiState.update {
+                    it.copy(
+                        loading = false,
+                        snackbarMessage = if (!ok && dictionaryManager.manifestError.value != null)
+                            dictionaryManager.manifestError.value else null,
+                    )
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                android.util.Log.e("DictionaryViewModel", "refresh failed", e)
+                _uiState.update { it.copy(loading = false) }
             }
         }
     }
 
     fun download(dictId: String) {
         viewModelScope.launch {
-            val ok = dictionaryManager.download(dictId) { /* 进度通过 statuses flow 更新 */ }
-            _uiState.update {
-                it.copy(snackbarMessage = if (ok) "词典下载完成" else "下载失败，请检查网络后重试")
+            try {
+                val ok = dictionaryManager.download(dictId) { /* 进度通过 statuses flow 更新 */ }
+                _uiState.update {
+                    it.copy(snackbarMessage = if (ok) "词典下载完成" else "下载失败，请检查网络后重试")
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                android.util.Log.e("DictionaryViewModel", "download failed", e)
+                _uiState.update { it.copy(snackbarMessage = "下载失败: ${e.javaClass.simpleName}") }
             }
         }
     }
 
     fun delete(dictId: String) {
         viewModelScope.launch {
-            dictionaryManager.delete(dictId)
-            _uiState.update { it.copy(snackbarMessage = "已删除词典") }
+            try {
+                dictionaryManager.delete(dictId)
+                _uiState.update { it.copy(snackbarMessage = "已删除词典") }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                android.util.Log.e("DictionaryViewModel", "delete failed", e)
+                _uiState.update { it.copy(snackbarMessage = "删除失败: ${e.javaClass.simpleName}") }
+            }
         }
     }
 

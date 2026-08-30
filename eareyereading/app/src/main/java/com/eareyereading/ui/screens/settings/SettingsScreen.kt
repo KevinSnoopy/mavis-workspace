@@ -49,6 +49,8 @@ data class SettingsUiState(
     val isExporting: Boolean = false,
     val isImporting: Boolean = false,
     val isClearing: Boolean = false,
+    /** 缓存目录大小（MB）。在 ViewModel 里异步算，避免在组合期遍历磁盘 */
+    val cacheSizeMb: Double = 0.0,
     val snackbarMessage: String? = null,
     // 内置 TTS（sherpa-onnx）状态
     val embeddedModelName: String = "",
@@ -77,28 +79,40 @@ class SettingsViewModel @Inject constructor(
     init {
         // 加载阅读设置
         viewModelScope.launch {
-            combine(
-                settingsRepository.getFontSize(),
-                settingsRepository.getRsvpSpeed(),
-                settingsRepository.getTheme(),
-                settingsRepository.getDarkMode(),
-                settingsRepository.getNotifications(),
-            ) { fontSize, speed, theme, darkMode, notifications ->
-                _uiState.update {
-                    it.copy(
-                        fontSize = fontSize,
-                        rsvpSpeed = speed,
-                        theme = theme,
-                        darkMode = darkMode,
-                        notifications = notifications,
-                    )
-                }
-            }.collect()
+            try {
+                combine(
+                    settingsRepository.getFontSize(),
+                    settingsRepository.getRsvpSpeed(),
+                    settingsRepository.getTheme(),
+                    settingsRepository.getDarkMode(),
+                    settingsRepository.getNotifications(),
+                ) { fontSize, speed, theme, darkMode, notifications ->
+                    _uiState.update {
+                        it.copy(
+                            fontSize = fontSize,
+                            rsvpSpeed = speed,
+                            theme = theme,
+                            darkMode = darkMode,
+                            notifications = notifications,
+                        )
+                    }
+                }.collect()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                android.util.Log.e("SettingsViewModel", "settings combine failed", e)
+            }
         }
 
         viewModelScope.launch {
-            settingsRepository.getCollinsHighlight().collect { collinsHighlight ->
-                _uiState.update { it.copy(collinsHighlight = collinsHighlight) }
+            try {
+                settingsRepository.getCollinsHighlight().collect { collinsHighlight ->
+                    _uiState.update { it.copy(collinsHighlight = collinsHighlight) }
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                android.util.Log.e("SettingsViewModel", "collins collect failed", e)
             }
         }
 
@@ -112,32 +126,65 @@ class SettingsViewModel @Inject constructor(
         }
 
         viewModelScope.launch {
-            vocabularyRepository.getTotalCount().collect { count ->
-                _uiState.update { it.copy(totalWords = count) }
+            try {
+                vocabularyRepository.getTotalCount().collect { count ->
+                    _uiState.update { it.copy(totalWords = count) }
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                android.util.Log.e("SettingsViewModel", "vocab count collect failed", e)
             }
         }
 
         // 内置 TTS 状态：模型信息 + 下载进度 + 引擎状态
         viewModelScope.launch {
-            embeddedTts.state.collect { state ->
-                _uiState.update {
-                    it.copy(
-                        embeddedReady = state is EmbeddedTtsEngine.EngineState.READY,
-                    )
+            try {
+                embeddedTts.state.collect { state ->
+                    _uiState.update {
+                        it.copy(
+                            embeddedReady = state is EmbeddedTtsEngine.EngineState.READY,
+                        )
+                    }
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                android.util.Log.e("SettingsViewModel", "embedded state collect failed", e)
             }
         }
         viewModelScope.launch {
-            embeddedTts.downloadProgress.collect { progress ->
-                _uiState.update {
-                    it.copy(
-                        embeddedDownloading = progress != null,
-                        embeddedDownloadProgress = progress ?: 0f,
-                    )
+            try {
+                embeddedTts.downloadProgress.collect { progress ->
+                    _uiState.update {
+                        it.copy(
+                            embeddedDownloading = progress != null,
+                            embeddedDownloadProgress = progress ?: 0f,
+                        )
+                    }
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                android.util.Log.e("SettingsViewModel", "download progress collect failed", e)
             }
         }
         refreshEmbeddedStatus()
+        refreshCacheSize()
+    }
+
+    /** 异步统计缓存目录大小（磁盘遍历不能放在 Compose 组合期做）。 */
+    private fun refreshCacheSize() {
+        viewModelScope.launch {
+            val sizeMb = try {
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    context.cacheDir.walkTopDown().sumOf { it.length() } / (1024.0 * 1024.0)
+                }
+            } catch (_: Exception) {
+                0.0
+            }
+            _uiState.update { it.copy(cacheSizeMb = sizeMb) }
+        }
     }
 
     private fun refreshEmbeddedStatus() {
@@ -259,39 +306,41 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 _uiState.update { it.copy(isExporting = true) }
-                val file = File(context.cacheDir, "eareye_backup_${System.currentTimeMillis()}.json")
+                // 写到应用外部私有目录（文件管理器 Android/data/... 可见，用户可取走），
+                // 而不是 cacheDir —— 旧实现放 cacheDir 会被"清除缓存"删掉唯一副本。
+                // 外部存储不可用时回退内部 filesDir（至少不会被清缓存误删）
+                val exportDir = context.getExternalFilesDir(null) ?: context.filesDir
+                val file = File(exportDir, "eareye_backup_${System.currentTimeMillis()}.json")
                 val vocabList = vocabularyRepository.getAllVocabulary().first()
                 val statsList = readingStatsDao.getAllStats()
-                val json = buildString {
-                    append("{")
-                    append("\"version\":1,")
-                    append("\"exportedAt\":${System.currentTimeMillis()},")
-                    append("\"vocabulary\":[")
-                    vocabList.forEachIndexed { i, v ->
-                        append("{")
-                        append("\"word\":\"${v.word.replace("\"","\\\"")}\",")
-                        append("\"definition\":\"${(v.definition ?: "").replace("\"","\\\"")}\",")
-                        append("\"level\":${v.level},")
-                        append("\"isLearned\":${v.isLearned},")
-                        append("\"note\":\"${(v.note ?: "").replace("\"","\\\"")}\",")
-                        append("\"example\":\"${(v.example ?: "").replace("\"","\\\"")}\"")
-                        append("}")
-                        if (i < vocabList.size - 1) append(",")
-                    }
-                    append("],")
-                    append("\"stats\":[")
-                    statsList.forEachIndexed { i, s ->
-                        append("{")
-                        append("\"bookId\":${s.bookId},")
-                        append("\"date\":\"${s.date}\",")
-                        append("\"readingMinutes\":${s.readingMinutes},")
-                        append("\"charsRead\":${s.charsRead}")
-                        append("}")
-                        if (i < statsList.size - 1) append(",")
-                    }
-                    append("]}")
+                // 用 org.json 序列化：正确转义所有特殊字符。
+                // 旧实现手写 JSON 只转义双引号，反斜杠/换行直接裸写，产物是非法 JSON
+                val root = org.json.JSONObject()
+                root.put("version", 1)
+                root.put("exportedAt", System.currentTimeMillis())
+                val vocabArr = org.json.JSONArray()
+                for (v in vocabList) {
+                    val o = org.json.JSONObject()
+                    o.put("word", v.word)
+                    o.put("definition", v.definition ?: "")
+                    o.put("level", v.level)
+                    o.put("isLearned", v.isLearned)
+                    o.put("note", v.note ?: "")
+                    o.put("example", v.example ?: "")
+                    vocabArr.put(o)
                 }
-                file.writeText(json)
+                root.put("vocabulary", vocabArr)
+                val statsArr = org.json.JSONArray()
+                for (s in statsList) {
+                    val o = org.json.JSONObject()
+                    o.put("bookId", s.bookId)
+                    o.put("date", s.date)
+                    o.put("readingMinutes", s.readingMinutes)
+                    o.put("charsRead", s.charsRead)
+                    statsArr.put(o)
+                }
+                root.put("stats", statsArr)
+                file.writeText(root.toString())
                 _uiState.update { it.copy(isExporting = false, snackbarMessage = "已导出: ${file.name}") }
             } catch (e: Exception) {
                 _uiState.update { it.copy(isExporting = false, snackbarMessage = "导出失败: ${e.message}") }
@@ -304,21 +353,23 @@ class SettingsViewModel @Inject constructor(
             _uiState.update { it.copy(isImporting = true) }
             val json = file.readText()
 
-            // 可靠解析：按字段分别提取再按索引配对
-            val words = Regex(""""word"\s*:\s*"([^"]+)"""").findAll(json).map { it.groupValues[1] }.toList()
-            val defs = Regex(""""definition"\s*:\s*"([^"]*)"""").findAll(json).map { it.groupValues[1] }.toList()
-            val levels = Regex(""""level"\s*:\s*(\d+)"""").findAll(json).map { it.groupValues[1].toIntOrNull() ?: 0 }.toList()
-            val learned = Regex(""""isLearned"\s*:\s*(true|false)"""").findAll(json).map { it.groupValues[1] == "true" }.toList()
-            val notes = Regex(""""note"\s*:\s*"([^"]*)"""").findAll(json).map { it.groupValues[1] }.toList()
-
+            // 用 org.json 结构化解析。旧实现按字段正则扫描再按索引配对：
+            // 释义里一旦出现 "word":"..." 之类的文本就会产生额外匹配，
+            // 索引整体错位，后续每个词都配到错误的释义（批量数据损坏）
+            val root = org.json.JSONObject(json)
+            val vocabArr = root.optJSONArray("vocabulary") ?: org.json.JSONArray()
             var imported = 0
-            words.forEachIndexed { i, word ->
+            for (i in 0 until vocabArr.length()) {
+                val obj = vocabArr.optJSONObject(i) ?: continue
+                val word = obj.optString("word").trim()
+                if (word.isEmpty()) continue
                 vocabularyDao.insert(com.eareyereading.data.local.entity.VocabularyEntity(
                     word = word,
-                    definition = defs.getOrElse(i) { "" },
-                    level = levels.getOrElse(i) { 0 },
-                    isLearned = learned.getOrElse(i) { false },
-                    note = notes.getOrElse(i) { "" }.ifBlank { null },
+                    definition = obj.optString("definition", ""),
+                    level = obj.optInt("level", 0),
+                    isLearned = obj.optBoolean("isLearned", false),
+                    note = obj.optString("note", "").ifBlank { null },
+                    example = obj.optString("example", "").ifBlank { null },
                     bookId = 0,
                     bookTitle = "Imported",
                     context = null,
@@ -339,12 +390,13 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             _uiState.update { it.copy(isClearing = true) }
             try {
-                // 清理缓存目录（临时文件、导出文件等）
+                // 清理缓存目录（临时文件等）；导出备份不在 cacheDir，不受影响
                 context.cacheDir.walkTopDown().forEach { it.delete() }
                 _uiState.update { it.copy(isClearing = false, snackbarMessage = "缓存已清除") }
             } catch (e: Exception) {
                 _uiState.update { it.copy(isClearing = false, snackbarMessage = "清除失败: ${e.message}") }
             }
+            refreshCacheSize()
         }
     }
 
@@ -649,15 +701,8 @@ fun SettingsScreen(
                             viewModel.setNotifications(enabled)
                         },
                     )
-                    Divider(modifier = Modifier.padding(horizontal = 20.dp))
-                    SettingRowToggle(
-                        icon = Icons.Default.LocalFireDepartment,
-                        iconBg = WarningBg,
-                        iconColor = Warning,
-                        title = "连胜提醒",
-                        checked = uiState.notifications,
-                        onCheckedChange = viewModel::setNotifications,
-                    )
+                    // 原有的第二个"连胜提醒"开关与上面绑定同一个 notifications 布尔，
+                    // 拨一个会静默翻转另一个，且绕过了 Android 13+ 通知权限检查，已移除
                 }
                 Spacer(modifier = Modifier.height(20.dp))
             }
@@ -719,8 +764,7 @@ fun SettingsScreen(
                         iconColor = OnSurfaceTertiary,
                         title = "清除缓存",
                         subtitle = if (uiState.isClearing) "清除中..." else {
-                            val size = context.cacheDir.walkTopDown().sumOf { it.length() } / (1024.0 * 1024.0)
-                            String.format("%.1f MB", size)
+                            String.format("%.1f MB", uiState.cacheSizeMb)
                         },
                         onClick = { viewModel.clearCache() },
                     )

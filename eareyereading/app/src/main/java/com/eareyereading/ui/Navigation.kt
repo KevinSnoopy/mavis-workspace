@@ -43,6 +43,20 @@ sealed class Screen(val route: String) {
     data object DictionaryManager : Screen("dictionary_manager")
 }
 
+/**
+ * 顶层页面统一导航：不堆叠重复路由、保留/恢复各标签状态。
+ * 底部导航栏与首页/书库的快捷入口共用，行为保持一致。
+ */
+fun NavHostController.navigateToTopLevel(route: String) {
+    navigate(route) {
+        popUpTo(graph.findStartDestination().id) {
+            saveState = true
+        }
+        launchSingleTop = true
+        restoreState = true
+    }
+}
+
 data class BottomNavItem(
     val screen: Screen,
     val label: String,
@@ -87,13 +101,7 @@ fun AppNavigation(
                                     if (selected) MaterialTheme.colorScheme.primary else Color.Transparent
                                 )
                                 .clickable {
-                                    navController.navigate(item.screen.route) {
-                                        popUpTo(navController.graph.findStartDestination().id) {
-                                            saveState = true
-                                        }
-                                        launchSingleTop = true
-                                        restoreState = true
-                                    }
+                                    navController.navigateToTopLevel(item.screen.route)
                                 }
                                 .padding(vertical = 6.dp),
                             contentAlignment = Alignment.Center,
@@ -127,10 +135,12 @@ fun AppNavigation(
         ) {
             composable(Screen.Home.route) {
                 HomeScreen(
-                    onNavigateToLibrary = { navController.navigate(Screen.Library.route) },
-                    onNavigateToVocabulary = { navController.navigate(Screen.Vocabulary.route) },
-                    onNavigateToReview = { navController.navigate(Screen.Review.route) },
-                    onNavigateToSettings = { navController.navigate(Screen.Settings.route) },
+                    // 与底部导航栏同一套导航选项：连续点击不再堆叠重复路由，
+                    // 返回键不会穿过一串相同页面
+                    onNavigateToLibrary = { navController.navigateToTopLevel(Screen.Library.route) },
+                    onNavigateToVocabulary = { navController.navigateToTopLevel(Screen.Vocabulary.route) },
+                    onNavigateToReview = { navController.navigateToTopLevel(Screen.Review.route) },
+                    onNavigateToSettings = { navController.navigateToTopLevel(Screen.Settings.route) },
                     onBookClick = { bookId -> navController.navigate(Screen.Reader.createRoute(bookId)) },
                 )
             }
@@ -140,9 +150,9 @@ fun AppNavigation(
                     onBookClick = { bookId ->
                         navController.navigate(Screen.Reader.createRoute(bookId))
                     },
-                    onNavigateToVocabulary = { navController.navigate(Screen.Vocabulary.route) },
-                    onNavigateToReview = { navController.navigate(Screen.Review.route) },
-                    onNavigateToSettings = { navController.navigate(Screen.Settings.route) },
+                    onNavigateToVocabulary = { navController.navigateToTopLevel(Screen.Vocabulary.route) },
+                    onNavigateToReview = { navController.navigateToTopLevel(Screen.Review.route) },
+                    onNavigateToSettings = { navController.navigateToTopLevel(Screen.Settings.route) },
                 )
             }
 

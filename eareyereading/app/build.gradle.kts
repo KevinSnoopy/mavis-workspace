@@ -160,7 +160,8 @@ detekt {
 }
 
 tasks.withType<io.gitlab.arturbosch.detekt.Detekt>().configureEach {
-    ignoreFailures = true
+    // 不再 ignoreFailures：detekt.yml 里 build.maxIssues: 0 必须真正生效，
+    // 否则 CI 唯一的静态门禁永远不会失败（此前所有 finding 都被静默放过）
     reports {
         html.required.set(true)
         html.outputLocation.set(file("$projectDir/build/reports/detekt.html"))

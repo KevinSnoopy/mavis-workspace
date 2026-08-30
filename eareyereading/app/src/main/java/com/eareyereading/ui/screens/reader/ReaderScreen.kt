@@ -245,8 +245,7 @@ fun ReaderScreen(
                 .fillMaxSize()
                 .background(backgroundColor)
                 .padding(padding)
-                .padding(horizontal = 20.dp)
-                .padding(bottom = if (uiState.selectedVocab != null && !uiState.showWordDialog) 72.dp else 0.dp),
+                .padding(horizontal = 20.dp),
         ) {
             if (uiState.isLoading) {
                 CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
@@ -1013,15 +1012,19 @@ fun NormalReadingView(
                     // 普通模式 + 高亮渲染
                     val annotatedText = buildAnnotatedString {
                         var cursor = 0
-                        // 按 offset 顺序合并高亮区域
-                        val sortedHighlights = paraHighlights
-                            .sortedBy { it.startOffset }
-                            .filter { it.startOffset < para.length && it.endOffset <= para.length }
+                        // 按 offset 顺序处理高亮区域；对每条高亮按当前 cursor 收敛：
+                        // 重叠高亮不再重复输出重叠段，负值/反向/越界的脏数据
+                        // （startOffset > endOffset、endOffset > 段落长）也不会让
+                        // substring 抛 IllegalArgumentException
+                        val sortedHighlights = paraHighlights.sortedBy { it.startOffset }
                         for (highlight in sortedHighlights) {
+                            val start = highlight.startOffset.coerceAtLeast(cursor)
+                            val end = highlight.endOffset.coerceIn(start, para.length)
+                            if (end <= start) continue
                             // 插入高亮前的文本
-                            if (cursor < highlight.startOffset) {
+                            if (cursor < start) {
                                 withStyle(SpanStyle(color = textColor.copy(alpha = alpha * 0.8f))) {
-                                    append(para.substring(cursor, highlight.startOffset))
+                                    append(para.substring(cursor, start))
                                 }
                             }
                             // 高亮文本
@@ -1029,9 +1032,9 @@ fun NormalReadingView(
                                 background = highlight.color.copy(alpha = 0.25f),
                                 color = highlight.color,
                             )) {
-                                append(para.substring(highlight.startOffset, highlight.endOffset))
+                                append(para.substring(start, end))
                             }
-                            cursor = highlight.endOffset
+                            cursor = end
                         }
                         // 剩余文本
                         if (cursor < para.length) {
@@ -1086,7 +1089,10 @@ fun RsvpReadingView(
     rsvpStrength: Int = 3,
 ) {
     val wordAnalyzer = remember { WordAnalyzer() }
-    val words = remember(paragraph) { paragraph.split(Regex("\\s+")).filter { it.isNotBlank() } }
+    // 必须与 ReaderViewModel.getCurrentParagraphWords()（wordAnalyzer.extractWords，
+    // 即 [a-zA-Z]+ 分词）使用完全相同的分词器：原实现按空白切分，
+    // 遇到 "don't" 这类缩写时两边词数不一致，播放中显示空白且进度条超过 100%
+    val words = remember(paragraph) { wordAnalyzer.extractWords(paragraph) }
     val currentWord = words.getOrNull(currentWordIndex) ?: ""
 
     Column(
@@ -1124,7 +1130,9 @@ fun RsvpReadingView(
         }
         Spacer(modifier = Modifier.height(24.dp))
         LinearProgressIndicator(
-            progress = if (words.isNotEmpty()) currentWordIndex.toFloat() / words.size else 0f,
+            progress = if (words.isNotEmpty()) {
+                (currentWordIndex.toFloat() / words.size).coerceIn(0f, 1f)
+            } else 0f,
             modifier = Modifier.width(200.dp),
         )
         Text(
@@ -1502,11 +1510,8 @@ fun BackTranslationView(
     primaryColor: Color,
     onRevealAll: () -> Unit,
 ) {
-    var hasTranslation by remember { mutableStateOf(false) }
-
-    LaunchedEffect(translations) {
-        hasTranslation = translations.isNotEmpty()
-    }
+    // 直接派生即可，无需 remember + LaunchedEffect 多一次组合跳转
+    val hasTranslation = translations.isNotEmpty()
 
     Column(
         modifier = Modifier
@@ -1880,9 +1885,11 @@ fun ReaderSettingsDialog(
         title = { Text("阅读设置") },
         text = {
             Column {
+                // 这些值来自 DataStore 持久化，历史版本可能写入越界值；
+                // Slider 要求 value 在 valueRange 内，列表索引也要收敛，否则弹窗一开就崩
                 Text("字体大小: ${fontSize}sp")
                 Slider(
-                    value = fontSize.toFloat(),
+                    value = fontSize.toFloat().coerceIn(12f, 32f),
                     onValueChange = { onFontSizeChange(it.toInt()) },
                     valueRange = 12f..32f,
                     steps = 19,
@@ -1890,22 +1897,22 @@ fun ReaderSettingsDialog(
                 Spacer(modifier = Modifier.height(12.dp))
                 Text("RSVP 速度: ${rsvpSpeed} 字/分钟")
                 Slider(
-                    value = rsvpSpeed.toFloat(),
+                    value = rsvpSpeed.toFloat().coerceIn(100f, 800f),
                     onValueChange = { onSpeedChange(it.toInt()) },
                     valueRange = 100f..800f,
                 )
                 Spacer(modifier = Modifier.height(8.dp))
-                Text("仿生阅读强度: $rsvpStrength（加粗占比 ${listOf("30%","40%","50%","60%","70%")[rsvpStrength - 1]}）")
+                Text("仿生阅读强度: $rsvpStrength（加粗占比 ${listOf("30%","40%","50%","60%","70%")[rsvpStrength.coerceIn(1, 5) - 1]}）")
                 Slider(
-                    value = rsvpStrength.toFloat(),
+                    value = rsvpStrength.toFloat().coerceIn(1f, 5f),
                     onValueChange = { onStrengthChange(it.toInt()) },
                     valueRange = 1f..5f,
                     steps = 3,
                 )
-                Text("加粗间隔: ${listOf("小间隔", "中间隔", "大间隔")[rsvpInterval - 1]}",
+                Text("加粗间隔: ${listOf("小间隔", "中间隔", "大间隔")[rsvpInterval.coerceIn(1, 3) - 1]}",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Slider(
-                    value = rsvpInterval.toFloat(),
+                    value = rsvpInterval.toFloat().coerceIn(1f, 3f),
                     onValueChange = { onIntervalChange(it.toInt()) },
                     valueRange = 1f..3f,
                     steps = 1,
@@ -2151,76 +2158,6 @@ fun SentenceTranslationDialog(
             TextButton(onClick = onDismiss) { Text("关闭") }
         },
     )
-}
-
-// ── 词汇栏（底部常驻提示）──────────────────────────
-@Composable
-fun VocabularyBar(
-    word: String,
-    definition: String?,
-    wordLevel: WordLevel,
-    onAddToVocabulary: () -> Unit,
-    onClose: () -> Unit,
-) {
-    val levelColor = when (wordLevel) {
-        WordLevel.CORE -> WordLevelCore
-        WordLevel.INTERMEDIATE -> WordLevelIntmd
-        WordLevel.UPPER_INTERMEDIATE -> WordLevelUpper
-        WordLevel.ADVANCED -> WordLevelAdv
-        WordLevel.RARE -> WordLevelRare
-        WordLevel.UNKNOWN -> MaterialTheme.colorScheme.outline
-    }
-    Surface(
-        tonalElevation = 8.dp,
-        shadowElevation = 4.dp,
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            // 单词 + 级别标签
-            AssistChip(
-                onClick = {},
-                label = { Text(word, fontWeight = FontWeight.Bold) },
-                colors = AssistChipDefaults.assistChipColors(
-                    containerColor = levelColor.copy(alpha = 0.15f),
-                    labelColor = levelColor,
-                ),
-                border = null,
-            )
-            Spacer(modifier = Modifier.width(8.dp))
-
-            // 释义
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = definition ?: "...",
-                    style = MaterialTheme.typography.bodyMedium,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-
-            // 加入生词本
-            IconButton(onClick = onAddToVocabulary) {
-                Icon(
-                    Icons.Default.StarBorder,
-                    "加入生词本",
-                    tint = Secondary,
-                )
-            }
-
-            // 关闭
-            IconButton(onClick = onClose) {
-                Icon(
-                    Icons.Default.Close,
-                    "关闭",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-    }
 }
 
 // ── 段落点击辅助：把点击位置解析为单词 / 句子 ──────────────

@@ -46,20 +46,29 @@ class ReviewViewModel @Inject constructor(
 
     fun loadDueReviews() {
         viewModelScope.launch {
-            // 用 first() 而非 collect() — 一次拉取，不持续监听 DB 变化
-            // answerCard() 会直接更新 _uiState，不依赖 Flow 重拉
-            val records = reviewRecordDao.getDueReviews(System.currentTimeMillis(), 50).first()
-            val cards = records.map { record ->
-                val vocab = vocabularyRepository.getWord(record.word)
-                ReviewCard(record = record, vocabulary = vocab)
-            }
-            _uiState.update {
-                it.copy(
-                    dueCards = cards,
-                    currentIndex = 0,
-                    isShowingAnswer = false,
-                    isSessionComplete = cards.isEmpty(),
-                )
+            try {
+                // 用 first() 而非 collect() — 一次拉取，不持续监听 DB 变化
+                // answerCard() 会直接更新 _uiState，不依赖 Flow 重拉
+                val records = reviewRecordDao.getDueReviews(System.currentTimeMillis(), 50).first()
+                val cards = records.map { record ->
+                    val vocab = vocabularyRepository.getWord(record.word)
+                    ReviewCard(record = record, vocabulary = vocab)
+                }
+                _uiState.update {
+                    it.copy(
+                        dueCards = cards,
+                        currentIndex = 0,
+                        isShowingAnswer = false,
+                        isSessionComplete = cards.isEmpty(),
+                    )
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // DB 异常不再走 viewModelScope 未捕获处理器崩 App：
+                // 显示空会话，用户可重试
+                android.util.Log.e("ReviewViewModel", "loadDueReviews failed", e)
+                _uiState.update { it.copy(isSessionComplete = true) }
             }
         }
     }
@@ -101,7 +110,9 @@ class ReviewViewModel @Inject constructor(
         }
 
         val now = System.currentTimeMillis()
-        val nextReview = now + newInterval * 24 * 60 * 60 * 1000L
+        // 先转 Long 再乘：EF 无上限增长时 interval 可能很大，
+        // Int 乘法溢出会把 nextReviewDate 算进过去，卡片永久"到期"
+        val nextReview = now + newInterval.toLong() * 24L * 60L * 60L * 1000L
 
         viewModelScope.launch {
             try {

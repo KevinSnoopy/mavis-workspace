@@ -68,9 +68,17 @@ def get_ecdict_db():
 
     print("  解压 ECDICT...")
     with zipfile.ZipFile(zip_path) as zf:
-        name = next(n for n in zf.namelist() if n.endswith(".db"))
+        # 显式查找 + 明确报错：next(...) 的裸 StopIteration 无法定位问题
+        name = next((n for n in zf.namelist() if n.endswith(".db")), None)
+        if name is None:
+            sys.exit(f"错误：{zip_path} 中找不到 *.db（下载可能损坏）")
+        # 流式拷贝：词典 DB 约 600MB，read() 一次性载入会把内存吃满
         with zf.open(name) as src, open(db_path, "wb") as dst:
-            dst.write(src.read())
+            while True:
+                chunk = src.read(1048576)
+                if not chunk:
+                    break
+                dst.write(chunk)
 
     return db_path
 

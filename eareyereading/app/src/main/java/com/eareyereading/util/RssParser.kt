@@ -80,13 +80,17 @@ class RssParser @Inject constructor() {
         private const val MAX_DESC = 500
         private const val MAX_RAW_FIELD = 32_000
 
-        private val DATE_FORMATS = listOf(
-            SimpleDateFormat("EEE, dd MMM yyyy HH:mm:ss Z", Locale.ENGLISH),
-            SimpleDateFormat("EEE, dd MMM yyyy HH:mm:ss", Locale.ENGLISH),
-            SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssZ", Locale.ENGLISH),
-            SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSZ", Locale.ENGLISH),
-            SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.ENGLISH),
-            SimpleDateFormat("yyyy-MM-dd", Locale.ENGLISH),
+        /** 响应体上限，防止恶意/失配的超大 feed 撑爆内存（10 MB 对任何正常 feed 都绰绰有余）。 */
+        private const val MAX_BODY = 10_000_000
+
+        /** 日期格式模式。SimpleDateFormat 非线程安全，parseDate 每次调用时按模式新建实例。 */
+        private val DATE_PATTERNS = listOf(
+            "EEE, dd MMM yyyy HH:mm:ss Z",
+            "EEE, dd MMM yyyy HH:mm:ss",
+            "yyyy-MM-dd'T'HH:mm:ssZ",
+            "yyyy-MM-dd'T'HH:mm:ss.SSSZ",
+            "yyyy-MM-dd'T'HH:mm:ss",
+            "yyyy-MM-dd",
         )
 
         private val NAMED_ENTITIES = mapOf(
@@ -136,8 +140,12 @@ class RssParser @Inject constructor() {
                 connectTimeout = 12_000
                 readTimeout = 12_000
             }
-            val bytes = conn.inputStream.use { it.readBytes() }
-            val charset = resolveCharset(charsetFromContentType(conn.contentType), bytes)
+            if (conn.responseCode != HttpURLConnection.HTTP_OK) {
+                android.util.Log.w("RssParser", "HTTP ${conn.responseCode} for RSS feed: $urlStr")
+                return null
+            }
+            val bytes = readCapped(conn.inputStream, MAX_BODY)
+            val charset = resolveCharset(conn.contentType, bytes)
             val xml = String(bytes, charset).removePrefix("\uFEFF")
             parseXml(xml)
         } catch (e: java.net.MalformedURLException) {
@@ -242,11 +250,15 @@ class RssParser @Inject constructor() {
                                     if (inItem || inEntry) item.link = href
                                     else if (feedLink == null) feedLink = href
                                 }
-                                collecting = "link"
-                                textBuf.setLength(0)
-                                nestedDepth = 0
+                                // 自闭合 <link .../>（KXml2 不会发 END_TAG）不进入采集，
+                                // 否则后续所有标签都会被当作嵌套文本，字段全部错位
+                                if (!parser.isEmptyElementTag) {
+                                    collecting = "link"
+                                    textBuf.setLength(0)
+                                    nestedDepth = 0
+                                }
                             }
-                            else -> if (name in TEXT_TAGS) {
+                            else -> if (name in TEXT_TAGS && !parser.isEmptyElementTag) {
                                 collecting = name
                                 textBuf.setLength(0)
                                 nestedDepth = 0
@@ -378,14 +390,24 @@ class RssParser @Inject constructor() {
     }
 
     /** 从 `application/rss+xml; charset=UTF-8` 这类 Content-Type 里取 charset。 */
-    private fun charsetFromContentType(contentType: String?): String? {
+    internal fun charsetFromContentType(contentType: String?): String? {
         if (contentType == null) return null
         return Regex(";\\s*charset\\s*=\\s*[\"']?([^\"';\\s]+)", RegexOption.IGNORE_CASE)
             .find(contentType)?.groupValues?.get(1)
     }
 
-    /** HTTP Content-Type 优先，其次 XML 声明里的 encoding，最后回退 UTF-8。 */
-    private fun resolveCharset(headerCharset: String?, bytes: ByteArray): Charset {
+    /**
+     * HTTP Content-Type 优先，其次 BOM / XML 声明里的 encoding，最后回退 UTF-8。
+     * 包可见以便单元测试直接覆盖 charset 决策，无需走网络。
+     */
+    internal fun resolveCharset(contentType: String?, bytes: ByteArray): Charset {
+        val headerCharset = charsetFromContentType(contentType)
+        // UTF-16 BOM：声明嗅探按 US-ASCII 解码，NUL 交错的 UTF-16 声明永远匹配不到，
+        // 只能靠 BOM 识别，否则会按 UTF-8 解出乱码
+        if (bytes.size >= 2) {
+            if (bytes[0] == 0xFE.toByte() && bytes[1] == 0xFF.toByte()) return Charset.forName("UTF-16BE")
+            if (bytes[0] == 0xFF.toByte() && bytes[1] == 0xFE.toByte()) return Charset.forName("UTF-16LE")
+        }
         val head = String(
             bytes.copyOfRange(0, minOf(bytes.size, 512)),
             Charset.forName("US-ASCII")
@@ -399,6 +421,23 @@ class RssParser @Inject constructor() {
                 null
             }
         } ?: Charset.forName("UTF-8")
+    }
+
+    /** 读取响应体，超过 [max] 字节立即中止（抛 IOException，由 parse 统一降级为 null）。 */
+    private fun readCapped(input: java.io.InputStream, max: Int): ByteArray {
+        input.use { stream ->
+            val out = java.io.ByteArrayOutputStream()
+            val buf = ByteArray(8192)
+            var total = 0
+            while (true) {
+                val n = stream.read(buf)
+                if (n < 0) break
+                total += n
+                if (total > max) throw java.io.IOException("RSS body exceeds $max bytes")
+                out.write(buf, 0, n)
+            }
+            return out.toByteArray()
+        }
     }
 
     internal fun stripHtml(html: String): String {
@@ -431,12 +470,18 @@ class RssParser @Inject constructor() {
 
     internal fun parseDate(dateStr: String?): Long {
         if (dateStr.isNullOrBlank()) return System.currentTimeMillis()
+        // SimpleDateFormat.parse 容忍尾部未消费的文本：`... HH:mm:ss Z` 遇到
+        // 文本 "GMT" 时区段解析失败后，会把 "12:00:00" 按设备本地时区解释并
+        // 静默忽略 " GMT" 尾巴，RSS 最常见的 GMT 时间整体偏移数小时。
+        // 先把文本时区归一成数字偏移再解析。
         val normalized = dateStr.trim()
-            .replace(Regex("([+-]\\d{2}):\\d{2}"), "$1") // +00:00 -> +0000
+            .replace(Regex("([+-]\\d{2}):(\\d{2})"), "$1$2") // +00:00 -> +0000（RFC3339 偏移归一）
             .replace("Z", "+0000")
-        for (fmt in DATE_FORMATS) {
+            .replace(Regex("\\s+(GMT|UTC|UT)$"), " +0000")
+        // SimpleDateFormat 非线程安全：每次调用新建实例，避免并发刷新时互相污染
+        for (pattern in DATE_PATTERNS) {
             try {
-                return fmt.parse(normalized)?.time ?: 0L
+                return SimpleDateFormat(pattern, Locale.ENGLISH).parse(normalized)?.time ?: 0L
             } catch (_: java.text.ParseException) {
                 // 尝试下一个格式
             }

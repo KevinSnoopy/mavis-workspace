@@ -13,11 +13,16 @@ interface ReadingStatsDao {
     @Query("DELETE FROM reading_stats WHERE bookId = :bookId AND date = :date")
     suspend fun deleteForBookAndDate(bookId: Long, date: String)
 
+    /** 某本书某天的统计行（每日每书一条的写入约定下，用于累计更新）。 */
+    @Query("SELECT * FROM reading_stats WHERE bookId = :bookId AND date = :date LIMIT 1")
+    suspend fun getStatForBookAndDate(bookId: Long, date: String): ReadingStatsEntity?
+
+    /** 删除某本书的全部统计（删书级联用）。 */
+    @Query("DELETE FROM reading_stats WHERE bookId = :bookId")
+    suspend fun deleteForBook(bookId: Long)
+
     @Query("SELECT * FROM reading_stats WHERE date = :date ORDER BY timestamp DESC")
     fun getStatsByDate(date: String): Flow<List<ReadingStatsEntity>>
-
-    @Query("SELECT * FROM reading_stats WHERE date = :date ORDER BY timestamp DESC LIMIT 1")
-    suspend fun getStatsForDate(date: String): ReadingStatsEntity?
 
     @Query("SELECT * FROM reading_stats ORDER BY timestamp DESC")
     suspend fun getAllStats(): List<ReadingStatsEntity>

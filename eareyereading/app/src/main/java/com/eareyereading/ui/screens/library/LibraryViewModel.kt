@@ -74,32 +74,45 @@ class LibraryViewModel @Inject constructor(
 
     init {
         viewModelScope.launch {
-            combine(
-                searchQuery,
-                bookRepository.getAllBooks(),
-                vocabularyRepository.getTotalCount(),
-                vocabularyRepository.getLearnedCount(),
-            ) { query, books, total, learned ->
-                _uiState.value.copy(
-                    books = filterBooks(query, books),
-                    searchQuery = query,
-                    totalWordCount = total,
-                    learnedWordCount = learned,
-                )
-            }.collect { state ->
-                _uiState.update { it.copy(
-                    books = state.books,
-                    searchQuery = state.searchQuery,
-                    totalWordCount = state.totalWordCount,
-                    learnedWordCount = state.learnedWordCount,
-                ) }
+            try {
+                combine(
+                    searchQuery,
+                    bookRepository.getAllBooks(),
+                    vocabularyRepository.getTotalCount(),
+                    vocabularyRepository.getLearnedCount(),
+                ) { query, books, total, learned ->
+                    _uiState.value.copy(
+                        books = filterBooks(query, books),
+                        searchQuery = query,
+                        totalWordCount = total,
+                        learnedWordCount = learned,
+                    )
+                }.collect { state ->
+                    _uiState.update { it.copy(
+                        books = state.books,
+                        searchQuery = state.searchQuery,
+                        totalWordCount = state.totalWordCount,
+                        learnedWordCount = state.learnedWordCount,
+                    ) }
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // 数据层异常不再让整个 App 崩溃：书库保持空态可用
+                android.util.Log.e("LibraryViewModel", "library combine failed", e)
             }
         }
 
         // 待复习数（独立更新，避免 timestamp 变化干扰 combine）
         viewModelScope.launch {
-            reviewRecordDao.getDueReviewCount(System.currentTimeMillis()).collect { count ->
-                _uiState.update { it.copy(dueReviewCount = count) }
+            try {
+                reviewRecordDao.getDueReviewCount(System.currentTimeMillis()).collect { count ->
+                    _uiState.update { it.copy(dueReviewCount = count) }
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                android.util.Log.e("LibraryViewModel", "due count collect failed", e)
             }
         }
 
@@ -108,21 +121,26 @@ class LibraryViewModel @Inject constructor(
             try {
                 val todayDate = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
                     .format(Date())
-                val todayStats = readingStatsDao.getStatsForDate(todayDate)
+                // reading_stats 每日每书一行：必须用 SUM 聚合，
+                // 取单行会在用户一天读多本书时少报
+                val todayMinutes = readingStatsDao.getTotalMinutesForDate(todayDate) ?: 0
+                val todayChars = readingStatsDao.getTotalCharsForDate(todayDate) ?: 0
                 val allStats = readingStatsDao.getAllStats()
                 val totalMinutes = allStats.sumOf { it.readingMinutes }
                 val streakDays = calculateStreak(allStats)
                 _uiState.update {
                     it.copy(
                         readingStats = ReadingStatsSummary(
-                            todayMinutes = todayStats?.readingMinutes ?: 0,
-                            todayChars = todayStats?.charsRead ?: 0,
+                            todayMinutes = todayMinutes,
+                            todayChars = todayChars,
                             totalBooks = allStats.distinctBy { s -> s.bookId }.size,
                             totalMinutes = totalMinutes,
                             streakDays = streakDays,
                         )
                     )
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: java.lang.RuntimeException) {
                 // DB may not have records yet - use default stats
                 android.util.Log.d("LibraryViewModel", "Stats not available yet", e)
@@ -207,6 +225,8 @@ class LibraryViewModel @Inject constructor(
                 } else {
                     _uiState.update { it.copy(isLoading = false, loadingMessage = "抓取失败，请检查链接") }
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: java.io.IOException) {
                 _uiState.update { it.copy(isLoading = false, loadingMessage = "抓取失败: 网络错误") }
             } catch (e: java.lang.RuntimeException) {
@@ -231,29 +251,42 @@ class LibraryViewModel @Inject constructor(
             try {
                 val inputStream = context.contentResolver.openInputStream(uri)
                     ?: throw java.io.IOException("无法读取文件内容")
-                val fileName = uri.lastPathSegment ?: "book_${System.currentTimeMillis()}.epub"
+                // SAF content:// URI 的 lastPathSegment 常常只是文档 id（"12"）或通用名（"book.epub"），
+                // 直接复用会覆盖上次导入的同名文件（静默数据丢失）。加时间戳前缀并去掉路径分隔符。
+                val rawName = uri.lastPathSegment?.substringAfterLast('/') ?: "book.epub"
+                val fileName = "${System.currentTimeMillis()}_${rawName.replace('/', '_')}"
                 val destFile = File(context.filesDir, "books/$fileName")
                 destFile.parentFile?.mkdirs()
-                inputStream.use { input ->
-                    destFile.outputStream().use { output ->
-                        input.copyTo(output)
+                // 整文件拷贝放 IO 线程，避免主线程拷贝大文件 ANR
+                withContext(Dispatchers.IO) {
+                    inputStream.use { input ->
+                        destFile.outputStream().use { output ->
+                            input.copyTo(output)
+                        }
                     }
                 }
 
                 val book = Book(
-                    title = fileName.removeSuffix(".epub").removeSuffix(".txt"),
+                    title = rawName.removeSuffix(".epub").removeSuffix(".txt"),
                     author = "Unknown",
                     filePath = destFile.absolutePath,
                 )
                 bookRepository.addBook(book)
+                _uiState.update { it.copy(loadingMessage = "") }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: java.io.IOException) {
                 android.util.Log.e("LibraryViewModel", "Error importing book file", e)
                 _uiState.update { it.copy(loadingMessage = "导入失败: 文件读取错误") }
             } catch (e: java.lang.SecurityException) {
                 android.util.Log.e("LibraryViewModel", "Security error importing book", e)
                 _uiState.update { it.copy(loadingMessage = "导入失败: 权限错误") }
+            } catch (e: Exception) {
+                android.util.Log.e("LibraryViewModel", "Unexpected error importing book", e)
+                _uiState.update { it.copy(loadingMessage = "导入失败: ${e.javaClass.simpleName}") }
             } finally {
-                _uiState.update { it.copy(isLoading = false, loadingMessage = "") }
+                // 只复位 isLoading；错误信息保留在 loadingMessage，由 dismissLoadingMessage 清除
+                _uiState.update { it.copy(isLoading = false) }
             }
         }
     }
@@ -313,6 +346,8 @@ class LibraryViewModel @Inject constructor(
                         articlesError = "该源暂无文章",
                     ) }
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: java.io.IOException) {
                 _uiState.update { it.copy(
                     articlesLoading = false,
@@ -422,6 +457,8 @@ class LibraryViewModel @Inject constructor(
                 } else {
                     _uiState.update { it.copy(isLoading = false, loadingMessage = "抓取失败：无法解析文章内容") }
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: java.io.IOException) {
                 _uiState.update { it.copy(isLoading = false, loadingMessage = "导入失败: 网络错误") }
             } catch (e: java.lang.RuntimeException) {

@@ -33,7 +33,7 @@ interface BookDao {
     @Delete
     suspend fun delete(book: BookEntity)
 
-    @Query("SELECT * FROM books WHERE title LIKE '%' || :query || '%' OR author LIKE '%' || :query || '%'")
+    @Query("SELECT * FROM books WHERE (title LIKE '%' || :query || '%' OR author LIKE '%' || :query || '%') AND isArchived = 0 ORDER BY lastReadTime DESC")
     fun searchBooks(query: String): Flow<List<BookEntity>>
 
     @Query("SELECT COUNT(*) FROM books")

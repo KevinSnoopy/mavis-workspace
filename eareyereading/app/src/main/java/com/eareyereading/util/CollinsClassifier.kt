@@ -1,5 +1,6 @@
 package com.eareyereading.util
 
+import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -2231,6 +2232,19 @@ class CollinsClassifier @Inject constructor() {
         "pastiche", "pastille", "pastime",
     ) }
 
+    /**
+     * 数据列表里混有少量大写条目（如 "January"、"Greek"、"kWh"），而 classify
+     * 对输入统一小写化，这些条目原本永远无法命中。构造时统一归一化为小写。
+     */
+    private val collinsOneLower: Set<String> by lazy { collinsOne.mapTo(HashSet()) { it.lowercase(Locale.ROOT) } }
+    private val collinsTwoLower: Set<String> by lazy { collinsTwo.mapTo(HashSet()) { it.lowercase(Locale.ROOT) } }
+    private val collinsThreeLower: Set<String> by lazy { collinsThree.mapTo(HashSet()) { it.lowercase(Locale.ROOT) } }
+    private val collinsFourLower: Set<String> by lazy { collinsFour.mapTo(HashSet()) { it.lowercase(Locale.ROOT) } }
+    private val collinsFiveLower: Set<String> by lazy { collinsFive.mapTo(HashSet()) { it.lowercase(Locale.ROOT) } }
+
+    /** classifyText 对每个词调用 classify，正则提升为常量避免重复编译。 */
+    private val ALPHA_ONLY = Regex("^[a-z]+$")
+
     } // companion object
 
     /**
@@ -2238,15 +2252,16 @@ class CollinsClassifier @Inject constructor() {
      * 优先级：按 Collins 星级顺序检查，未命中则用长度启发
      */
     fun classify(word: String): WordLevel {
-        val w = word.lowercase().trim()
+        // Locale.ROOT：避免土耳其语等 locale 下 lowercase 的 I→ı 变体破坏分级
+        val w = word.lowercase(Locale.ROOT).trim()
         if (w.length < 2) return WordLevel.UNKNOWN
-        if (!Regex("^[a-z]+$").matches(w)) return WordLevel.UNKNOWN
+        if (!ALPHA_ONLY.matches(w)) return WordLevel.UNKNOWN
 
-        return if (w in collinsOne) WordLevel.CORE
-        else if (w in collinsTwo) WordLevel.INTERMEDIATE
-        else if (w in collinsThree) WordLevel.UPPER_INTERMEDIATE
-        else if (w in collinsFour) WordLevel.ADVANCED
-        else if (w in collinsFive) WordLevel.RARE
+        return if (w in collinsOneLower) WordLevel.CORE
+        else if (w in collinsTwoLower) WordLevel.INTERMEDIATE
+        else if (w in collinsThreeLower) WordLevel.UPPER_INTERMEDIATE
+        else if (w in collinsFourLower) WordLevel.ADVANCED
+        else if (w in collinsFiveLower) WordLevel.RARE
         else when {
             // 长度启发：长词越可能是高阶词汇
             w.length >= 12 -> WordLevel.RARE

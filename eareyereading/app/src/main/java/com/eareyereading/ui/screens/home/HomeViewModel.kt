@@ -45,6 +45,7 @@ class HomeViewModel @Inject constructor(
     private val _uiState = MutableStateFlow(HomeUiState())
     val uiState: StateFlow<HomeUiState> = _uiState.asStateFlow()
     private var loadDataJob: Job? = null
+    private var statsJob: Job? = null
 
     init {
         updateGreeting()
@@ -68,38 +69,50 @@ class HomeViewModel @Inject constructor(
     private fun loadData() {
         loadDataJob?.cancel()
         loadDataJob = viewModelScope.launch {
-            // 加载词汇统计
-            combine(
-                vocabularyRepository.getTotalCount(),
-                vocabularyRepository.getLearnedCount(),
-                reviewRecordDao.getDueReviewCount(System.currentTimeMillis()),
-                bookRepository.getAllBooks(),
-            ) { total, learned, due, books ->
-                _uiState.update { state ->
-                    state.copy(
-                        totalVocabulary = total,
-                        learnedVocabulary = learned,
-                        dueReviewCount = due,
-                        recentBooks = books.take(3),
-                        isLoading = false,
-                    )
-                }
-            }.collect()
+            try {
+                // 加载词汇统计
+                combine(
+                    vocabularyRepository.getTotalCount(),
+                    vocabularyRepository.getLearnedCount(),
+                    reviewRecordDao.getDueReviewCount(System.currentTimeMillis()),
+                    bookRepository.getAllBooks(),
+                ) { total, learned, due, books ->
+                    _uiState.update { state ->
+                        state.copy(
+                            totalVocabulary = total,
+                            learnedVocabulary = learned,
+                            dueReviewCount = due,
+                            recentBooks = books.take(3),
+                            isLoading = false,
+                        )
+                    }
+                }.collect()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // 数据层异常不再炸掉启动页：降级为可交互的空状态
+                android.util.Log.e("HomeViewModel", "loadData failed", e)
+                _uiState.update { it.copy(isLoading = false) }
+            }
         }
 
         // 加载今日阅读统计
-        viewModelScope.launch {
+        statsJob?.cancel()
+        statsJob = viewModelScope.launch {
             try {
                 val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
                 val today = dateFormat.format(Date())
-                val todayStats = readingStatsDao.getStatsForDate(today)
+                // reading_stats 每日每书一行：必须用 SUM 聚合，
+                // 取单行会在用户一天读多本书时少报
+                val todayMinutes = readingStatsDao.getTotalMinutesForDate(today) ?: 0
+                val todayChars = readingStatsDao.getTotalCharsForDate(today) ?: 0
                 val allStats = readingStatsDao.getAllStats()
                 val streakDays = calculateStreak(allStats)
 
                 _uiState.update {
                     it.copy(
-                        todayMinutes = todayStats?.readingMinutes ?: 0,
-                        todayChars = todayStats?.charsRead ?: 0,
+                        todayMinutes = todayMinutes,
+                        todayChars = todayChars,
                         streakDays = streakDays,
                         totalBooks = allStats.distinctBy { s -> s.bookId }.size,
                     )
@@ -108,7 +121,10 @@ class HomeViewModel @Inject constructor(
                 // 周数据（最近7天）
                 val weeklyData = loadWeeklyData(dateFormat)
                 _uiState.update { it.copy(weeklyData = weeklyData) }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
+                android.util.Log.e("HomeViewModel", "loadStats failed", e)
                 _uiState.update { it.copy(isLoading = false) }
             }
         }
@@ -122,10 +138,11 @@ class HomeViewModel @Inject constructor(
             calendar.add(Calendar.DAY_OF_YEAR, -daysAgo)
             val dateStr = dateFormat.format(calendar.time)
             val dayOfWeek = calendar.get(Calendar.DAY_OF_WEEK) - 1
-            val stats = readingStatsDao.getStatsForDate(dateStr)
+            // SUM 聚合：一天读多本书时图表不再少报
+            val minutes = readingStatsDao.getTotalMinutesForDate(dateStr) ?: 0
             DayReadingData(
                 dayLabel = dayLabels[dayOfWeek],
-                minutes = stats?.readingMinutes ?: 0,
+                minutes = minutes,
             )
         }
     }

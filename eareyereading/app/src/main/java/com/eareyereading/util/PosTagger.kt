@@ -1,5 +1,6 @@
 package com.eareyereading.util
 
+import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -45,7 +46,9 @@ class PosTagger @Inject constructor() {
         "before" to PosTag.PREPOSITION, "after" to PosTag.PREPOSITION, "above" to PosTag.PREPOSITION,
         "below" to PosTag.PREPOSITION, "to" to PosTag.PREPOSITION, "of" to PosTag.PREPOSITION,
         "off" to PosTag.PREPOSITION, "over" to PosTag.PREPOSITION, "under" to PosTag.PREPOSITION,
-        "again" to PosTag.PREPOSITION, "further" to PosTag.PREPOSITION, "then" to PosTag.PREPOSITION,
+        "again" to PosTag.PREPOSITION, "further" to PosTag.PREPOSITION,
+        // 注意："then" 曾在介词段重复声明；mapOf 静默保留后写的副词条目。
+        // 现已显式去重，副词语义为准（见副词段），避免隐式覆盖。
         "once" to PosTag.PREPOSITION, "from" to PosTag.PREPOSITION, "up" to PosTag.PREPOSITION,
         "down" to PosTag.PREPOSITION, "out" to PosTag.PREPOSITION, "as" to PosTag.PREPOSITION,
         // 连词
@@ -59,7 +62,9 @@ class PosTagger @Inject constructor() {
         "also" to PosTag.ADVERB, "just" to PosTag.ADVERB, "only" to PosTag.ADVERB,
         "now" to PosTag.ADVERB, "here" to PosTag.ADVERB, "there" to PosTag.ADVERB,
         "then" to PosTag.ADVERB, "too" to PosTag.ADVERB, "more" to PosTag.ADVERB,
-        "most" to PosTag.ADVERB, "such" to PosTag.ADVERB, "even" to PosTag.ADVERB,
+        // 注意："most" 曾在数词段重复声明；mapOf 静默保留后写的数词条目。
+        // 现已显式去重，数词语义为准（见数词段），避免隐式覆盖。
+        "such" to PosTag.ADVERB, "even" to PosTag.ADVERB,
         "back" to PosTag.ADVERB, "still" to PosTag.ADVERB, "well" to PosTag.ADVERB,
         "much" to PosTag.ADVERB, "often" to PosTag.ADVERB, "always" to PosTag.ADVERB,
         "never" to PosTag.ADVERB, "ever" to PosTag.ADVERB, "really" to PosTag.ADVERB,
@@ -108,7 +113,8 @@ class PosTagger @Inject constructor() {
     fun tagSentence(sentence: String): List<Pair<String, PosTag>> {
         val words = Regex("([a-zA-Z]+)").findAll(sentence)
         return words.map { match ->
-            val word = match.value.lowercase()
+            // Locale.ROOT：避免土耳其语等 locale 下 lowercase 的 I→ı 变体导致查表失配
+            val word = match.value.lowercase(Locale.ROOT)
             val tag = wordPos[word] ?: classifyBySuffix(word)
             word to tag
         }.toList()

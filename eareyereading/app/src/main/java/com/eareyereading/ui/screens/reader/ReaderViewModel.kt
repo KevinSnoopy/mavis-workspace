@@ -341,10 +341,15 @@ class ReaderViewModel @Inject constructor(
      * 下载内置 TTS 模型，下载完后自动初始化并启用。
      */
     private fun downloadEmbeddedTtsModel() {
+        // 防重入：弹窗按钮在下载期间仍可点，连点会并发下载同一个模型
+        if (downloadJob?.isActive == true) {
+            showToast("下载进行中，请稍候")
+            return
+        }
         val embeddedEngine = ttsHelper.getEmbeddedEngine()
         val modelInfo = embeddedEngine.getCurrentModelInfo()
         showToast("开始下载内置 TTS 模型（约 ${modelInfo.sizeBytes / 1_000_000}MB），请保持网络...")
-        viewModelScope.launch {
+        downloadJob = viewModelScope.launch {
             val ok = embeddedEngine.downloadModel(modelInfo) { progress ->
                 // 这里可以做更精细的进度提示，但简单起见只 log
                 android.util.Log.d("ReaderViewModel", "Embedded TTS download progress: ${(progress * 100).toInt()}%")
@@ -458,53 +463,74 @@ class ReaderViewModel @Inject constructor(
         // 翻译透明度下限
         private const val TRANSLATION_ALPHA_MIN = 0.3f
         private const val TRANSLATION_ALPHA_MAX = 1f
+
+        // 句子边界：句末标点 + 空白 + 大写字母/引号/左括号。
+        // "Aug." "Mr." "Dr." 这类缩写后的 "." + 空格 + 小写/数字不会误切，
+        // 而 "happened. The" 的正常句子边界仍能切出。提升为常量避免热路径重复编译。
+        private val SENTENCE_BOUNDARY = Regex("(?<=[.!?])\\s+(?=[A-Z\"\\(])")
     }
     // 本次阅读会话的统计（用于 saveProgress/cleanup 时写入 DB）
     private var sessionCharsRead: Long = 0L
     private var lastRecordedParagraphIndex: Int = -1
+    // 会话统计只落库一次，防止 cleanup()/onCleared 双路径并发写坏 reading_stats
+    private var statsFlushed = false
+    // saveProgress 防抖/收尾用：拖动进度条不再每像素写一次 DB
+    private var saveJob: kotlinx.coroutines.Job? = null
+    // 书签切换串行化：防止双击时两个协程都读到 null 而插入两条重复书签
+    private var bookmarkToggleJob: kotlinx.coroutines.Job? = null
+    // 内置 TTS 模型下载防重入
+    private var downloadJob: kotlinx.coroutines.Job? = null
+    // 单段朗读的初始化尝试（防初始化窗口内连点产生重复朗读）
+    private var ttsInitJob: kotlinx.coroutines.Job? = null
 
     // TTS 引导弹窗防抖：本会话内已经弹过则不再弹（避免用户每次点朗读都看到同一个弹窗）
     private var ttsPromptShownThisSession = false
-    // TTS 初始化过程中用于协调 reader 协程间的等待锁
-    private val ttsInitLock = Any()
 
     init {
         viewModelScope.launch {
-            combine(
-                settingsRepository.getRsvpSpeed(),
-                settingsRepository.getRsvpStrength(),
-                settingsRepository.getRsvpInterval(),
-                settingsRepository.getFontSize(),
-                settingsRepository.getTheme(),
-                settingsRepository.getTranslationAlpha(),
-            ) { values ->
-                // P1 修复: 用 as? 安全转换 + 默认值,避免 DataStore 旧版本数据 schema
-                // 不匹配时 ClassCastException 直接死掉 init block(整个 Reader 屏开不起来)。
-                // 当前 SettingsRepository 返回类型稳定,但 as 是脆性耦合,加防御。
-                @Suppress("UNCHECKED_CAST")
-                val speed = values[0] as? Int ?: 300
-                @Suppress("UNCHECKED_CAST")
-                val strength = values[1] as? Int ?: 3
-                @Suppress("UNCHECKED_CAST")
-                val interval = values[2] as? Int ?: 1
-                @Suppress("UNCHECKED_CAST")
-                val fontSize = values[3] as? Int ?: 18
-                @Suppress("UNCHECKED_CAST")
-                val theme = values[4] as? ReadingTheme ?: ReadingTheme.LIGHT
-                @Suppress("UNCHECKED_CAST")
-                val alpha = values[5] as? Float ?: 0.85f
-                ReadingSettings(speed, fontSize, theme, alpha, strength, interval)
-            }.collect { s ->
-                _uiState.update {
-                    it.copy(
-                        rsvpSpeed = s.speed,
-                        rsvpStrength = s.strength,
-                        rsvpInterval = s.interval,
-                        fontSize = s.fontSize,
-                        theme = s.theme,
-                        translationAlpha = s.alpha,
-                    )
+            try {
+                combine(
+                    settingsRepository.getRsvpSpeed(),
+                    settingsRepository.getRsvpStrength(),
+                    settingsRepository.getRsvpInterval(),
+                    settingsRepository.getFontSize(),
+                    settingsRepository.getTheme(),
+                    settingsRepository.getTranslationAlpha(),
+                ) { values ->
+                    // P1 修复: 用 as? 安全转换 + 默认值,避免 DataStore 旧版本数据 schema
+                    // 不匹配时 ClassCastException 直接死掉 init block(整个 Reader 屏开不起来)。
+                    // 当前 SettingsRepository 返回类型稳定,但 as 是脆性耦合,加防御。
+                    @Suppress("UNCHECKED_CAST")
+                    val speed = values[0] as? Int ?: 300
+                    @Suppress("UNCHECKED_CAST")
+                    val strength = values[1] as? Int ?: 3
+                    @Suppress("UNCHECKED_CAST")
+                    val interval = values[2] as? Int ?: 1
+                    @Suppress("UNCHECKED_CAST")
+                    val fontSize = values[3] as? Int ?: 18
+                    @Suppress("UNCHECKED_CAST")
+                    val theme = values[4] as? ReadingTheme ?: ReadingTheme.LIGHT
+                    @Suppress("UNCHECKED_CAST")
+                    val alpha = values[5] as? Float ?: 0.85f
+                    ReadingSettings(speed, fontSize, theme, alpha, strength, interval)
+                }.collect { s ->
+                    _uiState.update {
+                        it.copy(
+                            // 已打开书籍时，书籍自带的 rsvpSpeed 优先（loadBook 写入），
+                            // 全局设置的（重）发射不再覆盖它，消除双写竞态
+                            rsvpSpeed = if (currentBookId != null) it.rsvpSpeed else s.speed,
+                            rsvpStrength = s.strength,
+                            rsvpInterval = s.interval,
+                            fontSize = s.fontSize,
+                            theme = s.theme,
+                            translationAlpha = s.alpha,
+                        )
+                    }
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                android.util.Log.e("ReaderViewModel", "settings combine failed", e)
             }
         }
     }
@@ -514,6 +540,7 @@ class ReaderViewModel @Inject constructor(
         readingStartTime = System.currentTimeMillis()
         sessionCharsRead = 0L
         lastRecordedParagraphIndex = -1
+        statsFlushed = false
 
         // 取消旧的 Flow collectors，防止泄漏
         vocabJob?.cancel()
@@ -525,93 +552,124 @@ class ReaderViewModel @Inject constructor(
 
         // 加载生词本（用于阅读高亮）
         vocabJob = viewModelScope.launch {
-            vocabularyRepository.getAllVocabulary().collect { vocabList ->
-                val known = vocabList.filter { it.isLearned }.map { it.word.lowercase() }.toSet()
-                val allWords = vocabList.map { it.word.lowercase() }.toSet()
-                _uiState.update { it.copy(knownWords = known, learnedWords = allWords) }
+            try {
+                vocabularyRepository.getAllVocabulary().collect { vocabList ->
+                    val known = vocabList.filter { it.isLearned }.map { it.word.lowercase(java.util.Locale.ROOT) }.toSet()
+                    val allWords = vocabList.map { it.word.lowercase(java.util.Locale.ROOT) }.toSet()
+                    _uiState.update { it.copy(knownWords = known, learnedWords = allWords) }
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                android.util.Log.e("ReaderViewModel", "vocab collect failed", e)
             }
         }
 
         bookJob = viewModelScope.launch {
-            // 用 first() 而非 collect() — 单次拉取，避免 updateProgress 后 Flow 重发射时
-            // 错误地将 currentParagraphIndex 重置为保存的旧位置（覆盖用户当前阅读进度）
-            val book = bookRepository.getBookById(bookId).first()
-            if (book == null) {
-                _uiState.update { it.copy(isLoading = false) }
-                return@launch
-            }
-            val paragraphs = if (book.content.isNotBlank()) {
-                book.content.split("\n\n").filter { it.isNotBlank() }
-            } else {
-                epubParser.parseBook(book.filePath)
-            }
-            val state = readingRepository.getState(bookId)
-            val totalChars = paragraphs.joinToString(" ").length.toLong()
-
-            _uiState.update {
-                it.copy(
-                    book = book,
-                    paragraphs = paragraphs,
-                    currentParagraphIndex = state?.currentParagraph ?: 0,
-                    currentWordIndex = state?.currentPosition ?: 0,
-                    readingMode = state?.readingMode ?: ReadingMode.NORMAL,
-                    rsvpSpeed = state?.rsvpSpeed ?: it.rsvpSpeed,
-                    totalReadChars = totalChars,
-                    isLoading = false,
-                )
-            }
-
-            // 初始化 TTS
-            if (!_uiState.value.ttsInitialized) {
-                val ok = try {
-                    ttsHelper.initialize(book.language)
-                } catch (e: TimeoutCancellationException) {
-                    android.util.Log.w("ReaderViewModel", "TTS init timed out", e)
-                    false
-                } catch (e: Exception) {
-                    android.util.Log.e("ReaderViewModel", "TTS init failed", e)
-                    false
+            try {
+                // 用 first() 而非 collect() — 单次拉取，避免 updateProgress 后 Flow 重发射时
+                // 错误地将 currentParagraphIndex 重置为保存的旧位置（覆盖用户当前阅读进度）
+                val book = bookRepository.getBookById(bookId).first()
+                if (book == null) {
+                    _uiState.update { it.copy(isLoading = false) }
+                    return@launch
                 }
-                _uiState.update { it.copy(ttsInitialized = ok) }
-                // 加载书籍时静默失败，不弹引导（等用户点击朗读时再弹）
-                if (!ok) {
-                    android.util.Log.i(
-                        "ReaderViewModel",
-                        "TTS init failed silently on load: ${ttsHelper.lastFailureReason}",
+                val paragraphs = if (book.content.isNotBlank()) {
+                    book.content.split("\n\n").filter { it.isNotBlank() }
+                } else {
+                    epubParser.parseBook(book.filePath)
+                }
+                val state = readingRepository.getState(bookId)
+                // 与 saveState 持久化的 totalCharacters 口径一致（都按段落分隔符拼接）
+                val totalChars = paragraphs.joinToString("\n\n").length.toLong()
+                // 内容可能比重导入/重切分，持久化的位置必须按新内容收敛，
+                // 否则 Slider/进度/朗读索引全部越界
+                val maxIdx = (paragraphs.size - 1).coerceAtLeast(0)
+
+                _uiState.update {
+                    it.copy(
+                        book = book,
+                        paragraphs = paragraphs,
+                        currentParagraphIndex = (state?.currentParagraph ?: 0).coerceIn(0, maxIdx),
+                        currentWordIndex = (state?.currentPosition ?: 0).coerceAtLeast(0),
+                        readingMode = state?.readingMode ?: ReadingMode.NORMAL,
+                        rsvpSpeed = state?.rsvpSpeed ?: it.rsvpSpeed,
+                        totalReadChars = totalChars,
+                        isLoading = false,
                     )
                 }
-            }
+
+                // 初始化 TTS
+                if (!_uiState.value.ttsInitialized) {
+                    val ok = try {
+                        ttsHelper.initialize(book.language)
+                    } catch (e: TimeoutCancellationException) {
+                        android.util.Log.w("ReaderViewModel", "TTS init timed out", e)
+                        false
+                    } catch (e: Exception) {
+                        android.util.Log.e("ReaderViewModel", "TTS init failed", e)
+                        false
+                    }
+                    _uiState.update { it.copy(ttsInitialized = ok) }
+                    // 加载书籍时静默失败，不弹引导（等用户点击朗读时再弹）
+                    if (!ok) {
+                        android.util.Log.i(
+                            "ReaderViewModel",
+                            "TTS init failed silently on load: ${ttsHelper.lastFailureReason}",
+                        )
+                    }
+                }
 
                 // 加载书签
                 bookmarksJob?.cancel()
                 bookmarksJob = viewModelScope.launch {
-                    bookmarkDao.getBookmarksForBook(bookId).collect { bookmarks ->
-                        _uiState.update {
-                            it.copy(bookmarkedParagraphs = bookmarks.map { b -> b.paragraphIndex }.toSet())
+                    try {
+                        bookmarkDao.getBookmarksForBook(bookId).collect { bookmarks ->
+                            _uiState.update {
+                                it.copy(bookmarkedParagraphs = bookmarks.map { b -> b.paragraphIndex }.toSet())
+                            }
                         }
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        android.util.Log.e("ReaderViewModel", "bookmarks collect failed", e)
                     }
                 }
 
                 // 加载高亮
                 highlightsJob?.cancel()
                 highlightsJob = viewModelScope.launch {
-                    highlightDao.getHighlightsForBook(bookId).collect { highlights ->
-                        val grouped = highlights.groupBy { it.paragraphIndex }.mapValues { (_, list) ->
-                            list.map { h ->
-                                HighlightData(
-                                    id = h.id,
-                                    startOffset = h.startOffset,
-                                    endOffset = h.endOffset,
-                                    text = h.text,
-                                    color = parseHighlightColor(h.color),
-                                )
+                    try {
+                        highlightDao.getHighlightsForBook(bookId).collect { highlights ->
+                            val grouped = highlights.groupBy { it.paragraphIndex }.mapValues { (_, list) ->
+                                list.map { h ->
+                                    HighlightData(
+                                        id = h.id,
+                                        startOffset = h.startOffset,
+                                        endOffset = h.endOffset,
+                                        text = h.text,
+                                        color = parseHighlightColor(h.color),
+                                    )
+                                }
                             }
+                            _uiState.update { it.copy(highlights = grouped) }
                         }
-                        _uiState.update { it.copy(highlights = grouped) }
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        android.util.Log.e("ReaderViewModel", "highlights collect failed", e)
                     }
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // 损坏/缺失的 EPUB、DB 异常等不再经由未捕获处理器崩 App
+                android.util.Log.e("ReaderViewModel", "loadBook failed", e)
+                _uiState.update { it.copy(isLoading = false) }
+                showToast("书籍加载失败")
             }
         }
+    }
 
     private fun parseHighlightColor(hex: String): Color {
         return try {
@@ -635,9 +693,11 @@ class ReaderViewModel @Inject constructor(
         val paragraphs = _uiState.value.paragraphs
         if (paragraphs.isEmpty()) return
 
-        // 初始化 TTS
-        if (!_uiState.value.ttsInitialized) {
-            viewModelScope.launch {
+        // 初始化放进被追踪的 autoReadJob：初始化窗口内的第二次点击
+        // 会先 cancel 掉第一次尝试，不再出现两条并发朗读链
+        autoReadJob?.cancel()
+        autoReadJob = viewModelScope.launch {
+            if (!_uiState.value.ttsInitialized) {
                 val ok = try {
                     ttsHelper.initialize(_uiState.value.book?.language ?: "en")
                 } catch (e: TimeoutCancellationException) {
@@ -648,13 +708,11 @@ class ReaderViewModel @Inject constructor(
                     false
                 }
                 _uiState.update { it.copy(ttsInitialized = ok) }
-                if (ok) {
-                    doStartAutoRead(paragraphs)
-                } else {
+                if (!ok) {
                     handleTtsInitFailure("自动朗读不可用")
+                    return@launch
                 }
             }
-        } else {
             doStartAutoRead(paragraphs)
         }
     }
@@ -676,11 +734,8 @@ class ReaderViewModel @Inject constructor(
 
                 _uiState.update { it.copy(autoReadingParaIndex = paraIdx, currentParagraphIndex = paraIdx) }
 
-                // 按句子分割。
-                // 用 (?<=[.!?])\s+(?=[A-Z"\(]) 切分，要求句末标点后跟空白 + 大写字母/引号/左括号，
-                // 这样 "Aug." "Mr." "Dr." 这种缩写后的 "." + 空格 + 小写/数字不会误切，
-                // 而 "happened. The" 这种正常句子边界仍能切出来。
-                val sentences = para.split(Regex("(?<=[.!?])\\s+(?=[A-Z\"\\(])")).filter { it.isNotBlank() }
+                // 按句子分割（与速读共用同一个边界正则，保证行为一致）
+                val sentences = para.split(SENTENCE_BOUNDARY).filter { it.isNotBlank() }
                 _uiState.update { it.copy(currentSentences = sentences) }
 
                 suspendCancellableCoroutine<Unit> { cont ->
@@ -735,6 +790,9 @@ class ReaderViewModel @Inject constructor(
     fun setReadingMode(mode: ReadingMode) {
         rsvpJob?.cancel()
         speedJob?.cancel()
+        // 切换模式会取消播放协程：同步复位 isPlaying，
+        // 否则顶栏按钮卡在"暂停"图标，用户要按两次才能再播放
+        _uiState.update { it.copy(isPlaying = false) }
         if (_uiState.value.isAutoReading) {
             autoReadJob?.cancel()
             ttsHelper.stop()
@@ -786,11 +844,15 @@ class ReaderViewModel @Inject constructor(
     fun toggleRsvp() {
         if (_uiState.value.isPlaying) {
             rsvpJob?.cancel()
+            // 暂停即停声：原实现最后一个词会继续播完
+            ttsHelper.stop()
             _uiState.update { it.copy(isPlaying = false) }
         } else {
-            // 确保 TTS 初始化
-            if (!_uiState.value.ttsInitialized) {
-                viewModelScope.launch {
+            // 初始化放进被追踪的 rsvpJob：初始化窗口内的连点会取消第一次尝试，
+            // 不再出现两条并发播放循环交替调 speak() 的乱序音频
+            rsvpJob?.cancel()
+            rsvpJob = viewModelScope.launch {
+                if (!_uiState.value.ttsInitialized) {
                     val ok = try {
                         ttsHelper.initialize(_uiState.value.book?.language ?: "en")
                     } catch (e: TimeoutCancellationException) {
@@ -801,15 +863,13 @@ class ReaderViewModel @Inject constructor(
                         false
                     }
                     _uiState.update { it.copy(ttsInitialized = ok) }
-                    if (ok) {
-                        startRsvp()
-                    } else {
+                    if (!ok) {
                         handleTtsInitFailure("RSVP 不可用")
+                        return@launch
                     }
                 }
-                return
+                startRsvp()
             }
-            startRsvp()
         }
     }
 
@@ -817,7 +877,8 @@ class ReaderViewModel @Inject constructor(
         _uiState.update { it.copy(isPlaying = true) }
         rsvpJob = viewModelScope.launch {
             val words = getCurrentParagraphWords()
-            val interval = (60_000L / _uiState.value.rsvpSpeed)
+            // rsvpSpeed 来自 DataStore/阅读状态，未全程校验；0 会直接除零崩溃
+            val interval = 60_000L / _uiState.value.rsvpSpeed.coerceIn(100, 800)
             for (i in _uiState.value.currentWordIndex until words.size) {
                 if (!_uiState.value.isPlaying) break
                 _uiState.update { it.copy(currentWordIndex = i) }
@@ -835,9 +896,10 @@ class ReaderViewModel @Inject constructor(
             ttsHelper.stop()
             _uiState.update { it.copy(isPlaying = false) }
         } else {
-            // 确保 TTS 初始化
-            if (!_uiState.value.ttsInitialized) {
-                viewModelScope.launch {
+            // 同 toggleRsvp：初始化纳入被追踪的 job，杜绝双循环竞态
+            speedJob?.cancel()
+            speedJob = viewModelScope.launch {
+                if (!_uiState.value.ttsInitialized) {
                     val ok = try {
                         ttsHelper.initialize(_uiState.value.book?.language ?: "en")
                     } catch (e: TimeoutCancellationException) {
@@ -848,15 +910,13 @@ class ReaderViewModel @Inject constructor(
                         false
                     }
                     _uiState.update { it.copy(ttsInitialized = ok) }
-                    if (ok) {
-                        startSpeed()
-                    } else {
+                    if (!ok) {
                         handleTtsInitFailure("速读不可用")
+                        return@launch
                     }
                 }
-                return
+                startSpeed()
             }
-            startSpeed()
         }
     }
 
@@ -870,7 +930,7 @@ class ReaderViewModel @Inject constructor(
 
                 // 按句切分（跟自动朗读用同一个 regex，保证句边界一致）
                 val sentences = paragraphs[i]
-                    .split(Regex("(?<=[.!?])\\s+(?=[A-Z\"\\(])"))
+                    .split(SENTENCE_BOUNDARY)
                     .filter { it.isNotBlank() }
                 _uiState.update { it.copy(currentSentences = sentences) }
 
@@ -935,9 +995,10 @@ class ReaderViewModel @Inject constructor(
             ttsHelper.pause()
             _uiState.update { it.copy(isTtsPlaying = false) }
         } else {
-            // TTS 未初始化：尝试初始化
+            // TTS 未初始化：初始化纳入被追踪的 job，初始化窗口内的连点先取消上一次
             if (!_uiState.value.ttsInitialized) {
-                viewModelScope.launch {
+                ttsInitJob?.cancel()
+                ttsInitJob = viewModelScope.launch {
                     val ok = try {
                         ttsHelper.initialize(_uiState.value.book?.language ?: "en")
                     } catch (e: TimeoutCancellationException) {
@@ -1002,30 +1063,36 @@ class ReaderViewModel @Inject constructor(
 
     fun setFontSize(size: Int) {
         viewModelScope.launch {
-            _uiState.update { it.copy(fontSize = size.coerceIn(12, 32)) }
-            settingsRepository.setFontSize(size)
+            // 持久化收敛后的值：原实现 UI 显示收敛值、存储原始值，
+            // 下次启动设置流回填时越界值会重新进入 UI
+            val coerced = size.coerceIn(12, 32)
+            _uiState.update { it.copy(fontSize = coerced) }
+            settingsRepository.setFontSize(coerced)
         }
     }
 
     fun setRsvpSpeed(speed: Int) {
         viewModelScope.launch {
-            _uiState.update { it.copy(rsvpSpeed = speed.coerceIn(100, 800)) }
-            settingsRepository.setRsvpSpeed(speed)
-            currentBookId?.let { readingRepository.updateRsvpSpeed(it, speed) }
+            val coerced = speed.coerceIn(100, 800)
+            _uiState.update { it.copy(rsvpSpeed = coerced) }
+            settingsRepository.setRsvpSpeed(coerced)
+            currentBookId?.let { readingRepository.updateRsvpSpeed(it, coerced) }
         }
     }
 
     fun setRsvpStrength(strength: Int) {
         viewModelScope.launch {
-            _uiState.update { it.copy(rsvpStrength = strength.coerceIn(1, 5)) }
-            settingsRepository.setRsvpStrength(strength)
+            val coerced = strength.coerceIn(1, 5)
+            _uiState.update { it.copy(rsvpStrength = coerced) }
+            settingsRepository.setRsvpStrength(coerced)
         }
     }
 
     fun setRsvpInterval(interval: Int) {
         viewModelScope.launch {
-            _uiState.update { it.copy(rsvpInterval = interval.coerceIn(1, 3)) }
-            settingsRepository.setRsvpInterval(interval)
+            val coerced = interval.coerceIn(1, 3)
+            _uiState.update { it.copy(rsvpInterval = coerced) }
+            settingsRepository.setRsvpInterval(coerced)
         }
     }
 
@@ -1117,6 +1184,9 @@ class ReaderViewModel @Inject constructor(
                     paragraphTranslations = translations,
                     isTranslating = false,
                 ) }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                // 协程取消必须向上传播，否则取消后还会继续更新状态
+                throw e
             } catch (e: com.google.mlkit.common.MlKitException) {
                 android.util.Log.e("ReaderViewModel", "ML Kit translation failed", e)
                 _uiState.update { it.copy(isTranslating = false) }
@@ -1128,7 +1198,13 @@ class ReaderViewModel @Inject constructor(
     }
 
     fun saveProgress() {
-        viewModelScope.launch { doSaveProgress() }
+        // 防抖：进度条拖动时每像素都会触发一次保存，300ms 内合并成一次写库。
+        // 退出路径不经这里（cleanup 直接调 doSaveProgress），不会丢进度
+        saveJob?.cancel()
+        saveJob = viewModelScope.launch {
+            delay(300)
+            doSaveProgress()
+        }
     }
 
     /**
@@ -1175,23 +1251,33 @@ class ReaderViewModel @Inject constructor(
     }
 
     private suspend fun flushSessionStats(bookId: Long) {
+        // 单飞：cleanup() 的 onDispose 与 onCleared 两条路径会各调一次，
+        // 并发执行会在无唯一约束的 reading_stats 上交错 delete+insert
+        if (statsFlushed) return
         if (sessionCharsRead <= 0 || readingStartTime <= 0) return
         val now = System.currentTimeMillis()
         val minutesRead = ((now - readingStartTime) / 60_000).toInt().coerceAtLeast(1)
         val dateFormat = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault())
         val today = dateFormat.format(java.util.Date(now))
         try {
-            // 先删同书同日旧记录，再插入新记录（保持每日每书一条）
+            // 累计而非覆盖：同一天多次打开同一本书时，
+            // 原实现 delete+insert 只保留本次会话，早上的阅读时长被晚上抹掉
+            val existing = readingStatsDao.getStatForBookAndDate(bookId, today)
             readingStatsDao.deleteForBookAndDate(bookId, today)
             readingStatsDao.insertStat(
                 ReadingStatsEntity(
                     bookId = bookId,
                     date = today,
-                    readingMinutes = minutesRead,
-                    charsRead = sessionCharsRead.toInt(),
-                    paragraphsRead = (lastRecordedParagraphIndex + 1).coerceAtLeast(1),
+                    readingMinutes = (existing?.readingMinutes ?: 0) + minutesRead,
+                    charsRead = (existing?.charsRead ?: 0) + sessionCharsRead.toInt(),
+                    paragraphsRead = maxOf(
+                        existing?.paragraphsRead ?: 0,
+                        (lastRecordedParagraphIndex + 1).coerceAtLeast(1),
+                    ),
                 )
             )
+            statsFlushed = true
+            sessionCharsRead = 0L
         } catch (e: Exception) {
             android.util.Log.e("ReaderViewModel", "Failed to record stats", e)
         }
@@ -1213,6 +1299,9 @@ class ReaderViewModel @Inject constructor(
         rsvpJob?.cancel()
         speedJob?.cancel()
         autoReadJob?.cancel()
+        ttsInitJob?.cancel()
+        downloadJob?.cancel()
+        saveJob?.cancel()
         vocabJob?.cancel()
         bookmarksJob?.cancel()
         highlightsJob?.cancel()
@@ -1220,6 +1309,7 @@ class ReaderViewModel @Inject constructor(
         ttsHelper.stop()
         if (viewModelScope.isActive) {
             viewModelScope.launch {
+                // flushSessionStats 内部有单飞标记，两条路径不会重复写
                 doSaveProgress()
                 currentBookId?.let { flushSessionStats(it) }
             }
@@ -1291,7 +1381,11 @@ class ReaderViewModel @Inject constructor(
     // ── 书签 ─────────────────────────────────
     fun toggleBookmark(paragraphIndex: Int) {
         val bookId = currentBookId ?: return
-        viewModelScope.launch {
+        // 串行化：check-then-insert 无唯一约束保护，快速双击时
+        // 两个协程都读到 null 会各插一条重复书签（删除要点两次）。
+        // 取消上一次未完成的切换，保证读写序列
+        bookmarkToggleJob?.cancel()
+        bookmarkToggleJob = viewModelScope.launch {
             val existing = bookmarkDao.getBookmarkAt(bookId, paragraphIndex)
             if (existing != null) {
                 bookmarkDao.delete(existing)
