@@ -168,6 +168,20 @@ class WordAnalyzerTest {
         val isToken = tokens.first { it.isWord && it.text.equals("am", ignoreCase = true) }
         assertFalse("'I' should not be hidden", iToken.isHidden)
         assertFalse("'am' should not be hidden (length<=3)", isToken.isHidden)
+        // 正向断言：符合条件的词在 ratio=1.0 下必须被隐藏。
+        // 此前只有负向断言——自动选择管线整个坏掉（隐藏集为空）测试也照样通过
+        assertTrue("'reading' must be hidden at ratio=1.0",
+            tokens.first { it.text == "reading" }.isHidden)
+        assertTrue("'books' must be hidden at ratio=1.0",
+            tokens.first { it.text == "books" }.isHidden)
+    }
+
+    @Test
+    fun `generateClozeText auto-select hides repeated words at full ratio`() {
+        // 重复词不再吃掉多个隐藏名额：去重后采样，所有去重后的合格词都应被隐藏
+        val tokens = analyzer.generateClozeText("apple apple apple banana", ratio = 1.0f)
+        assertTrue(tokens.filter { it.text == "apple" }.all { it.isHidden })
+        assertTrue(tokens.first { it.text == "banana" }.isHidden)
     }
 
     // ---------------- generateFuzzyText ----------------
@@ -231,14 +245,17 @@ class WordAnalyzerTest {
     }
 
     @Test
-    fun `estimateReadingLevel handles empty text without throwing`() {
-        // average() over empty list throws by default; ensure caller-safe behavior
-        try {
-            val level = analyzer.estimateReadingLevel("")
-            assertNotNull(level)
-        } catch (e: Exception) {
-            // Acceptable: the analyzer may choose to surface the empty-input bug.
-            assertTrue(e is java.util.NoSuchElementException || e is ArithmeticException)
-        }
+    fun `estimateReadingLevel returns Easy for empty text`() {
+        // 契约：空输入没有词长可算（average() 为 NaN），必须显式返回 "Easy"。
+        // 旧实现 NaN 落进 else 分支误报 "Advanced"，且旧测试接受任何结果
+        assertEquals("Easy", analyzer.estimateReadingLevel(""))
+        assertEquals("Easy", analyzer.estimateReadingLevel("123 456 !!!"))
+    }
+
+    @Test
+    fun `estimateReadingLevel covers intermediate bands`() {
+        // avg length 5.0 -> Intermediate；avg length 6.0 -> Upper-Intermediate
+        assertEquals("Intermediate", analyzer.estimateReadingLevel("aaaaa bbbbb ccccc"))
+        assertEquals("Upper-Intermediate", analyzer.estimateReadingLevel("aaaaaa bbbbbb cccccc"))
     }
 }

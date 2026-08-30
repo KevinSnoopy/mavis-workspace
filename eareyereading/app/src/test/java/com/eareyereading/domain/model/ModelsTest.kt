@@ -74,16 +74,31 @@ class ModelsTest {
 
     @Test
     fun `ReadingMode exposes stable value and displayName`() {
-        // The serialized `value` is persisted in DataStore — do not change lightly.
+        // The serialized `value` is persisted in DataStore/Room — do not change lightly.
+        // 全部 9 个枚举都要钉住：旧测试只覆盖 4 个，其余 5 个改名/删除不会有任何告警，
+        // 而 ReadingRepositoryImpl.toDomain 会把未知串静默回退成 NORMAL
         assertEquals("normal", ReadingMode.NORMAL.value)
         assertEquals("rsvp", ReadingMode.RSVP.value)
+        assertEquals("speed", ReadingMode.SPEED.value)
         assertEquals("cloze", ReadingMode.CLOZE.value)
         assertEquals("fuzzy", ReadingMode.FUZZY.value)
+        assertEquals("dictation", ReadingMode.DICTATION.value)
+        assertEquals("split", ReadingMode.SPLIT.value)
+        assertEquals("back_translation", ReadingMode.BACK_TRANSLATION.value)
+        assertEquals("pos_analysis", ReadingMode.POS_ANALYSIS.value)
 
         assertEquals("普通阅读", ReadingMode.NORMAL.displayName)
         assertEquals("仿生阅读", ReadingMode.RSVP.displayName)
         assertEquals("挖空练习", ReadingMode.CLOZE.displayName)
         assertEquals("模糊听读", ReadingMode.FUZZY.displayName)
+    }
+
+    @Test
+    fun `ReadingMode values are unique and lowercase`() {
+        // value 是唯一性 + 小写契约：重复会让 toDomain 匹配到第一个同名项
+        val values = ReadingMode.entries.map { it.value }
+        assertEquals(values.size, values.toSet().size)
+        assertTrue(values.all { it == it.lowercase() })
     }
 
     @Test

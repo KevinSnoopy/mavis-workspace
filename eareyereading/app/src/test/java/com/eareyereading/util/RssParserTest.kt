@@ -269,7 +269,8 @@ class RssParserTest {
 
         assertEquals(1, feed.items.size)
         assertEquals("2025-09-02T08:30:00Z", feed.items.first().pubDate)
-        assertEquals(parser.parseDate("2025-09-02T08:30:00Z"), feed.items.first().pubTimestamp)
+        // 精确断言而非 parseDate(x) 对 parseDate(x) 的循环对比
+        assertEquals(1756801800000L, feed.items.first().pubTimestamp)
     }
 
     @Test
@@ -371,16 +372,97 @@ class RssParserTest {
 
     @Test
     fun `parseDate handles rss rfc3339 and fallback`() {
-        assertTrue(parser.parseDate("Mon, 01 Sep 2025 12:00:00 GMT") > 0)
-        assertTrue(parser.parseDate("Mon, 01 Sep 2025 12:00:00 +0000") > 0)
-        assertTrue(parser.parseDate("2025-09-01T12:00:00Z") > 0)
-        assertTrue(parser.parseDate("2025-09-01T12:00:00+00:00") > 0)
-        assertTrue(parser.parseDate("2025-09-01T12:00:00.123Z") > 0)
-        assertTrue(parser.parseDate("2025-09-01") > 0)
+        // 带时区信息的格式必须解析出精确时刻（此前只断言 > 0，
+        // 而失败回退也返回 now，等于格式表整个坏掉测试照样绿）
+        val expectedNoon = 1756728000000L // 2025-09-01T12:00:00Z
+        assertEquals(expectedNoon, parser.parseDate("Mon, 01 Sep 2025 12:00:00 GMT"))
+        assertEquals(expectedNoon, parser.parseDate("Mon, 01 Sep 2025 12:00:00 +0000"))
+        assertEquals(expectedNoon, parser.parseDate("2025-09-01T12:00:00Z"))
+        assertEquals(expectedNoon, parser.parseDate("2025-09-01T12:00:00+00:00"))
+        assertEquals(expectedNoon + 123, parser.parseDate("2025-09-01T12:00:00.123Z"))
+        // 数字时区偏移（+0800）也要精确：本地时间减 8 小时
+        assertEquals(expectedNoon - 8 * 3_600_000L, parser.parseDate("2025-09-01T12:00:00+0800"))
+
+        // 无时区信息的格式按 JVM 默认时区解释：与同口径的 Calendar 期望值对比，
+        // 不能写死 epoch（CI 与开发机时区可能不同）
+        val cal = java.util.Calendar.getInstance()
+        cal.clear()
+        cal.set(2025, java.util.Calendar.SEPTEMBER, 1, 12, 0, 0)
+        assertEquals(cal.timeInMillis, parser.parseDate("2025-09-01T12:00:00"))
+        cal.clear()
+        cal.set(2025, java.util.Calendar.SEPTEMBER, 1, 0, 0, 0)
+        assertEquals(cal.timeInMillis, parser.parseDate("2025-09-01"))
 
         val now = System.currentTimeMillis()
         assertTrue(parser.parseDate(null) in (now - 5000)..(now + 5000))
         assertTrue(parser.parseDate("not a date") in (now - 5000)..(now + 5000))
+    }
+
+    @Test
+    fun `atom self-closing link does not corrupt subsequent fields`() {
+        // Atom 里 <link .../> 自闭合：KXml2 不发 END_TAG。
+        // 修复前解析器进入采集态出不来，<title> 文本被吞掉/错位
+        val xml = """
+            <feed><title>Feed</title><entry>
+            <link rel="alternate" href="https://example.com/a"/>
+            <title>Entry A</title>
+            <updated>2025-09-01T12:00:00Z</updated>
+            </entry></feed>
+        """.trimIndent()
+
+        val feed = parser.parseXml(xml)
+        assertEquals(1, feed.items.size)
+        val item = feed.items.first()
+        assertEquals("Entry A", item.title)
+        assertEquals("https://example.com/a", item.link)
+        assertEquals(1756728000000L, item.pubTimestamp)
+    }
+
+    @Test
+    fun `self-closing empty text tags are skipped`() {
+        val xml = "<rss><channel><title>F</title><description/>" +
+            "<item><title>One</title><link>https://example.com/1</link>" +
+            "<guid/></item></channel></rss>"
+        val feed = parser.parseXml(xml)
+        assertEquals(1, feed.items.size)
+        assertEquals("One", feed.items.first().title)
+        assertEquals("https://example.com/1", feed.items.first().link)
+    }
+
+    @Test
+    fun `resolveCharset prefers header then xml declaration then utf8`() {
+        val body = "<?xml version=\"1.0\" encoding=\"ISO-8859-1\"?><rss/>"
+            .toByteArray(Charsets.US_ASCII)
+        // HTTP 头优先
+        assertEquals(
+            java.nio.charset.Charset.forName("GBK"),
+            parser.resolveCharset("application/rss+xml; charset=GBK", body),
+        )
+        // 无头时取 XML 声明
+        assertEquals(
+            java.nio.charset.Charset.forName("ISO-8859-1"),
+            parser.resolveCharset(null, body),
+        )
+        // 带引号的合法写法也能取到
+        assertEquals(
+            java.nio.charset.Charset.forName("GBK"),
+            parser.resolveCharset("text/xml; charset=\"GBK\"", body),
+        )
+        // 非法 charset 名回退
+        assertEquals(
+            Charsets.UTF_8,
+            parser.resolveCharset("text/xml; charset=NOT_A_CHARSET", "<rss/>".toByteArray()),
+        )
+        // 什么都没有时默认 UTF-8
+        assertEquals(Charsets.UTF_8, parser.resolveCharset(null, "<rss/>".toByteArray()))
+    }
+
+    @Test
+    fun `resolveCharset detects utf16 BOM`() {
+        val be = byteArrayOf(0xFE.toByte(), 0xFF.toByte(), 0, '<'.code.toByte())
+        val le = byteArrayOf(0xFF.toByte(), 0xFE.toByte(), '<'.code.toByte(), 0)
+        assertEquals(Charsets.UTF_16BE, parser.resolveCharset(null, be))
+        assertEquals(Charsets.UTF_16LE, parser.resolveCharset(null, le))
     }
 
     @Test

@@ -13,7 +13,7 @@ permissions:
   actions: read
 
 jobs:
-  detekt:
+  quality:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -21,12 +21,18 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: '17'
+      # AGP 构建（含 detekt 与单测的编译依赖）需要 Android SDK
+      - uses: android-actions/setup-android@v3
       - name: Setup Gradle
-        uses: gradle/gradle-build-action@v2
-        with:
-          gradle-version: 8.5
+        uses: gradle/actions/setup-gradle@v3
+      # 使用仓库 wrapper（与本地行为一致），不再另装独立 Gradle 8.5
       - name: Run Detekt
-        run: cd eareyereading && gradle :app:detekt --no-daemon
+        working-directory: eareyereading
+        run: ./gradlew :app:detekt --no-daemon
+      # 此前 CI 从不跑单测：解析器/分词器/模型的回归可以静默合入
+      - name: Run unit tests
+        working-directory: eareyereading
+        run: ./gradlew :app:testDebugUnitTest --no-daemon
       - name: Upload SARIF
         uses: github/codeql-action/upload-sarif@v3
         if: always()
@@ -40,3 +46,9 @@ jobs:
         with:
           name: detekt-report
           path: eareyereading/app/build/reports/detekt.html
+      - name: Upload test report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: unit-test-report
+          path: eareyereading/app/build/reports/tests/testDebugUnitTest

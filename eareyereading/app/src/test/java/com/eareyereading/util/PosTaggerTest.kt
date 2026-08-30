@@ -78,4 +78,13 @@ class PosTaggerTest {
     fun `tagSentence returns empty list for empty input`() {
         assertEquals(emptyList<Pair<String, PosTag>>(), tagger.tagSentence(""))
     }
+
+    @Test
+    fun `previously duplicated dictionary keys keep their intended tags`() {
+        // "most" 与 "then" 曾在词表里出现两次，mapOf 静默保留后写条目。
+        // 现已显式去重，这里钉住去重后的生效语义，防止回退：
+        // "most" -> NUMERAL（"most people"），"then" -> ADVERB（"and then"）
+        assertEquals("most" to PosTag.NUMERAL, tagger.tagSentence("most").single())
+        assertEquals("then" to PosTag.ADVERB, tagger.tagSentence("then").single())
+    }
 }
