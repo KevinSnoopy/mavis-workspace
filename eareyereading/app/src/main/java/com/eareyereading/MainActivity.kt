@@ -22,6 +22,9 @@ class MainActivity : ComponentActivity() {
     @Inject
     lateinit var settingsRepository: SettingsRepository
 
+    @Inject
+    lateinit var translationHelper: com.eareyereading.util.TranslationHelper
+
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
         super.onCreate(savedInstanceState)
@@ -37,5 +40,18 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onDestroy() {
+        // issue 8.2：兜底释放 ML Kit Translator（App.onTerminate 真机很少回调）
+        if (isFinishing) {
+            try {
+                translationHelper.close()
+            } catch (e: Exception) {
+                android.util.Log.w("MainActivity", "close translationHelper failed", e)
+            }
+        }
+        super.onDestroy()
     }
 }

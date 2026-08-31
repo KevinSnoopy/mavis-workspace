@@ -106,6 +106,15 @@ fun ReviewScreen(
                             onAnswer = viewModel::answerCard,
                             onDismissError = viewModel::clearError,
                         )
+                    } else if (uiState.errorMessage == null) {
+                        // issue 11.10：dueCards 未加载完（初始空表 + 未完成 +
+                        // 无错误）时 currentCard 为 null——此前该分支渲染空白屏
+                        Box(
+                            modifier = Modifier.fillMaxSize(),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            CircularProgressIndicator()
+                        }
                     }
                 }
             }

@@ -903,12 +903,25 @@ fun SettingsScreen(
                     Divider(modifier = Modifier.padding(horizontal = 20.dp))
 
                     if (uiState.embeddedDownloading || uiState.embeddedInitializing) {
+                        // 阶段细分（issue 1.1）：解压/初始化阶段不再显示
+                        // "正在下载…请保持网络连接"的自相矛盾文案
+                        val stage = uiState.embeddedDownloadStage
+                        val isExtracting = stage.contains("解压")
                         SettingRow(
                             icon = Icons.Default.Downloading,
                             iconBg = SurfaceSecondary,
                             iconColor = OnSurfaceTertiary,
-                            title = if (uiState.embeddedInitializing) "正在初始化..." else "正在下载...",
-                            subtitle = "请保持网络连接",
+                            title = when {
+                                uiState.embeddedInitializing -> "正在初始化..."
+                                isExtracting -> "正在解压..."
+                                else -> "正在下载..."
+                            },
+                            subtitle = when {
+                                // 解压/初始化是纯本地操作，网络提示反而误导
+                                isExtracting || uiState.embeddedInitializing ->
+                                    stage.ifEmpty { "无需联网，请稍候" }
+                                else -> "请保持网络连接"
+                            },
                         )
                     } else if (!uiState.embeddedModelDownloaded) {
                         SettingRowClickable(

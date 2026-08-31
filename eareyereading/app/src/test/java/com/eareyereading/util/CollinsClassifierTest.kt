@@ -29,10 +29,15 @@ class CollinsClassifierTest {
 
     @Test
     fun `short empty and non-alpha inputs are UNKNOWN`() {
-        assertEquals(CollinsClassifier.WordLevel.UNKNOWN, classifier.classify("a"))
+        // issue 2.12：collinsOne 收录 "a"/"i"——单字母词不再一刀切 UNKNOWN，
+        // 否则英文最高频的 "I" 永远无分级
+        assertEquals(CollinsClassifier.WordLevel.CORE, classifier.classify("a"))
+        assertEquals(CollinsClassifier.WordLevel.CORE, classifier.classify("i"))
+        assertEquals(CollinsClassifier.WordLevel.CORE, classifier.classify("I"))
         assertEquals(CollinsClassifier.WordLevel.UNKNOWN, classifier.classify(""))
         assertEquals(CollinsClassifier.WordLevel.UNKNOWN, classifier.classify("123"))
         assertEquals(CollinsClassifier.WordLevel.UNKNOWN, classifier.classify("don't"))
+        assertEquals(CollinsClassifier.WordLevel.UNKNOWN, classifier.classify("x"))
     }
 
     @Test

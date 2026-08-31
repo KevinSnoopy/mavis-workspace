@@ -491,8 +491,11 @@ private fun TtsInstallDialog(
                     modifier = androidx.compose.ui.Modifier.fillMaxWidth(),
                 )
                 androidx.compose.material3.Text(
+                    // 阶段缺失时的 fallback 不再提"请保持网络"：
+                    // 该文案只在阶段切换瞬间短暂出现，解压/初始化阶段显示
+                    // 网络提示会自相矛盾（issue 1.1）
                     text = downloadStage
-                        ?: "正在下载内置 TTS 模型 ${(progress * 100).toInt()}%…请保持网络，不要关闭应用",
+                        ?: "正在准备内置 TTS 模型 ${(progress * 100).toInt()}%…",
                     style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
                     color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = androidx.compose.ui.Modifier.padding(top = 4.dp),
@@ -705,45 +708,45 @@ fun NormalReadingView(
                         color = bgColor,
                         shape = RoundedCornerShape(4.dp),
                     ) {
-                        if (showWordLevelColors) {
-                            Text(
-                                text = buildAnnotatedString {
-                                    val words = Regex("([a-zA-Z]+)|([^a-zA-Z]+)").findAll(sentence)
-                                    words.forEach { match ->
-                                        val word = match.value
-                                        if (Regex("^[a-zA-Z]+$").matches(word)) {
-                                            val level = classifier.classify(word)
-                                            val color = when (level) {
-                                                WordLevel.CORE -> WordLevelCore
-                                                WordLevel.INTERMEDIATE -> WordLevelIntmd
-                                                WordLevel.UPPER_INTERMEDIATE -> WordLevelUpper
-                                                WordLevel.ADVANCED -> WordLevelAdv
-                                                WordLevel.RARE -> WordLevelRare
-                                                WordLevel.UNKNOWN -> textColor.copy(alpha = sAlpha * 0.5f)
-                                            }
-                                            withStyle(SpanStyle(color = color.copy(alpha = sAlpha))) { append(word) }
-                                        } else {
-                                            withStyle(SpanStyle(color = textColor.copy(alpha = sAlpha * 0.6f))) { append(word) }
+                        // 朗读中的句子也走 TappableParagraphText：朗读时点词查义
+                        // 是核心功能，此前该分支只渲染纯 Text 完全不可点（issue 3.4）
+                        val sentenceText = if (showWordLevelColors) {
+                            buildAnnotatedString {
+                                val words = Regex("([a-zA-Z]+)|([^a-zA-Z]+)").findAll(sentence)
+                                words.forEach { match ->
+                                    val word = match.value
+                                    if (Regex("^[a-zA-Z]+$").matches(word)) {
+                                        val level = classifier.classify(word)
+                                        val color = when (level) {
+                                            WordLevel.CORE -> WordLevelCore
+                                            WordLevel.INTERMEDIATE -> WordLevelIntmd
+                                            WordLevel.UPPER_INTERMEDIATE -> WordLevelUpper
+                                            WordLevel.ADVANCED -> WordLevelAdv
+                                            WordLevel.RARE -> WordLevelRare
+                                            WordLevel.UNKNOWN -> textColor.copy(alpha = sAlpha * 0.5f)
                                         }
+                                        withStyle(SpanStyle(color = color.copy(alpha = sAlpha))) { append(word) }
+                                    } else {
+                                        withStyle(SpanStyle(color = textColor.copy(alpha = sAlpha * 0.6f))) { append(word) }
                                     }
-                                },
-                                modifier = Modifier.padding(vertical = 4.dp, horizontal = 4.dp),
-                                style = TextStyle(
-                                    fontSize = fontSize.sp,
-                                    lineHeight = (fontSize * 1.8).sp,
-                                ),
-                            )
+                                }
+                            }
                         } else {
-                            Text(
-                                text = sentence,
-                                modifier = Modifier.padding(vertical = 4.dp, horizontal = 4.dp),
-                                style = TextStyle(
-                                    fontSize = fontSize.sp,
-                                    color = textColor.copy(alpha = sAlpha),
-                                    lineHeight = (fontSize * 1.8).sp,
-                                ),
-                            )
+                            buildAnnotatedString {
+                                withStyle(SpanStyle(color = textColor.copy(alpha = sAlpha))) { append(sentence) }
+                            }
                         }
+                        TappableParagraphText(
+                            text = sentenceText,
+                            paragraph = sentence,
+                            onWordClick = onWordClick,
+                            onSentenceDoubleTap = onSentenceDoubleTap,
+                            modifier = Modifier.padding(vertical = 4.dp, horizontal = 4.dp),
+                            style = TextStyle(
+                                fontSize = fontSize.sp,
+                                lineHeight = (fontSize * 1.8).sp,
+                            ),
+                        )
                     }
                 }
             } else {
@@ -1194,7 +1197,8 @@ fun SplitReadingView(
             }
             // 与回译视图同款失败/加载态：setReadingMode 对本模式也会自动触发
             // 全书翻译，全空失败时 toast 一闪而过，这里给可发现的重试入口
-            if (translations.isEmpty()) {
+            // issue 8.3：空白段会写 "" 占位，isEmpty() 不再是可靠失败信号
+            if (translations.values.none { it.isNotBlank() }) {
                 Spacer(modifier = Modifier.height(4.dp))
                 if (isTranslating) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1457,10 +1461,14 @@ fun BackTranslationView(
     onVisibleParagraphChanged: (Int) -> Unit = {},
 ) {
     // 直接派生即可，无需 remember + LaunchedEffect 多一次组合跳转
-    val hasTranslation = translations.isNotEmpty()
+    // issue 8.3：失败段不再写 "" 占位，但空白段会写 ""——全空白 Map
+    // 同样视为"无译文"，重试按钮才可达
+    val hasTranslation = translations.values.any { it.isNotBlank() }
     // 揭示是视图本地状态：原实现"查看原文"会 setReadingMode(NORMAL)，
-    // 把用户踢出回译模式还持久化了模式切换
-    var revealed by rememberSaveable { mutableStateOf(false) }
+    // 把用户踢出回译模式还持久化了模式切换。
+    // 以段落列表为 key：换书后 revealed 必须复位，否则新书直接继承
+    // 上一本书"已揭示"的状态（issue 3.3）
+    var revealed by rememberSaveable(paragraphs) { mutableStateOf(false) }
 
     // 单 LazyColumn 逐段并排（译文 | 原文）：原实现左右两个独立滚动容器
     // 整书 eager 渲染，滚动不同步时原文第 N 段对上译文第 M 段（与分栏视图
@@ -2150,8 +2158,10 @@ fun SentenceTranslationDialog(
                         color = Primary,
                     )
                 } else {
+                    // issue 8.9：null 语义是"词典/模型都没翻出来"，
+                    // 与"请求出错"区分开，避免误导用户以为网络故障
                     Text(
-                        text = "翻译失败，请重试",
+                        text = "句子未翻译",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.error,
                     )

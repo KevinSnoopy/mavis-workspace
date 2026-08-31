@@ -8,6 +8,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -169,6 +170,10 @@ class TtsHelper @Inject constructor(
                 for ((index, sentence) in sentences.withIndex()) {
                     if (!isInSentenceChain) break  // 被 stop() 打断
                     embeddedTts.speak(sentence, speed = currentSpeed)
+                    // 句间留一个短间隙：上一句 AudioTrack release 与下一句
+                    // build 之间零间隔会在部分设备上产生"啵"爆音
+                    // （AudioTrack: AUDIO_OUTPUT_FLAG_FAST denied）
+                    delay(20)
                     withContext(Dispatchers.Main) {
                         onSentenceDone(index)
                     }

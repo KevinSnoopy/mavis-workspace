@@ -291,7 +291,9 @@ class RssParserTest {
         assertEquals("F", feed.title)
         assertEquals(1, feed.items.size)
         val item = feed.items.first()
-        assertEquals("Body", item.description)
+        // issue 7.1：content:encoded 独立保存进 content 字段（完整正文），
+        // 不再混入 description
+        assertEquals("Body", item.content)
         assertEquals("2025-09-03T09:00:00Z", item.pubDate)
 
         // 声明了 xmlns 的规范写法同样可用
@@ -301,7 +303,27 @@ class RssParserTest {
                     " xmlns:dc=\"http://purl.org/dc/elements/1.1/\" version=\"2.0\">")
         val declaredFeed = parser.parseXml(declared)
         assertEquals(1, declaredFeed.items.size)
-        assertEquals("Body", declaredFeed.items.first().description)
+        assertEquals("Body", declaredFeed.items.first().content)
+    }
+
+    @Test
+    fun `content encoded keeps paragraph structure for library import`() {
+        // issue 7.1/7.3：正文导入书库要按段切分——stripHtml 会把全文压成一行，
+        // content 必须保留块级标签形成的段落边界
+        val html = "<p>First para.</p><p>Second para.</p><br/><p>Third.</p>"
+        val xml = """
+            <rss><channel><title>F</title><item>
+              <title>One</title><link>https://example.com/1</link>
+              <content:encoded><![CDATA[$html]]></content:encoded>
+            </item></channel></rss>
+        """.trimIndent()
+
+        val content = parser.parseXml(xml).items.first().content ?: ""
+
+        val paragraphs = content.split(Regex("\n\\s*\n"))
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+        assertEquals(listOf("First para.", "Second para.", "Third."), paragraphs)
     }
 
     @Test
@@ -317,10 +339,14 @@ class RssParserTest {
         val feed = parser.parseXml(xml)
 
         assertEquals(1, feed.items.size)
-        val desc = feed.items.first().description
-        assertNotNull(desc)
-        assertTrue("description should be bounded, was ${desc!!.length}", desc.length <= 500)
-        assertFalse(desc.contains("<p>"))
+        // issue 7.1：content 不再被 MAX_DESC=500 截断，只受采集层 MAX_RAW_FIELD=32K 限制
+        val content = feed.items.first().content
+        assertNotNull(content)
+        assertTrue(
+            "content should preserve full text, was ${content!!.length}",
+            content.length > 500,
+        )
+        assertFalse(content.contains("<p>"))
     }
 
     @Test

@@ -122,6 +122,13 @@ class RssParser @Inject constructor() {
         val description: String?,
         val pubDate: String?,
         val pubTimestamp: Long,
+        /**
+         * `<content:encoded>` / Atom `<content>` 的完整正文（stripHtml 后）。
+         * issue 7.1：此前整段被塞进 description 并截断到 500 字符，
+         * "加入书库"只能重新抓 link（SPA 页拿不到正文）。
+         * 不带 MAX_DESC 限制（采集层 MAX_RAW_FIELD = 32K 已兜底）。
+         */
+        val content: String? = null,
     )
 
     /**
@@ -215,8 +222,19 @@ class RssParser @Inject constructor() {
                 "pubdate", "date", "published", "updated" -> {
                     if (inArticle && raw.isNotBlank()) item.pubDate = raw.trim()
                 }
+                // issue 7.1：content:encoded 是 feed 自带的完整正文，
+                // 独立保存且不截断——此前与 description 混流并被 MAX_DESC 砍掉
+                "content", "encoded" -> {
+                    // 保留段落结构（</p> 等块级标签 → 空行），导入书库时按段切分
+                    val cleaned = stripHtmlKeepParagraphs(raw)
+                    if (inArticle) {
+                        if (cleaned.isNotEmpty()) item.content.append(cleaned)
+                    } else if (feedDescription == null) {
+                        feedDescription = stripHtml(raw)
+                    }
+                }
                 else -> {
-                    // description / summary / content / encoded
+                    // description / summary
                     val cleaned = stripHtml(raw)
                     if (inArticle) appendDesc(item.description, cleaned)
                     else if (feedDescription == null) feedDescription = cleaned
@@ -327,12 +345,14 @@ class RssParser @Inject constructor() {
         var title: String = ""
         var link: String? = null
         val description = StringBuilder()
+        val content = StringBuilder()
         var pubDate: String? = null
 
         fun reset() {
             title = ""
             link = null
             description.setLength(0)
+            content.setLength(0)
             pubDate = null
         }
     }
@@ -349,6 +369,7 @@ class RssParser @Inject constructor() {
                 description = item.description.toString().trim().take(MAX_DESC).ifEmpty { null },
                 pubDate = item.pubDate,
                 pubTimestamp = parseDate(item.pubDate),
+                content = item.content.toString().trim().ifEmpty { null },
             )
         )
         item.reset()
@@ -442,6 +463,21 @@ class RssParser @Inject constructor() {
 
     internal fun stripHtml(html: String): String {
         return Regex("\\s+").replace(decodeEntities(html.replace(Regex("<[^>]+>"), " ")), " ").trim()
+    }
+
+    /**
+     * 清 HTML 但保留段落结构：块级标签边界换行成空行，行内空白折叠。
+     * [stripHtml] 会把全文压成一行，正文导入书库后没法按段阅读（issue 7.1/7.3）。
+     */
+    internal fun stripHtmlKeepParagraphs(html: String): String {
+        val withBreaks = html
+            .replace(Regex("(?i)</(p|div|li|h[1-6]|blockquote|tr|section|article)>|<br\\s*/?>"), "\n\n")
+            .replace(Regex("<[^>]+>"), " ")
+        val decoded = decodeEntities(withBreaks)
+        return decoded.lines()
+            .joinToString("\n") { Regex("[ \\t\\x0B\\f]+").replace(it, " ").trim() }
+            .replace(Regex("\n{3,}"), "\n\n")
+            .trim()
     }
 
     /** 解码 HTML 实体（主要服务于 CDATA 里的原始 HTML，以及 `<p>`/`<em>` 之外的转义字符）。 */

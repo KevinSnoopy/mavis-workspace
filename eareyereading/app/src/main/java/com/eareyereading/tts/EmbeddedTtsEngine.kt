@@ -367,9 +367,20 @@ private fun preprocessForTts(text: String): String {
 
     // 货币 + 数字组合（如 "$100"）：必须在通用数字转换之前，
     // 否则 "$100" 会先变成 "$one hundred" 再变成 " dollars one hundred"（语序颠倒）
-    s = Regex("\\$(\\d+)").replace(s) { match ->
-        val num = match.groupValues[1].toIntOrNull()
-        "${if (num != null && num <= 9999) numberToWords(num) else digitsToWords(match.groupValues[1])} dollars"
+    // 整数部分可选：$.50 / $0.99 也要命中（旧正则要求 $ 后紧跟数字，
+    // "$.50" 漏匹配后 "$" 被兜底替换成 " dollars " → 读成 "dollars point fifty"）
+    s = Regex("\\$(\\d+)?(?:\\.(\\d{1,2}))?").replace(s) { match ->
+        fun words(digits: String): String =
+            digits.toIntOrNull()?.takeIf { it in 0..9999 }?.let { numberToWords(it) }
+                ?: digitsToWords(digits)
+        val dollars = match.groupValues[1]
+        val cents = match.groupValues[2]
+        when {
+            cents.isEmpty() && dollars.isEmpty() -> match.value // 裸 "$"：交给后续兜底替换
+            cents.isEmpty() -> "${words(dollars)} dollars"
+            dollars.isEmpty() || dollars == "0" -> "${words(cents)} cents"
+            else -> "${words(dollars)} dollars ${words(cents)} cents"
+        }
     }
 
     // 其他数字 (含小数)：转英文
@@ -844,18 +855,34 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
     }
 
     /**
+     * 预扫与解压共用的条目过滤口径：只数会真正落盘的常规文件/目录，
+     * 且落点必须在 modelsDir 内。两处口径不一致时（预扫把 symlink 也计入，
+     * 解压循环却跳过），分母 > 分子 → 进度永远停在 99.x%。
+     */
+    private fun shouldCountTarEntry(
+        entry: org.apache.commons.compress.archivers.tar.TarArchiveEntry,
+        modelsDir: File,
+        canonicalRoot: String,
+    ): Boolean =
+        (entry.isFile || entry.isDirectory) &&
+            File(modelsDir, entry.name).canonicalPath.startsWith(canonicalRoot)
+
+    /**
      * 轻量预扫 tar：只遍历 entry 头（文件 + 目录都算），不写盘、不落盘，
      * 用于解压进度分母。tar 里 espeak-ng-data 下可能数百个条目，manifest 只声明 3 项，
      * 用 manifest 当分母会让进度卡在 1/3 不动。失败返回 -1（调用方退回动态分母）。
      */
-    private fun countTarEntries(tarballFile: File): Int {
+    private fun countTarEntries(tarballFile: File, modelsDir: File): Int {
+        val canonicalRoot = modelsDir.canonicalPath + File.separator
         var count = 0
         try {
             java.io.FileInputStream(tarballFile).use { fis ->
                 BZip2CompressorInputStream(fis).use { bzis ->
                     TarArchiveInputStream(bzis).use { tis ->
-                        while (tis.nextEntry != null) {
-                            count++
+                        var entry = tis.nextEntry
+                        while (entry != null) {
+                            if (shouldCountTarEntry(entry, modelsDir, canonicalRoot)) count++
+                            entry = tis.nextEntry
                         }
                     }
                 }
@@ -949,7 +976,7 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
         // 进度分母用"tar 内真实条目数"，不是 manifest 声明数（manifest 只有 3 项，
         // 而 espeak-ng-data 下有几百个文件——用 manifest 当分母会让进度卡在 1/3 不动，
         // 用户误以为卡死）。先做一次轻量预扫：只遍历 tar 头、不写盘、不落盘，数出总条目数。
-        val preCountedEntries = countTarEntries(tarballFile)
+        val preCountedEntries = countTarEntries(tarballFile, modelsDir)
         // 分母：预扫失败（-1）时退回动态分母（已见条目数+1，进度也能单调前进）
         var totalEntries = if (preCountedEntries > 0) preCountedEntries else 1
         var extractedEntries = 0
@@ -964,9 +991,10 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
         // StateFlow 每次都发射新值（data class entriesDone 递增）→ 几百次 Compose 重组。
         // 改为每 100ms 至多推一次；isFinal=true 时强制推一次保证末态精确。
         fun pushExtractionProgress(isFinal: Boolean = false) {
-            // 预扫失败时动态补正分母，保证进度单调向 1 收敛
-            if (preCountedEntries <= 0 && extractedEntries >= totalEntries) {
-                totalEntries = extractedEntries + 1
+            // 预扫失败时动态补正分母：进行中恒为 done+1（进度单调但 <100%），
+            // 末态强制分子分母对齐——否则最后一帧停在 N/(N+1)，进度永不收敛
+            if (preCountedEntries <= 0) {
+                totalEntries = if (isFinal) maxOf(extractedEntries, 1) else extractedEntries + 1
             }
             val now = System.currentTimeMillis()
             if (!isFinal && now - lastProgressPushMs < 100) return
@@ -1003,10 +1031,9 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
                             // 安全：entry 名来自远端 CDN 归档，不可信。
                             // 只接受常规文件/目录（跳过符号链接/硬链接等特殊条目），
                             // 并用 canonical 路径校验落点必须在 modelsDir 内，
-                            // 替代只查 ".." 子串的旧检查（会误杀 foo..bar、漏掉符号链接）
-                            if ((!entry.isFile && !entry.isDirectory) ||
-                                !File(modelsDir, name).canonicalPath.startsWith(canonicalRoot)
-                            ) {
+                            // 替代只查 ".." 子串的旧检查（会误杀 foo..bar、漏掉符号链接）。
+                            // 过滤口径与预扫 countTarEntries 共用，分子分母不漂移
+                            if (!shouldCountTarEntry(entry, modelsDir, canonicalRoot)) {
                                 entry = tis.nextEntry
                                 continue
                             }
@@ -1140,6 +1167,9 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
         var lastError: Throwable? = null
         for ((idx, p) in candidateProxies.withIndex()) {
             var conn: HttpURLConnection? = null
+            // 是否已把连接交接给 streamResponse：交接后由 fullStream/appendStream
+            // 关闭流，finally 里不再 disconnect
+            var handedOff = false
             try {
                 conn = openConnection(url, p)
                 conn.connectTimeout = 8_000
@@ -1157,6 +1187,7 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
                     code in 200..299 || code == 206 -> {
                         // 拿到响应 Content-Length 写到外面闭包的引用，供上层计算分母
                         val contentLen = conn.getHeaderField("Content-Length")?.toLongOrNull() ?: -1L
+                        handedOff = true
                         return streamResponse(
                             conn, code, contentLen, existingLen, target,
                             onChunkDownloaded, onTotalSizeKnown,
@@ -1188,6 +1219,7 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
                         conn = redirectedConn
                         if (redirectedCode in 200..299 || redirectedCode == 206) {
                             val contentLen = redirectedConn.getHeaderField("Content-Length")?.toLongOrNull() ?: -1L
+                            handedOff = true
                             return streamResponse(
                                 redirectedConn, redirectedCode, contentLen, existingLen, target,
                                 onChunkDownloaded, onTotalSizeKnown,
@@ -1217,18 +1249,17 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
                     }
                 }
             } catch (e: kotlinx.coroutines.CancellationException) {
-                conn?.disconnect()
                 throw e
             } catch (e: Exception) {
                 Log.w(TAG, "download: candidate #$idx (${describeProxy(p)}) failed: ${e.javaClass.simpleName}: ${e.message}")
                 lastError = e
             } finally {
-                // 没成功的连接要断开；成功的会被 fullStream/appendStream 内部 dispose。
-                // inputStream 取值本身在 4xx 上会抛 FileNotFoundException——
-                // 必须包进 try，否则异常逃出 finally 会绕过剩余 proxy 候选
-                // 和调用方的镜像循环，一个 404/416 就终结整个下载
-                val opened = try { conn?.inputStream != null } catch (_: Exception) { false }
-                if (!opened) try { conn?.disconnect() } catch (_: Exception) {}
+                // 没交接出去的连接统一断开；已交接给 streamResponse 的由
+                // fullStream/appendStream 关流。
+                // 旧实现用 conn.inputStream != null 探测——getInputStream() 有副作用
+                // （部分实现在此时就开始读 socket buffer），可能把 200/206 响应的
+                // 头几个字节提前消费掉，导致下载体残缺、解压必败且重试也失败
+                if (!handedOff) try { conn?.disconnect() } catch (_: Exception) {}
             }
         }
         Log.e(TAG, "download: all ${candidateProxies.size} candidates failed for $url", lastError)
@@ -1360,6 +1391,7 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
                 java.io.FileOutputStream(target, /* append = */ false).use { output ->
                     val buffer = ByteArray(8192)
                     var totalRead = 0L
+                    var sinceCheck = 0L
                     var lastTraceMs = 0L
                     while (true) {
                         val read = input.read(buffer)
@@ -1377,8 +1409,13 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
                             lastTraceMs = now
                             Log.d(TAG, "fullStream: progress ${totalRead / 1024}KB")
                         }
-                        // 同 appendStream：周期性响应协程取消
-                        if (totalRead % 262144L < read) {
+                        // 同 appendStream：周期性响应协程取消。
+                        // 旧实现用 totalRead % 262144 < read 概率探测，末尾
+                        // chunk 越小命中概率越低（<1KB 时 ~0.4%），最后 256KB
+                        // 基本不响应取消——改 sinceCheck 累加器（与 appendStream 一致）
+                        sinceCheck += read
+                        if (sinceCheck >= 262144L) {
+                            sinceCheck = 0
                             kotlin.coroutines.coroutineContext[kotlinx.coroutines.Job]
                                 ?.ensureActive()
                         }
@@ -1702,7 +1739,15 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
             (samples[i] * 32767f).toInt().coerceIn(-32768, 32767).toShort()
         }
 
-        val bufferSize = pcm16.size * 2
+        // MODE_STATIC 要求 buffer ≥ 数据长度，同时部分设备的 AudioTrack mixer
+        // 有自己的最小 buffer 门槛：只给 pcm16.size*2 时短数据 write() 返回 -22，
+        // 整句静默丢弃（长句尾部 chunk 最常踩中）
+        val minBuffer = AudioTrack.getMinBufferSize(
+            sampleRate,
+            AudioFormat.CHANNEL_OUT_MONO,
+            AudioFormat.ENCODING_PCM_16BIT,
+        )
+        val bufferSize = maxOf(pcm16.size * 2, minBuffer)
         val track = AudioTrack.Builder()
             .setAudioAttributes(
                 AudioAttributes.Builder()
@@ -1753,22 +1798,21 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
             return
         }
 
-        // 等待播放完成
-        val durationMs = (pcm16.size * 1000L) / sampleRate
-        var elapsed = 0L
+        // 等待播放完成：以硬件已消费的帧数（playbackHeadPosition）为准。
+        // 旧实现用 (字节数/采样率) 估算时长，估算偏短时 release() 会把
+        // 还在硬件 buffer 里排队的尾音硬切掉（句尾元音中间"啪"地断）
         try {
-            while (elapsed < durationMs) {
-                // delay 而非 Thread.sleep：释放 IO 线程，且能响应协程取消。
-                // delay 在协程被 cancel 时会抛 CancellationException，自动退出循环。
-                kotlinx.coroutines.delay(50)
-                elapsed += 50
-                synchronized(audioTrackLock) {
+            while (true) {
+                kotlinx.coroutines.delay(20)
+                val head = synchronized(audioTrackLock) {
                     if (audioTrack !== track) {
                         // 被 stop()/新的 playPcm 接管：对方已在锁内 release 过这个 track。
                         // 这里不能再 release（双重释放会抛 IllegalStateException）
                         return
                     }
+                    track.playbackHeadPosition
                 }
+                if (head >= pcm16.size) break
             }
         } catch (e: kotlinx.coroutines.CancellationException) {
             // scope 销毁等取消路径：若 track 仍是当前则释放，

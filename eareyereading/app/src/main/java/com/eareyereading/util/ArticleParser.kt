@@ -25,6 +25,27 @@ class ArticleParser @Inject constructor() {
         private val COMMENT_TAG = Regex("<!--.*?-->", RegexOption.DOT_MATCHES_ALL)
         private val HTML_TAG = Regex("<[^>]+>")
 
+        // issue 7.2：噪音元素整段剔除（配对闭合）
+        private val NOISE_BLOCK_TAG = Regex(
+            "<(aside|nav|figure|figcaption|iframe|button|form|input|select|textarea|ins)\\b[^>]*>[\\s\\S]*?</\\1>",
+            RegexOption.IGNORE_CASE,
+        )
+        // issue 7.4：策略 5 命中 <body> 时页眉/页脚仍是噪音，先剥掉再取正文
+        private val HEADER_FOOTER_TAG = Regex(
+            "<(header|footer)\\b[^>]*>[\\s\\S]*?</\\1>",
+            RegexOption.IGNORE_CASE,
+        )
+        // 未闭合/自闭合的噪音标签（补丁式剔除，防止残标签被当正文文本）
+        private val NOISE_VOID_TAG = Regex(
+            "<(aside|nav|figure|figcaption|iframe|button|form|input|select|textarea|ins)\\b[^>]*/?>",
+            RegexOption.IGNORE_CASE,
+        )
+        // issue 7.2：按 class 名剔除的噪音容器（分享/订阅/广告/相关推荐/侧栏/面包屑/作者卡/评论区）
+        private val NOISE_CLASS_BLOCK = Regex(
+            "<\\s*(div|section)\\b[^>]*class\\s*=\\s*[\"'][^\"']*\\b(share|social|newsletter|subscribe|ad-|advert|promo|related|recommend|sidebar|breadcrumb|byline|author-bio|comments)\\b[^\"']*[\"'][^>]*>[\\s\\S]*?</\\1>",
+            RegexOption.IGNORE_CASE,
+        )
+
         // 网络请求参数
         private const val CONNECT_TIMEOUT_MS = 15000
         private const val READ_TIMEOUT_MS = 15000
@@ -42,6 +63,12 @@ class ArticleParser @Inject constructor() {
      * @return Pair(标题, 正文段落列表)，失败返回 null
      */
     suspend fun parseFromUrl(urlStr: String): ArticleResult? = withContext(Dispatchers.IO) {
+        // issue 10.2：只接受 http/https。file:/data:/jar: 等 scheme 的
+        // openConnection() 返回非 HttpURLConnection，强转直接 ClassCastException
+        if (!urlStr.startsWith("http://") && !urlStr.startsWith("https://")) {
+            android.util.Log.w("ArticleParser", "Unsupported URL scheme, reject: $urlStr")
+            return@withContext null
+        }
         try {
             val url = URL(urlStr)
             val conn = url.openConnection() as HttpURLConnection
@@ -69,6 +96,10 @@ class ArticleParser @Inject constructor() {
         } catch (e: java.io.IOException) {
             android.util.Log.e("ArticleParser", "IO error fetching article: ${urlStr}", e)
             null
+        } catch (e: java.lang.ClassCastException) {
+            // issue 10.2 兜底：非 http URL 的连接实现强转失败不再崩调用方
+            android.util.Log.e("ArticleParser", "Unexpected connection type for URL: ${urlStr}", e)
+            null
         }
     }
 
@@ -76,6 +107,11 @@ class ArticleParser @Inject constructor() {
      * 从页面提取文章链接（适用于列表页 / 首页）
      */
     suspend fun parseArticleLinks(urlStr: String): ArticleLinkResult? = withContext(Dispatchers.IO) {
+        // issue 10.2：与 parseFromUrl 同款 scheme 白名单
+        if (!urlStr.startsWith("http://") && !urlStr.startsWith("https://")) {
+            android.util.Log.w("ArticleParser", "Unsupported URL scheme, reject: $urlStr")
+            return@withContext null
+        }
         try {
             val url = URL(urlStr)
             val conn = url.openConnection() as HttpURLConnection
@@ -124,6 +160,7 @@ class ArticleParser @Inject constructor() {
             // 过滤：URL 必须有效、非排除项、文本有内容
             if (href.isBlank() || text.isBlank()) continue
             if (excludePattern.containsMatchIn(href) || excludePattern.containsMatchIn(text)) continue
+            // issue 10.2：非 http scheme 的链接直接挡掉（javascript:/#/data: 等）
             if (href.startsWith("#") || href.startsWith("javascript:")) continue
             if (seen.contains(href)) continue
 
@@ -137,6 +174,8 @@ class ArticleParser @Inject constructor() {
                     href
                 }
             }
+            // issue 10.2：补全后再校验一次——解析失败保留原值的分支可能是坏链
+            if (!absoluteUrl.startsWith("http://") && !absoluteUrl.startsWith("https://")) continue
             seen.add(href)
 
             links.add(ArticleLink(
@@ -211,11 +250,16 @@ class ArticleParser @Inject constructor() {
      * 从 HTML 中提取文章内容
      */
     private fun extractArticle(html: String): ArticleResult {
-        // 清理脚本和样式
-        var text = html
+        // 清理脚本和样式 + issue 7.2 噪音元素（侧栏/导航/图注/iframe/按钮/
+        // 表单/按 class 名的分享·订阅·广告·相关推荐容器）——策略命中容器前
+        // 先剔除，否则 cleanText 的标签替换会把它们留进正文
+        val text = html
             .replace(SCRIPT_TAG, "")
             .replace(STYLE_TAG, "")
             .replace(COMMENT_TAG, "")
+            .replace(NOISE_BLOCK_TAG, " ")
+            .replace(NOISE_CLASS_BLOCK, " ")
+            .replace(NOISE_VOID_TAG, " ")
 
         // 提取标题
         val title = extractTitle(text)
@@ -276,9 +320,9 @@ class ArticleParser @Inject constructor() {
             }
         }
 
-        // 策略5: body 正文
+        // 策略5: body 正文（issue 7.4：先剥页眉/页脚，否则整页文本都算正文）
         Regex("""<body[^>]*>(.*?)</body>""", RegexOption.DOT_MATCHES_ALL).find(html)?.let {
-            val cleaned = cleanText(it.groupValues[1])
+            val cleaned = cleanText(it.groupValues[1].replace(HEADER_FOOTER_TAG, " "))
             if (cleaned.sumOf { s -> s.length } > 100) return cleaned
         }
 

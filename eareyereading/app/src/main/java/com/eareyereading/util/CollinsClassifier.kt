@@ -2254,7 +2254,11 @@ class CollinsClassifier @Inject constructor() {
     fun classify(word: String): WordLevel {
         // Locale.ROOT：避免土耳其语等 locale 下 lowercase 的 I→ı 变体破坏分级
         val w = word.lowercase(Locale.ROOT).trim()
-        if (w.length < 2) return WordLevel.UNKNOWN
+        // issue 2.12：collinsOne 本身收录 "a"/"i"——单字母一刀切 UNKNOWN
+        // 会让英文最高频的 "I" 永远无分级
+        if (w.length < 2) {
+            return if (w in collinsOneLower) WordLevel.CORE else WordLevel.UNKNOWN
+        }
         if (!ALPHA_ONLY.matches(w)) return WordLevel.UNKNOWN
 
         return if (w in collinsOneLower) WordLevel.CORE

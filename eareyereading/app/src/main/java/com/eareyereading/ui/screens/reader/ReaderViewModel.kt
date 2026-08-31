@@ -1581,13 +1581,27 @@ class ReaderViewModel @Inject constructor(
                 // 失败必须可见：旧实现只 log，回译模式永远停在"正在获取译文..."，
                 // NORMAL 模式开关开着却什么都没有，用户无任何线索
                 if (currentBookId == myBookId) {
-                    _uiState.update { it.copy(isTranslating = false, showTranslation = false) }
+                    // issue 8.3：失败分支显式清空译文，isEmpty() 失败判定
+                    // 才能重新触发，"重试"入口可达
+                    _uiState.update {
+                        it.copy(
+                            isTranslating = false,
+                            showTranslation = false,
+                            paragraphTranslations = emptyMap(),
+                        )
+                    }
                     showToast("翻译失败：模型下载或翻译出错，请稍后重试")
                 }
             } catch (e: java.lang.RuntimeException) {
                 android.util.Log.e("ReaderViewModel", "Translation failed", e)
                 if (currentBookId == myBookId) {
-                    _uiState.update { it.copy(isTranslating = false, showTranslation = false) }
+                    _uiState.update {
+                        it.copy(
+                            isTranslating = false,
+                            showTranslation = false,
+                            paragraphTranslations = emptyMap(),
+                        )
+                    }
                     showToast("翻译失败，请稍后重试")
                 }
             }
@@ -1719,14 +1733,17 @@ class ReaderViewModel @Inject constructor(
     }
 
     /**
-     * 取消所有运行中的作业并停止 TTS，同步完成最后一次保存。
+     * 取消所有运行中的作业并停止 TTS，完成最后一次保存。
      *
-     * 保存必须同步（runBlocking）：lifecycle-viewmodel 在 onCleared 返回之后
-     * 才取消 viewModelScope，此前"scope 存活就异步保存"的分支十拿九稳会在
-     * 异步保存落到第一个挂起点后被取消 —— 退出进度静默丢失。
-     * 同步保存挂起在 Room IO 上，主线程代价短且保证写完。
+     * 保存分两条路径（issue 3.10）：
+     * - 默认（onDispose 触发，scope 仍存活）：异步保存，不阻塞主线程
+     * - [synchronous]（onCleared 触发）：lifecycle-viewmodel 在 onCleared
+     *   返回之后才取消 viewModelScope，此时必须 runBlocking 同步写完，
+     *   否则异步保存在第一个挂起点就被取消 —— 退出进度静默丢失。
+     * flushSessionStats 以 sessionCharsRead==0 天然单飞，
+     * onDispose + onCleared 双路径不会重复写。
      */
-    fun cleanup() {
+    fun cleanup(synchronous: Boolean = false) {
         rsvpJob?.cancel()
         speedJob?.cancel()
         autoReadJob?.cancel()
@@ -1742,14 +1759,15 @@ class ReaderViewModel @Inject constructor(
         highlightsJob?.cancel()
         bookJob?.cancel()
         ttsHelper.stop()
+        // issue 8.2：close() 此前全项目无人调用，ML Kit Translator
+        // native handle 永不释放，模型被系统回收后翻译静默失效
+        translationHelper.close()
         // 防抖窗口内未落盘的设置写入：取消计时、同步冲刷，
         // 用户拖完滑杆立刻退页也不会丢设置
         settingsPersistJobs.values.forEach { it.cancel() }
         val pendingSettings = settingsPendingWrites.values.toList()
         settingsPendingWrites.clear()
-        // flushSessionStats 内部以 sessionCharsRead==0 天然单飞，
-        // onDispose + onCleared 双路径不会重复写
-        runBlocking(Dispatchers.IO) {
+        val finalSave: suspend () -> Unit = {
             pendingSettings.forEach { write ->
                 try {
                     write()
@@ -1759,6 +1777,13 @@ class ReaderViewModel @Inject constructor(
             }
             doSaveProgress()
             currentBookId?.let { flushSessionStats(it) }
+        }
+        if (synchronous) {
+            runBlocking(Dispatchers.IO) { finalSave() }
+        } else {
+            // onDispose 路径：scope 仍存活，异步写不卡主线程；
+            // 若随后 VM 销毁触发 onCleared，其同步保存兜底（且取消本异步任务也无碍）
+            viewModelScope.launch(Dispatchers.IO) { finalSave() }
         }
     }
 
@@ -1937,6 +1962,8 @@ class ReaderViewModel @Inject constructor(
 
     override fun onCleared() {
         super.onCleared()
-        cleanup()
+        // onCleared 返回后 viewModelScope 立即被取消：这里必须同步写完，
+        // 否则收尾保存落在已取消的 scope 上全部丢失
+        cleanup(synchronous = true)
     }
 }

@@ -4,6 +4,7 @@ import android.app.Application
 import com.eareyereading.domain.repository.SettingsRepository
 import com.eareyereading.util.NotificationHelper
 import com.eareyereading.util.ReminderPrefs
+import com.eareyereading.util.TranslationHelper
 import dagger.hilt.android.HiltAndroidApp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -22,6 +23,9 @@ class EareyeReadingApp : Application() {
 
     @Inject
     lateinit var settingsRepository: SettingsRepository
+
+    @Inject
+    lateinit var translationHelper: TranslationHelper
 
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -64,6 +68,13 @@ class EareyeReadingApp : Application() {
     }
 
     override fun onTerminate() {
+        // issue 8.2：兜底释放 ML Kit Translator native 资源
+        // （onTerminate 在真机上很少回调，MainActivity.onDestroy 是主路径）
+        try {
+            translationHelper.close()
+        } catch (e: Exception) {
+            android.util.Log.w("EareyeReadingApp", "close translationHelper failed", e)
+        }
         appScope.cancel()
         super.onTerminate()
     }

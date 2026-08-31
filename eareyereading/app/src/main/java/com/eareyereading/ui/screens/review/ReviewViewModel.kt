@@ -115,20 +115,24 @@ class ReviewViewModel @Inject constructor(
 
         // SM-2 算法计算
         val q = quality.coerceIn(0, 5)
-        val newEF = if (q < 3) {
-            record.easeFactor  // 标准 SM-2：q<3 时 EF 不变，interval/reps 复位
-        } else {
-            max(1.3f, record.easeFactor + (0.1f - (5 - q) * (0.08f + (5 - q) * 0.02f)))
-        }
+        // EF 更新按原始论文无条件套公式（q<3 也更新，只是 reps/interval 复位），
+        // 并夹在 [1.3, 2.5]：无上限时长期"完美"评分会让 EF 无限增长，
+        // interval*EF 溢出 Int 后 nextReviewDate 算进过去 → 卡片永久 due
+        val newEF = (record.easeFactor + (0.1f - (5 - q) * (0.08f + (5 - q) * 0.02f)))
+            .coerceIn(1.3f, 2.5f)
 
         val (newInterval, newReps) = if (q < 3) {
             Pair(1, 0)  // 标准 SM-2：q<3 复位间隔，从头积累
         } else {
             val reps = record.repetitions + 1
+            // 先转 Double 再乘并钳制到 Int 范围：Float 乘大数再 roundToInt
+            // 溢出回负/Int.MAX 时 nextReviewDate 直接跳到过去
             val interval = when (reps) {
                 1 -> 1
                 2 -> 6
-                else -> (record.interval * newEF).roundToInt()
+                else -> (record.interval.toDouble() * newEF.toDouble())
+                    .coerceIn(1.0, Int.MAX_VALUE.toDouble())
+                    .roundToInt()
             }
             Pair(interval, reps)
         }

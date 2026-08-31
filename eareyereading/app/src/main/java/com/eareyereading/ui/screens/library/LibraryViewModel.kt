@@ -15,6 +15,7 @@ import com.eareyereading.domain.repository.BookRepository
 import com.eareyereading.util.EpubParseException
 import com.eareyereading.domain.repository.VocabularyRepository
 import com.eareyereading.util.ArticleParser
+import com.eareyereading.util.ArticleResult
 import com.eareyereading.util.RssParser
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -350,7 +351,16 @@ class LibraryViewModel @Inject constructor(
 
     fun deleteBook(bookId: Long) {
         viewModelScope.launch {
-            bookRepository.deleteBook(bookId)
+            // issue 11.14：删除是级联清理（书/进度/生词/复习记录/文件），
+            // 任一环抛异常都会把未捕获异常直接甩进 viewModelScope 崩 app
+            try {
+                bookRepository.deleteBook(bookId)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                android.util.Log.e("LibraryVM", "deleteBook failed", e)
+                _uiState.update { it.copy(loadingMessage = "删除失败：${e.message ?: "未知错误"}") }
+            }
         }
     }
 
@@ -511,7 +521,22 @@ class LibraryViewModel @Inject constructor(
         viewModelScope.launch {
             beginImportOp("正在导入文章...")
             try {
-                val result = articleParser.parseFromUrl(article.link)
+                // issue 7.3：优先用 feed 自带的完整正文（content:encoded），
+                // 仅在为空时才回退去抓 link——NPR 等源的 <link> 指向 SPA 渲染页，
+                // HttpURLConnection 拿到的是空壳 HTML，抓取路径基本必失败
+                val feedParagraphs = article.content
+                    ?.split(Regex("\n\\s*\n"))
+                    ?.map { it.trim() }
+                    ?.filter { it.isNotEmpty() }
+                    .orEmpty()
+                val result = if (feedParagraphs.isNotEmpty()) {
+                    ArticleResult(
+                        title = article.title.ifBlank { "Web Article" },
+                        paragraphs = feedParagraphs,
+                    )
+                } else {
+                    articleParser.parseFromUrl(article.link)
+                }
                 if (result != null && result.paragraphs.isNotEmpty()) {
                     val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
                     val book = Book(
@@ -532,7 +557,7 @@ class LibraryViewModel @Inject constructor(
                         )
                     }
                 } else {
-                    _uiState.update { it.copy(loadingMessage = "抓取失败：无法解析文章内容") }
+                    _uiState.update { it.copy(loadingMessage = "该源文章内容为空，无法导入") }
                 }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e

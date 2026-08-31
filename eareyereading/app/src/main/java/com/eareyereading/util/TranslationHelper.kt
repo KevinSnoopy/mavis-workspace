@@ -3,6 +3,7 @@
 package com.eareyereading.util
 
 import android.content.Context
+import android.os.SystemClock
 import com.google.mlkit.common.model.DownloadConditions
 import com.google.mlkit.nl.translate.TranslateLanguage
 import com.google.mlkit.nl.translate.Translation
@@ -39,6 +40,14 @@ class TranslationHelper @Inject constructor(
     @Volatile
     private var mlkitReadyDeferred: CompletableDeferred<Boolean>? = null
 
+    /**
+     * 初始化失败的时间戳（elapsedRealtime 毫秒）。
+     * issue 8.2：initAttempted 一旦置位即使失败也永不重置（close() 无人调用），
+     * ML Kit 模型被系统回收后翻译永久静默失败——失败后开 60s 重试窗口。
+     */
+    @Volatile
+    private var initFailedAt = 0L
+
     // 内置词典：从 assets/dictionary.txt 加载（word|translation 格式），作为兜底
     private val builtinDict: Map<String, String> by lazy { loadBuiltinDict() }
 
@@ -70,6 +79,14 @@ class TranslationHelper @Inject constructor(
 
     // ── 懒加载初始化（线程安全）─────────────────────
     private suspend fun ensureInitialized() {
+        // 失败重试窗口：初始化失败满 60s 后放行重试（issue 8.2）
+        if (initAttempted.get()) {
+            if (mlkitReady || initFailedAt == 0L) return
+            if (SystemClock.elapsedRealtime() - initFailedAt < INIT_RETRY_WINDOW_MS) return
+            // 复位失败标记，走下方 CAS 重新初始化
+            if (!initAttempted.compareAndSet(true, false)) return
+            initFailedAt = 0L
+        }
         // compareAndSet：并发首次翻译只允许一个线程进入初始化
         if (!initAttempted.compareAndSet(false, true)) return
 
@@ -92,20 +109,24 @@ class TranslationHelper @Inject constructor(
                 DownloadConditions.Builder().build()
             )?.addOnSuccessListener {
                 mlkitReady = true
+                initFailedAt = 0L
                 deferred.complete(true)
                 android.util.Log.d("TranslationHelper", "ML Kit model downloaded, ready")
             }?.addOnFailureListener { e ->
                 android.util.Log.w("TranslationHelper", "ML Kit download failed: ${e.message}")
                 mlkitReady = false
+                initFailedAt = SystemClock.elapsedRealtime()
                 deferred.complete(false)
             }
         } catch (e: com.google.mlkit.common.MlKitException) {
             android.util.Log.w("TranslationHelper", "ML Kit init failed: ${e.message}")
             mlkitReady = false
+            initFailedAt = SystemClock.elapsedRealtime()
             deferred.complete(false)
         } catch (e: java.lang.RuntimeException) {
             android.util.Log.w("TranslationHelper", "Runtime error initializing ML Kit: ${e.message}")
             mlkitReady = false
+            initFailedAt = SystemClock.elapsedRealtime()
             deferred.complete(false)
         }
     }
@@ -168,8 +189,13 @@ class TranslationHelper @Inject constructor(
     suspend fun translateParagraphs(paragraphs: List<String>): Map<Int, String> {
         val result = mutableMapOf<Int, String>()
         paragraphs.forEachIndexed { index, para ->
-            result[index] = if (para.isBlank()) ""
-                else translateEnToZh(para.take(TRANSLATION_CHAR_LIMIT)) ?: ""
+            when {
+                para.isBlank() -> result[index] = ""
+                // issue 8.3：失败段不写入（而不是写 ""）——全 "" 的非空 Map
+                // 会把调用方的 isEmpty() 失败判定顶掉，"重试"按钮永远不出现
+                else -> translateEnToZh(para.take(TRANSLATION_CHAR_LIMIT))
+                    ?.let { result[index] = it }
+            }
         }
         return result
     }
@@ -180,6 +206,9 @@ class TranslationHelper @Inject constructor(
 
     // ── 本地词典（用户下载的分级词典 + 内置兜底）───────────
     private suspend fun lookupLocalDict(text: String): String? {
+        // issue 8.9：词典只收单词；句子/多词输入查词典只会返回
+        // 首词或子串的无意义结果（"the book is" 命中 "the"），直接放弃
+        if (text.contains(' ')) return null
         // Locale.ROOT：避免土耳其语等 locale 下 lowercase 的 I→ı 变体破坏查词
         val clean = text.trim().lowercase(Locale.ROOT).replace(Regex("[^a-z]"), "")
         if (clean.length < 2) return null
@@ -189,15 +218,32 @@ class TranslationHelper @Inject constructor(
         return builtinDict[clean]
     }
 
+    /**
+     * 释放 ML Kit Translator native 资源并复位初始化状态。
+     * issue 8.2：close() 此前全项目无人调用，模型被系统回收后
+     * 翻译永久静默失败。现在 ReaderViewModel.cleanup() / App.onTerminate /
+     * MainActivity.onDestroy 都会调用；关闭时同步放行挂起的等待者。
+     */
     fun close() {
-        mlkitTranslator?.close()
+        try {
+            mlkitTranslator?.close()
+        } catch (e: java.lang.RuntimeException) {
+            android.util.Log.w("TranslationHelper", "close translator threw: ${e.message}")
+        }
         mlkitTranslator = null
         mlkitReady = false
+        initFailedAt = 0L
+        // close 与 translate 并发时挂起的等待者必须被放行，否则 30s 超时前一直空转
+        mlkitReadyDeferred?.complete(false)
+        mlkitReadyDeferred = null
         initAttempted.set(false)  // 允许重新初始化
     }
 
     private companion object {
         // 单段翻译字符上限（避免超出 ML Kit 请求限制）
         const val TRANSLATION_CHAR_LIMIT = 4000
+
+        // 初始化失败后的重试窗口（issue 8.2）
+        const val INIT_RETRY_WINDOW_MS = 60_000L
     }
 }

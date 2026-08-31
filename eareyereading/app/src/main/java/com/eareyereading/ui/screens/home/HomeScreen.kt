@@ -37,8 +37,14 @@ fun HomeScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
 
-    // 日期文本只在进入页面时算一次：原实现在每次重组都 new SimpleDateFormat
-    val dateText = remember { SimpleDateFormat("MM月dd日 E", Locale.CHINA).format(Date()) }
+    // issue 11.15：此前 remember 一次后跨午夜不更新；每分钟 tick 刷新
+    var dateText by remember { mutableStateOf(SimpleDateFormat("MM月dd日 E", Locale.CHINA).format(Date())) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            kotlinx.coroutines.delay(60_000)
+            dateText = SimpleDateFormat("MM月dd日 E", Locale.CHINA).format(Date())
+        }
+    }
 
     Scaffold(
         topBar = {

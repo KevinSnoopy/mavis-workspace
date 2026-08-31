@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -266,9 +267,10 @@ fun DictionaryManagerScreen(
             }
 
             // key 用词典 id：进度刷新/整体重建列表时按位置重配会错乱，
-            // 且未来条目内状态（动画/焦点）会串位
-            items(uiState.statuses.size, key = { uiState.statuses[it].info.id }) { index ->
-                val status = uiState.statuses[index]
+            // 且未来条目内状态（动画/焦点）会串位。
+            // issue 11.12：count 重载在 key lambda 里按 index 取当前列表，
+            // 列表变短后旧 index 越界 → Compose 崩溃；改用列表重载直接绑数据
+            items(uiState.statuses, key = { it.info.id }) { status ->
                 DictionaryCard(
                     status = status,
                     onDownload = { viewModel.download(status.info.id) },
