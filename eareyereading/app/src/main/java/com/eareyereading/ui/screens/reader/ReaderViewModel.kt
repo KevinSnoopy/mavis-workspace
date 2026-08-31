@@ -624,6 +624,10 @@ class ReaderViewModel @Inject constructor(
         // 段落下标键控的 Map——不取消的话，慢翻译（首次要下载 ML Kit 模型）
         // 落地后会把旧书译文写进新书的同名下标，新书段落顶着别人的译文
         translationJob?.cancel()
+        // 点词/句子翻译的异步结果同样属于旧书：A 书点词后立刻换 B 书，
+        // 慢查询落地会把 A 书的词卡写进 B 书 UI（issue 3.2）
+        selectWordJob?.cancel()
+        sentenceTranslateJob?.cancel()
 
         _uiState.update { it.copy(isLoading = true, readingStartTime = readingStartTime) }
 
@@ -691,6 +695,10 @@ class ReaderViewModel @Inject constructor(
                         showWordDialog = false,
                         wordDefinition = null,
                         hiddenWordAnswer = null,
+                        // 书签/高亮 collect 到新书首帧前是旧书数据：
+                        // 短暂残留即"幽灵书签"（issue 3.1）
+                        bookmarkedParagraphs = emptySet(),
+                        highlights = emptyMap(),
                         isLoading = false,
                     )
                 }
@@ -1427,10 +1435,13 @@ class ReaderViewModel @Inject constructor(
     }
 
     fun addToVocabulary(word: String, context: String?) {
+        // 书身份快照：launch 体执行时用户可能已换书（点词弹窗开着按返回再进 B 书），
+        // 此时 currentBookId 已是 B 书——不对照快照，A 书生词会记到 B 书的 bookId/title 下
+        val myBookId = currentBookId
         viewModelScope.launch {
             val vocabToSave = _uiState.value.selectedVocab?.copy(
-                bookId = currentBookId,
-                bookTitle = _uiState.value.book?.title,
+                bookId = myBookId,
+                bookTitle = _uiState.value.book?.takeIf { it.id == myBookId }?.title,
                 context = context,
             ) ?: return@launch
 
@@ -1448,6 +1459,14 @@ class ReaderViewModel @Inject constructor(
 
                 // 捕获 DB 生成的 id，替换 selectedVocab 使「加入复习」拿到正确 vocabularyId
                 val id = vocabularyRepository.addWord(vocabToSave)
+
+                // 写库期间换书：丢弃这次写入的 UI 更新，不把 A 书的弹窗状态安到 B 书
+                if (currentBookId != myBookId) return@launch
+
+                // 阅读页加入的生词此前从不进复习队列：due count 永远 0，
+                // "点词 → 加生词本 → 等复习"主流程断链（issue 11.3）
+                vocabularyRepository.addWordToReview(id, vocabToSave.word)
+
                 _uiState.update {
                     it.copy(
                         showWordDialog = false,

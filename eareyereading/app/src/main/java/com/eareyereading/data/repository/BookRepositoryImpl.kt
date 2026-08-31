@@ -7,12 +7,16 @@ import com.eareyereading.data.local.dao.BookmarkDao
 import com.eareyereading.data.local.dao.HighlightDao
 import com.eareyereading.data.local.dao.ReadingStateDao
 import com.eareyereading.data.local.dao.ReadingStatsDao
+import com.eareyereading.data.local.dao.ReviewRecordDao
+import com.eareyereading.data.local.dao.VocabularyDao
 import com.eareyereading.data.local.dao.WordFrequencyDao
 import com.eareyereading.data.local.database.AppDatabase
 import com.eareyereading.data.local.entity.BookEntity
+import com.eareyereading.data.local.entity.WordFrequencyEntity
 import com.eareyereading.domain.model.Book
 import com.eareyereading.domain.repository.BookRepository
 import com.eareyereading.util.EpubParser
+import com.eareyereading.util.WordAnalyzer
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -32,6 +36,9 @@ class BookRepositoryImpl @Inject constructor(
     private val readingStateDao: ReadingStateDao,
     private val readingStatsDao: ReadingStatsDao,
     private val wordFrequencyDao: WordFrequencyDao,
+    private val vocabularyDao: VocabularyDao,
+    private val reviewRecordDao: ReviewRecordDao,
+    private val wordAnalyzer: WordAnalyzer,
     private val database: AppDatabase,
     @ApplicationContext private val context: Context,
 ) : BookRepository {
@@ -39,6 +46,10 @@ class BookRepositoryImpl @Inject constructor(
     private companion object {
         /** 纯文本导入读取上限，防超大文件撑爆内存（与 EPUB 全局上限同量级）。 */
         const val MAX_PLAIN_TEXT_CHARS = 10_000_000
+
+        /** 入库时保留的词频条目上限：与 getTopFrequencies 的默认 limit 对齐，
+         *  大书唯一词数可达数万，全量插入只有存储成本没有查询收益。 */
+        const val TOP_FREQUENCY_WORDS = 100
     }
 
     override fun getAllBooks(): Flow<List<Book>> =
@@ -54,9 +65,9 @@ class BookRepositoryImpl @Inject constructor(
         val paragraphs = if (book.content.isNotBlank()) {
             book.content.split("\n\n").filter { it.isNotBlank() }
         } else if (book.filePath.isNotBlank()) {
-            // parseBook 内部吞掉 IO 错误返回空列表；空结果即文件不可解析。
-            // 这里必须让调用方感知，否则会静默创建一本 0 词的空书，
-            // 且调用方拿到的 rowId 与成功导入无法区分。
+            // EPUB 解析失败会抛 EpubParseException（IOException 子类，带可读原因），
+            // 直接透传给调用方；纯文本路径解析失败仍返回空列表，
+            // 这里必须感知，否则会静默创建一本 0 词的空书。
             // 解析是重 IO + 正则工作：整体放 IO 调度器，主线程只拿结果，
             // 否则大 EPUB 的 zip 读取会阻塞 UI 线程（ANR）。
             val parsed = if (book.filePath.lowercase(Locale.ROOT).endsWith(".txt")) {
@@ -87,7 +98,26 @@ class BookRepositoryImpl @Inject constructor(
             content = contentToSave,
             addedAt = book.addedAt,
         )
-        bookDao.insert(entity)
+        val bookId = bookDao.insert(entity)
+
+        // 词频统计此前只有删没有写：word_frequencies 永远是空表，
+        // getTopFrequencies 永远不出数据（issue 12.2）
+        val frequencies = wordAnalyzer.calculateWordFrequencies(joined)
+            .entries
+            .sortedByDescending { it.value }
+            .take(TOP_FREQUENCY_WORDS)
+            .map { (word, count) ->
+                WordFrequencyEntity(
+                    bookId = bookId,
+                    word = word,
+                    count = count,
+                    frequency = count.toFloat(),
+                )
+            }
+        if (frequencies.isNotEmpty()) {
+            wordFrequencyDao.insertAll(frequencies)
+        }
+        bookId
     }
 
     /**
@@ -135,6 +165,10 @@ class BookRepositoryImpl @Inject constructor(
         val filePath = bookDao.getBookById(bookId)?.filePath.orEmpty()
         // 在单个事务中级联删除，保证原子性：要么全部成功，要么全部回滚
         database.withTransaction {
+            // 复习记录先删：它靠 vocabulary 行的 bookId 子查询定位，
+            // 顺序反了会匹配不到，留下指向已删词汇的孤儿记录
+            reviewRecordDao.deleteByBookId(bookId)
+            vocabularyDao.deleteForBook(bookId)
             bookmarkDao.deleteAllForBook(bookId)
             highlightDao.deleteAllForBook(bookId)
             readingStateDao.deleteForBook(bookId)

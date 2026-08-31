@@ -36,6 +36,10 @@ interface VocabularyDao {
     @Query("SELECT * FROM vocabulary WHERE bookId = :bookId")
     fun getWordsByBook(bookId: Long): Flow<List<VocabularyEntity>>
 
+    /** 删书级联清理：词汇行本身（复习记录由 ReviewRecordDao 按子查询先删）。 */
+    @Query("DELETE FROM vocabulary WHERE bookId = :bookId")
+    suspend fun deleteForBook(bookId: Long)
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(word: VocabularyEntity): Long
 

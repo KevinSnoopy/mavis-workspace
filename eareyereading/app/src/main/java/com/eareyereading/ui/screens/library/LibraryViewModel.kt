@@ -12,6 +12,7 @@ import com.eareyereading.domain.model.ArticleSource
 import com.eareyereading.domain.model.ArticleSources
 import com.eareyereading.domain.model.Book
 import com.eareyereading.domain.repository.BookRepository
+import com.eareyereading.util.EpubParseException
 import com.eareyereading.domain.repository.VocabularyRepository
 import com.eareyereading.util.ArticleParser
 import com.eareyereading.util.RssParser
@@ -325,6 +326,11 @@ class LibraryViewModel @Inject constructor(
                 _uiState.update { it.copy(loadingMessage = "导入成功") }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
+            } catch (e: EpubParseException) {
+                android.util.Log.e("LibraryViewModel", "Error importing book file", e)
+                // EPUB 解析失败此前一律"文件读取错误"（issue 9.3）：
+                // 按异常类型区分损坏/加密/空文件/缺 OPF/无可读章节
+                _uiState.update { it.copy(loadingMessage = "导入失败: ${e.message}") }
             } catch (e: java.io.IOException) {
                 android.util.Log.e("LibraryViewModel", "Error importing book file", e)
                 _uiState.update { it.copy(loadingMessage = "导入失败: 文件读取错误") }
