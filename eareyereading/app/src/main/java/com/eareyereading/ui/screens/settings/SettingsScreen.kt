@@ -372,9 +372,16 @@ class SettingsViewModel @Inject constructor(
                 }
             } else {
                 refreshEmbeddedStatus()
+                // 引擎统一入口给出裸失败原因（空间不足/镜像不可用/解压失败），
+                // 展示层只负责加前缀——笼统的"检查网络"在空间不足等场景会误导重试
+                val reason = embeddedTts.downloadFailureReasonOrNull()
                 _uiState.update {
                     it.copy(
-                        snackbarMessage = "下载失败，请检查网络后重试（已下载部分下次会续传）",
+                        snackbarMessage = if (reason.isNullOrBlank()) {
+                            "下载失败，请检查网络后重试（已下载部分下次会续传）"
+                        } else {
+                            "下载失败：$reason"
+                        },
                     )
                 }
             }

@@ -352,7 +352,15 @@ class ReaderViewModel @Inject constructor(
                         showToast("模型下载完成但初始化失败")
                     }
                 } else {
-                    showToast("下载失败，请检查网络后重试")
+                    // 带上引擎的具体失败原因（存储空间不足/镜像均不可用/解压失败等），
+                    // 不再是笼统的"检查网络"——空间不足时那条提示会误导用户反复重试
+                    // 引擎统一入口给出裸失败原因（存储空间不足/镜像均不可用/
+                    // 解压失败等），展示层只负责加前缀——不再是笼统的"检查网络"
+                    val reason = embeddedEngine.downloadFailureReasonOrNull()
+                    showToast(
+                        if (reason.isNullOrBlank()) "下载失败，请检查网络后重试"
+                        else "下载失败：$reason",
+                    )
                     // 失败才把进度清掉，让 UI 退出"下载中"
                     _uiState.update { it.copy(embeddedDownloadProgress = null) }
                 }
@@ -488,6 +496,7 @@ class ReaderViewModel @Inject constructor(
     private var downloadJob: kotlinx.coroutines.Job? = null
     // 点词查询串行化：后一次点词取消前一次，慢查询不再覆盖新弹窗
     private var selectWordJob: kotlinx.coroutines.Job? = null
+    private var sentenceTranslateJob: kotlinx.coroutines.Job? = null
     // 全书翻译任务追踪：退出时可取消，防止 ML Kit 在后台空转完整本书
     private var translationJob: kotlinx.coroutines.Job? = null
     // 单段朗读的初始化尝试（防初始化窗口内连点产生重复朗读）
@@ -540,6 +549,24 @@ class ReaderViewModel @Inject constructor(
             }
         }
 
+        // 引擎外部停止信号（音频焦点被电话/闹钟抢走等）：引擎 stop() 只能
+        // 取消正在出声的那一句，循环播放由本 VM 的 Job 驱动——必须在这里
+        // 收闸（清 isAutoReading/isPlaying/isTtsPlaying + 取消驱动 Job），
+        // 否则焦点丢失后自动朗读/速读会推进到下一段继续压着通话读；
+        // 单段朗读的 onComplete 也会被取消路径吞掉导致 isTtsPlaying 卡 true
+        viewModelScope.launch {
+            try {
+                ttsHelper.getEmbeddedEngine().externalStop.collect {
+                    android.util.Log.i("ReaderViewModel", "external stop received, halting all playback")
+                    stopAllPlayback()
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                android.util.Log.e("ReaderViewModel", "externalStop collect failed", e)
+            }
+        }
+
         // TTS 语速倍率：此前设置页可写、数据层可存，但没有任何消费者（死线）。
         // 这里接到 ttsHelper.setSpeed，系统/内置朗读都会生效
         viewModelScope.launch {
@@ -560,10 +587,25 @@ class ReaderViewModel @Inject constructor(
         // 旧循环持有的是旧段落快照，继续跑会越界/错读
         stopAllPlayback()
 
-        // 切换书籍前，把上一本书的会话统计先落库（若有未落库部分）
+        // 切换书籍前，把上一本书的会话统计先落库（若有未落库部分）。
+        // 必须快照传参：viewModelScope 是 Main 调度器，launch 体要等本函数
+        // 让出线程后才执行，而下面同步把 sessionCharsRead 归零/前移基准——
+        // 旧实现让 flush 协程读字段，永远读到 0 直接早返回，上一本书的
+        // 阅读时长/字数在每次换书时静默丢失
         currentBookId?.let { prevId ->
-            if (sessionCharsRead > 0) {
-                viewModelScope.launch { flushSessionStats(prevId) }
+            val pendingChars = sessionCharsRead
+            if (pendingChars > 0) {
+                val flushBase = lastFlushTime
+                val flushHighWater = (lastRecordedParagraphIndex + 1).coerceAtLeast(1)
+                viewModelScope.launch {
+                    flushSessionStats(
+                        prevId,
+                        chars = pendingChars,
+                        baseTime = flushBase,
+                        paragraphsHighWater = flushHighWater,
+                        clearSession = false,   // 字段已被下方同步重置，不能再清
+                    )
+                }
             }
         }
 
@@ -578,6 +620,10 @@ class ReaderViewModel @Inject constructor(
         bookmarksJob?.cancel()
         highlightsJob?.cancel()
         bookJob?.cancel()
+        // 全书翻译 Job 也必须取消：它捕获的是旧书段落，翻译结果是按
+        // 段落下标键控的 Map——不取消的话，慢翻译（首次要下载 ML Kit 模型）
+        // 落地后会把旧书译文写进新书的同名下标，新书段落顶着别人的译文
+        translationJob?.cancel()
 
         _uiState.update { it.copy(isLoading = true, readingStartTime = readingStartTime) }
 
@@ -612,7 +658,10 @@ class ReaderViewModel @Inject constructor(
                 val paragraphs = if (book.content.isNotBlank()) {
                     book.content.split("\n\n").filter { it.isNotBlank() }
                 } else {
-                    epubParser.parseBook(book.filePath)
+                    // parseBook 是阻塞式 zip IO + 正则解析，viewModelScope 跑在
+                    // Main 上——大书打开时直接 ANR（R9 修过 addBook 同款调用点，
+                    // 阅读加载路径这条漏网）
+                    withContext(Dispatchers.IO) { epubParser.parseBook(book.filePath) }
                 }
                 val state = readingRepository.getState(bookId)
                 // 与 saveState 持久化的 totalCharacters 口径一致（都按段落分隔符拼接）
@@ -633,20 +682,35 @@ class ReaderViewModel @Inject constructor(
                         fontSize = state?.fontSize ?: it.fontSize,
                         theme = state?.theme ?: it.theme,
                         totalReadChars = totalChars,
+                        // 换书必须清掉上一本书的派生状态，否则旧书内容在新书里诈尸：
+                        // 译文 Map 按下标键控会直接张冠李戴；词卡/答案弹窗引用旧书内容
+                        paragraphTranslations = emptyMap(),
+                        showTranslation = false,
+                        isTranslating = false,
+                        selectedVocab = null,
+                        showWordDialog = false,
+                        wordDefinition = null,
+                        hiddenWordAnswer = null,
                         isLoading = false,
                     )
                 }
+                // 句子翻译弹窗同样属于上一本书的内容，一并清掉
+                _selectedSentence.value = null
+                _sentenceTranslation.value = null
                 bookLoaded = true
                 // 字符统计的高水位从"恢复后的位置"起算，而不是 -1：
                 // 否则退出时 doSaveProgress 会把 0..恢复位置 的整段前缀当成本次新读，
                 // 累计写库后每次重开同一本书今日字数都会虚增一截
                 lastRecordedParagraphIndex = (state?.currentParagraph ?: 0).coerceIn(0, maxIdx)
 
-                // 恢复的阅读模式若依赖派生数据（挖空/模糊），必须立即生成，
-                // 否则重开书是空白页（此前只有 setReadingMode 会生成）
+                // 恢复的阅读模式若依赖派生数据（挖空/模糊/全书译文），必须立即
+                // 生成/拉取，否则重开书是空白页或"正在获取译文..."假加载态
+                // （此前只有 setReadingMode 会生成）
                 when (_uiState.value.readingMode) {
                     ReadingMode.CLOZE -> generateCloze()
                     ReadingMode.FUZZY -> generateFuzzy()
+                    ReadingMode.BACK_TRANSLATION, ReadingMode.SPLIT ->
+                        if (_uiState.value.paragraphTranslations.isEmpty()) translateAllParagraphs()
                     else -> Unit
                 }
 
@@ -741,9 +805,18 @@ class ReaderViewModel @Inject constructor(
     fun toggleAutoRead() {
         if (_uiState.value.isAutoReading) {
             stopAutoRead()
-        } else {
-            startAutoRead()
+            return
         }
+        // 与 toggleTts 同一道防剧透闸：溢出菜单"自动朗读"直达本函数，
+        // 没有这道守卫时挖空/听写/模糊模式下会把含答案的原文整本读出来
+        when (_uiState.value.readingMode) {
+            ReadingMode.CLOZE, ReadingMode.DICTATION, ReadingMode.FUZZY -> {
+                showToast("当前模式含隐藏内容，朗读会泄露答案")
+                return
+            }
+            else -> Unit
+        }
+        startAutoRead()
     }
 
     private fun startAutoRead() {
@@ -938,9 +1011,25 @@ class ReaderViewModel @Inject constructor(
             generateFuzzy()
         }
 
+        // 回译/分栏模式依赖全书译文，但旧实现里全书翻译只有
+        // toggleTranslation() 一个入口——从没开过翻译开关就进回译模式，
+        // 页面永远停在"正在获取译文..."的假加载态（没有任何任务在跑）
+        if ((mode == ReadingMode.BACK_TRANSLATION || mode == ReadingMode.SPLIT) &&
+            _uiState.value.paragraphTranslations.isEmpty()
+        ) {
+            translateAllParagraphs()
+        }
+
         viewModelScope.launch {
             _uiState.update { it.copy(readingMode = mode, showModeSelector = false) }
             currentBookId?.let { readingRepository.updateMode(it, mode) }
+        }
+    }
+
+    /** 回译模式译文缺失时的手动重试入口（翻译失败后视图提供重试按钮）。 */
+    fun retryTranslation() {
+        if (_uiState.value.paragraphTranslations.isEmpty()) {
+            translateAllParagraphs()
         }
     }
 
@@ -1434,25 +1523,54 @@ class ReaderViewModel @Inject constructor(
     private fun translateAllParagraphs() {
         // 已在翻译中则不重复启动
         if (translationJob?.isActive == true) return
+        // 书本身份快照：换书会取消本 Job，但取消/失败的收尾写仍可能落在
+        // 新书加载之后——所有 uiState 写入与 toast 都要先核对当前书
+        val myBookId = currentBookId
         translationJob = viewModelScope.launch {
             _uiState.update { it.copy(isTranslating = true) }
             try {
                 val paragraphs = _uiState.value.paragraphs
                 val translations = translationHelper.translateParagraphs(paragraphs)
+                // 全空视为失败：translateParagraphs 对失败段落填 ""（ML Kit 模型
+                // 在无 GMS ROM 上下载失败是主失败路径），非空 Map 会把
+                // hasTranslation 顶成 true——回译视图变永久空白栏，
+                // retryTranslation 的 isEmpty() 守卫又让重试永远不可达
+                if (translations.values.none { it.isNotBlank() } && paragraphs.isNotEmpty()) {
+                    if (currentBookId == myBookId) {
+                        _uiState.update { it.copy(isTranslating = false, showTranslation = false) }
+                        showToast("翻译失败：翻译模型不可用，请检查网络后重试")
+                    }
+                    return@launch
+                }
+                // 取消是非抢占的：cancel() 若恰好落在 translate 返回之后，
+                // 本段仍会执行——按书核对，旧书译文不写进新书状态
+                if (currentBookId != myBookId) return@launch
                 _uiState.update { it.copy(
                     paragraphTranslations = translations,
                     isTranslating = false,
                 ) }
             } catch (e: kotlinx.coroutines.CancellationException) {
-                // 协程取消必须向上传播，否则取消后还会继续更新状态
-                _uiState.update { it.copy(isTranslating = false) }
+                // 协程取消必须向上传播，否则取消后还会继续更新状态；
+                // 只在还是同一本书时复位标志——换书取消后这里若落地，
+                // 会把新书正在进行的翻译 spinner 提前掐灭
+                if (currentBookId == myBookId) {
+                    _uiState.update { it.copy(isTranslating = false) }
+                }
                 throw e
             } catch (e: com.google.mlkit.common.MlKitException) {
                 android.util.Log.e("ReaderViewModel", "ML Kit translation failed", e)
-                _uiState.update { it.copy(isTranslating = false) }
+                // 失败必须可见：旧实现只 log，回译模式永远停在"正在获取译文..."，
+                // NORMAL 模式开关开着却什么都没有，用户无任何线索
+                if (currentBookId == myBookId) {
+                    _uiState.update { it.copy(isTranslating = false, showTranslation = false) }
+                    showToast("翻译失败：模型下载或翻译出错，请稍后重试")
+                }
             } catch (e: java.lang.RuntimeException) {
                 android.util.Log.e("ReaderViewModel", "Translation failed", e)
-                _uiState.update { it.copy(isTranslating = false) }
+                if (currentBookId == myBookId) {
+                    _uiState.update { it.copy(isTranslating = false, showTranslation = false) }
+                    showToast("翻译失败，请稍后重试")
+                }
             }
         }
     }
@@ -1478,7 +1596,14 @@ class ReaderViewModel @Inject constructor(
         // 书籍从未成功加载（如 id 不存在）：不写任何进度，防止孤儿行
         if (!bookLoaded) return
         val state = _uiState.value
-        val totalChars = state.paragraphs.joinToString("\n\n").length
+        // 总字数在 loadBook 时已按同一口径（段落 "\n\n" 拼接）算好并存进
+        // totalReadChars——这里每次防抖保存都 joinToString 整本书是 O(book)
+        // 字符串构建，滑杆拖动时 300ms 一次全在主线程上
+        val totalChars = if (state.totalReadChars > 0) {
+            state.totalReadChars.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+        } else {
+            state.paragraphs.joinToString("\n\n").length
+        }
         // 进度语义：读完第 idx 段 = (idx+1)/size，最后一段读完应到 1.0
         // （原实现 idx/size 永远到不了 1.0，书库显示 99%）
         val progress = if (state.paragraphs.isNotEmpty()) {
@@ -1525,14 +1650,27 @@ class ReaderViewModel @Inject constructor(
         }
     }
 
-    private suspend fun flushSessionStats(bookId: Long) {
+    /**
+     * 会话统计落库。
+     *
+     * 默认读会话字段（增量落库/cleanup 收尾路径）；换书路径由 loadBook
+     * 在重置字段前快照传入，clearSession=false 表示字段已重置、落库后
+     * 不再清（清了也无害，但会误清掉新书的全新会话起始基准）。
+     */
+    private suspend fun flushSessionStats(
+        bookId: Long,
+        chars: Long = sessionCharsRead,
+        baseTime: Long = lastFlushTime,
+        paragraphsHighWater: Int = (lastRecordedParagraphIndex + 1).coerceAtLeast(1),
+        clearSession: Boolean = true,
+    ) {
         // 幂等：成功落库后 sessionCharsRead 归零，第二次调用（如
         // onDispose + onCleared 双路径）会在这里早返回，不会重复写
-        if (sessionCharsRead <= 0) return
+        if (chars <= 0) return
         val now = System.currentTimeMillis()
         // 按"距上次落库"计分钟：增量落库后基准前移，收尾只补尾部，
         // 不再把整个会话时长重复计入
-        val base = if (lastFlushTime > 0) lastFlushTime else readingStartTime
+        val base = if (baseTime > 0) baseTime else readingStartTime
         val minutesRead = ((now - base) / 60_000).toInt().coerceAtLeast(1)
         val dateFormat = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault())
         val today = dateFormat.format(java.util.Date(now))
@@ -1542,11 +1680,13 @@ class ReaderViewModel @Inject constructor(
                 bookId = bookId,
                 date = today,
                 addMinutes = minutesRead,
-                addChars = sessionCharsRead.toInt(),
-                paragraphsHighWater = (lastRecordedParagraphIndex + 1).coerceAtLeast(1),
+                addChars = chars.toInt(),
+                paragraphsHighWater = paragraphsHighWater,
             )
-            sessionCharsRead = 0L
-            lastFlushTime = now
+            if (clearSession) {
+                sessionCharsRead = 0L
+                lastFlushTime = now
+            }
             // statsFlushed 只在"会话结束式"收尾时置位（见 cleanup），
             // 增量落库后仍可继续累计
         } catch (e: Exception) {
@@ -1575,6 +1715,7 @@ class ReaderViewModel @Inject constructor(
         downloadJob?.cancel()
         saveJob?.cancel()
         selectWordJob?.cancel()
+        sentenceTranslateJob?.cancel()
         translationJob?.cancel()
         bookmarkToggleJob?.cancel()
         vocabJob?.cancel()
@@ -1644,7 +1785,11 @@ class ReaderViewModel @Inject constructor(
     val sentenceTranslation: StateFlow<String?> = _sentenceTranslation.asStateFlow()
 
     fun translateSentence(sentence: String) {
-        viewModelScope.launch {
+        // 与 selectWord 同款串行化：旧实现每次双击各起一个不取消的协程，
+        // 慢翻译（首次要下载 ML Kit 模型）的旧结果会后到覆盖新句子的弹窗——
+        // 用户看到的是句子 B 配译文 A
+        sentenceTranslateJob?.cancel()
+        sentenceTranslateJob = viewModelScope.launch {
             _selectedSentence.value = sentence
             _sentenceTranslation.value = null
             // 抛异常与返回 null 同样按失败处理：不拦会崩 app，

@@ -349,6 +349,8 @@ fun ReaderScreen(
                         translationAlpha = uiState.translationAlpha,
                         onWordClick = viewModel::selectWord,
                         onVisibleParagraphChanged = viewModel::onVisibleParagraphChanged,
+                        isTranslating = uiState.isTranslating,
+                        onRetryTranslate = viewModel::retryTranslation,
                     )
                     ReadingMode.BACK_TRANSLATION -> BackTranslationView(
                         paragraphs = uiState.paragraphs,
@@ -358,6 +360,9 @@ fun ReaderScreen(
                         textColor = textColor,
                         primaryColor = Primary,
                         translationAlpha = uiState.translationAlpha,
+                        isTranslating = uiState.isTranslating,
+                        onRetryTranslate = viewModel::retryTranslation,
+                        onVisibleParagraphChanged = viewModel::onVisibleParagraphChanged,
                     )
                     ReadingMode.POS_ANALYSIS -> PosAnalysisView(
                         paragraphs = uiState.paragraphs,
@@ -366,6 +371,7 @@ fun ReaderScreen(
                         // 原实现完全不接阅读主题色：深色主题下深色墨字配深底不可读
                         textColor = textColor,
                         onWordClick = viewModel::selectWord,
+                        onVisibleParagraphChanged = viewModel::onVisibleParagraphChanged,
                     )
                 }
             }
@@ -556,6 +562,29 @@ private fun TtsInstallDialog(
 }
 
 // ── 普通阅读视图 ───────────────────────────────
+
+/**
+ * 把用户高亮以背景色形式叠加到已按词着色的 AnnotatedString 上。
+ *
+ * 词级着色（Collins 词频/生词本）与用户高亮是正交两层：先按词上色，
+ * 再用 addStyle 叠背景，词色保持不变。此前只有"普通模式"分支渲染高亮，
+ * 而 showKnownWordsHighlight 默认开——任何生词本非空的用户加的高亮
+ * 全部入库成功但永远不画出来。
+ * 偏移按段落坐标系，越界/反向脏数据收敛后跳过（不落异常）。
+ */
+private fun AnnotatedString.Builder.overlayParagraphHighlights(
+    para: String,
+    highlights: List<HighlightData>,
+) {
+    highlights.forEach { h ->
+        val start = h.startOffset.coerceIn(0, para.length)
+        val end = h.endOffset.coerceIn(start, para.length)
+        if (end > start) {
+            addStyle(SpanStyle(background = h.color.copy(alpha = 0.25f)), start, end)
+        }
+    }
+}
+
 @Composable
 fun NormalReadingView(
     paragraphs: List<String>,
@@ -721,7 +750,7 @@ fun NormalReadingView(
                 // Collins 词频色彩（非朗读中）
                 if (showWordLevelColors) {
                     // 排版结果按真正影响产物的键缓存：播放句级状态变化不再重切全部可见段落
-                    val annotatedText = remember(para, alpha, textColor, showKnownWordsHighlight, knownWords) {
+                    val annotatedText = remember(para, alpha, textColor, showKnownWordsHighlight, knownWords, paraHighlights) {
                         buildAnnotatedString {
                             val words = Regex("([a-zA-Z]+)|([^a-zA-Z]+)").findAll(para)
                             words.forEach { match ->
@@ -746,6 +775,8 @@ fun NormalReadingView(
                                     withStyle(SpanStyle(color = textColor.copy(alpha = alpha * 0.6f))) { append(word) }
                                 }
                             }
+                            // 词色之上叠加用户高亮背景（原实现此分支完全不画高亮）
+                            overlayParagraphHighlights(para, paraHighlights)
                         }
                     }
                     TappableParagraphText(
@@ -761,7 +792,7 @@ fun NormalReadingView(
                     )
                 } else if (showKnownWordsHighlight && knownWords.isNotEmpty()) {
                     // 生词本高亮模式（Collins 关）
-                    val annotatedText = remember(para, alpha, textColor, knownWords, learnedWords) {
+                    val annotatedText = remember(para, alpha, textColor, knownWords, learnedWords, paraHighlights) {
                         buildAnnotatedString {
                             val words = Regex("([a-zA-Z]+)|([^a-zA-Z]+)").findAll(para)
                             words.forEach { match ->
@@ -778,6 +809,9 @@ fun NormalReadingView(
                                     withStyle(SpanStyle(color = textColor.copy(alpha = alpha * 0.6f))) { append(word) }
                                 }
                             }
+                            // 词色之上叠加用户高亮背景（默认配置就走本分支，
+                            // 原实现高亮在这里完全不画）
+                            overlayParagraphHighlights(para, paraHighlights)
                         }
                     }
                     TappableParagraphText(
@@ -1115,6 +1149,8 @@ fun SplitReadingView(
     translationAlpha: Float = 0.85f,
     onWordClick: (String) -> Unit,
     onVisibleParagraphChanged: (Int) -> Unit = {},
+    isTranslating: Boolean = false,
+    onRetryTranslate: () -> Unit = {},
 ) {
     // 单滚动容器 + 逐段并排：原实现左右两个独立滚动列，
     // 滚一边另一边不动，原文第 N 段会对上译文第 M 段。
@@ -1155,6 +1191,45 @@ fun SplitReadingView(
                     fontWeight = FontWeight.Bold,
                     modifier = Modifier.weight(1f),
                 )
+            }
+            // 与回译视图同款失败/加载态：setReadingMode 对本模式也会自动触发
+            // 全书翻译，全空失败时 toast 一闪而过，这里给可发现的重试入口
+            if (translations.isEmpty()) {
+                Spacer(modifier = Modifier.height(4.dp))
+                if (isTranslating) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(14.dp),
+                            strokeWidth = 2.dp,
+                            color = Primary,
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            "正在获取译文...",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = textColor.copy(alpha = 0.5f),
+                        )
+                    }
+                } else {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            "译文不可用",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = textColor.copy(alpha = 0.5f),
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        TextButton(
+                            onClick = onRetryTranslate,
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                        ) {
+                            Text(
+                                "点击重试",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Primary,
+                            )
+                        }
+                    }
+                }
             }
             Spacer(modifier = Modifier.height(8.dp))
         }
@@ -1216,6 +1291,7 @@ fun PosAnalysisView(
     fontSize: Int,
     textColor: Color,
     onWordClick: (String) -> Unit,
+    onVisibleParagraphChanged: (Int) -> Unit = {},
 ) {
     // 非词性着色（非单词 token、图例文字）跟随阅读主题色：
     // 原实现硬编码 app 级浅色 onSurface，深色主题下深底深字不可读
@@ -1236,6 +1312,12 @@ fun PosAnalysisView(
         ) {
             listState.animateScrollToItem(currentIndex)
         }
+    }
+    // 反向同步（与 NORMAL/SPLIT 同款）：本视图无表头项，段落索引即 item 索引。
+    // 缺失时用户在成分分析模式里滑多远，退出后进度/统计都停在旧位置
+    LaunchedEffect(listState) {
+        snapshotFlow { listState.firstVisibleItemIndex }
+            .collect { idx -> onVisibleParagraphChanged(idx) }
     }
     LazyColumn(
         state = listState,
@@ -1370,6 +1452,9 @@ fun BackTranslationView(
     textColor: Color,
     primaryColor: Color,
     translationAlpha: Float = 0.85f,
+    isTranslating: Boolean = false,
+    onRetryTranslate: () -> Unit = {},
+    onVisibleParagraphChanged: (Int) -> Unit = {},
 ) {
     // 直接派生即可，无需 remember + LaunchedEffect 多一次组合跳转
     val hasTranslation = translations.isNotEmpty()
@@ -1389,6 +1474,12 @@ fun BackTranslationView(
         ) {
             listState.animateScrollToItem(target)
         }
+    }
+    // 反向同步（与 SPLIT 同款）：item 0 是表头，段落索引 = item 索引 - 1。
+    // 缺失时用户在回译模式里滑多远，退出后进度/统计都停在旧位置
+    LaunchedEffect(listState) {
+        snapshotFlow { listState.firstVisibleItemIndex }
+            .collect { idx -> onVisibleParagraphChanged((idx - 1).coerceAtLeast(0)) }
     }
 
     Column(
@@ -1418,18 +1509,42 @@ fun BackTranslationView(
                 )
                 if (!hasTranslation) {
                     Spacer(modifier = Modifier.height(8.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(16.dp),
-                            strokeWidth = 2.dp,
-                            color = primaryColor,
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            "正在获取译文...",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = textColor.copy(alpha = 0.5f),
-                        )
+                    if (isTranslating) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp),
+                                strokeWidth = 2.dp,
+                                color = primaryColor,
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                "正在获取译文...",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = textColor.copy(alpha = 0.5f),
+                            )
+                        }
+                    } else {
+                        // 翻译失败/未触发时不转假圈：给出明确状态 + 重试入口
+                        // （旧实现只看 translations.isEmpty()，失败后再无动静，
+                        // 用户对着永远转不完的 spinner 没有任何可做的事）
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                "译文不可用",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = textColor.copy(alpha = 0.5f),
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            TextButton(
+                                onClick = onRetryTranslate,
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                            ) {
+                                Text(
+                                    "点击重试",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = primaryColor,
+                                )
+                            }
+                        }
                     }
                 }
             }

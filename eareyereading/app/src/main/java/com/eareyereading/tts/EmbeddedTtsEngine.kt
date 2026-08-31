@@ -21,8 +21,11 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -83,21 +86,52 @@ class EmbeddedTtsEngine @Inject constructor(
     private val audioManager: AudioManager? by lazy {
         context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
     }
-    private val focusListener = AudioManager.OnAudioFocusChangeListener { /* 短焦点无需响应变化 */ }
+    private val focusListener = AudioManager.OnAudioFocusChangeListener { change ->
+        when (change) {
+            // 电话/闹钟/其他媒体抢焦点：旧实现不响应，朗读继续压在通话上。
+            // 先发射外部停止信号再 stop()：同一 Main 调度器上 FIFO，UI 层
+            // collect 先把 isAutoReading/isPlaying/isTtsPlaying 清零，
+            // 循环播放驱动（自动朗读/速读/RSVP）才不会在 stop() 取消当前句后
+            // 又推进到下一段继续压着通话读
+            AudioManager.AUDIOFOCUS_LOSS,
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
+                Log.i(TAG, "audio focus lost ($change), stopping playback")
+                audioFocusHeld = false
+                _externalStop.tryEmit(Unit)
+                stop()
+            }
+            else -> { /* GAIN/DUCK 无需响应：我们 duck 别人，别人 duck 我们不影响朗读 */ }
+        }
+    }
     @Volatile
     private var audioFocusHeld = false
+
+    /**
+     * 外部停止信号：音频焦点丢失等系统事件触发。
+     * 引擎的 stop() 只能取消"正在出声的那一句"，循环播放是由上层
+     * （ReaderViewModel 的 autoRead/speed/rsvp Job）驱动的——它们以
+     * uiState 播放标志为闸，焦点丢失后不收闸就会播下一段。
+     * UI 层 collect 此流后应调用 stopAllPlayback() 收闸。
+     */
+    private val _externalStop = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    val externalStop: SharedFlow<Unit> = _externalStop.asSharedFlow()
 
     private fun requestAudioFocusIfNeeded() {
         if (audioFocusHeld) return
         val am = audioManager ?: return
         try {
             @Suppress("DEPRECATION")
-            am.requestAudioFocus(
+            val result = am.requestAudioFocus(
                 focusListener,
                 AudioManager.STREAM_MUSIC,
                 AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK,
             )
-            audioFocusHeld = true
+            // 只在真正拿到焦点时置位：系统拒给焦点（通话中）时若照样置 true，
+            // 一来 abandon 会归还我们没持有的焦点，二来"未持焦点"语义丢失
+            audioFocusHeld = result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+            if (!audioFocusHeld) {
+                Log.w(TAG, "audio focus request denied (result=$result), playing without focus")
+            }
         } catch (e: Exception) {
             Log.w(TAG, "requestAudioFocus failed", e)
         }
@@ -225,6 +259,11 @@ class EmbeddedTtsEngine @Inject constructor(
         private const val NUM_THREADS = 2
         /** 文件完整下载标记后缀。存在表示该文件已完整下载，避免误用残缺文件。 */
         private const val COMPLETE_SUFFIX = ".complete"
+        /**
+         * 解压总字节上限：正常 Piper 归档解压后 ~120MB，给 4 倍余量。
+         * 防 bzip2 解压炸弹（恶意/损坏归档写满整盘）。
+         */
+        private const val MAX_EXTRACT_BYTES = 512L * 1_000_000L
         private const val DL_CHANNEL_ID = "eareye_tts_download"
         private const val DL_NOTIFICATION_ID = 2001
 
@@ -604,6 +643,15 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
         _downloadProgress.value = Progress.Idle
     }
 
+    /**
+     * 当前下载失败原因（剥离展示前缀的裸原因），供 UI 展示层组合文案。
+     * 引擎内部逐文件失败原因历史上带"下载失败："前缀，统一在这里剥离——
+     * 展示层各自 cast + removePrefix 的隐式约定已被两个调用点复制两遍，
+     * 第三个调用点漏一半就会复活"下载失败：下载失败：…"双重前缀
+     */
+    fun downloadFailureReasonOrNull(): String? =
+        (_state.value as? EngineState.DOWNLOAD_FAILED)?.reason?.removePrefix("下载失败：")
+
     /** 下载互斥：设置页与阅读页弹窗是两个独立入口，各自的 UI 守卫挡不住跨入口并发。
      * 两个下载协程交错写同一批文件/解压同一个 tarball 会产出损坏模型 */
     private val downloadMutex = Mutex()
@@ -647,12 +695,34 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
         modelInfo: ModelInfo,
         onProgress: (Float) -> Unit,
     ): Boolean = withContext(Dispatchers.IO) {
+        // 已完整下载（全部 .complete 标记在位）：跳过网络阶段直接进"初始化"语义。
+        // 旧实现无条件置 DOWNLOADING(0%)，用户重进页面点下载会闪一下"下载中 0%"
+        // 才跳初始化，像是又下了一遍
+        if (isModelDownloaded(modelInfo)) {
+            Log.i(TAG, "downloadModel: already complete on disk, skip to initialize")
+            _downloadProgress.value = Progress.Initializing
+            return@withContext true
+        }
         _state.value = EngineState.DOWNLOADING
         _downloadProgress.value = Progress.Downloading(0L, modelInfo.sizeBytes)
         showDownloadNotification(0f, "准备下载 ${modelInfo.displayName}")
         try {
             val dir = File(context.filesDir, MODELS_DIR_NAME)
             if (!dir.exists()) dir.mkdirs()
+
+            // 磁盘空间预检：tarball 本体 + 解压产物（解压后通常比 bz2 大）+ 余量。
+            // 空间不足时 fail-fast 给明确原因，而不是下到一半/解压到一半抛
+            // 不可读的 IOException，还留下几十 MB 残片
+            val usable = dir.usableSpace
+            val needed = modelInfo.sizeBytes * 3
+            if (usable > 0 && usable < needed) {
+                val msg = "存储空间不足（需要约 ${needed / 1_000_000}MB，仅剩 ${usable / 1_000_000}MB）"
+                Log.e(TAG, "downloadModel: $msg")
+                _state.value = EngineState.DOWNLOAD_FAILED(msg)
+                _downloadProgress.value = Progress.Failed(msg)
+                cancelDownloadNotification()
+                return@withContext false
+            }
 
             // 优先路径：下载 GitHub release tarball 并解压（国内可达性优于 HuggingFace）
             if (modelInfo.tarballAllUrls().isNotEmpty()) {
@@ -692,6 +762,11 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
                     _downloadProgress.value = Progress.Downloading(downloadedTotal, totalSize)
                     onProgress(_downloadProgress.value.fractionOrZero())
                     continue
+                }
+                // 未完成的残片会计入已下载量：断点续传从残片长度继续，
+                // 不把存量计入分子会让进度条在续传期间停滞、完成时突跳
+                if (targetFile.exists() && targetFile.length() > 0) {
+                    downloadedTotal += targetFile.length()
                 }
 
                 // 多镜像回退：依次尝试所有 URL，任一成功即可
@@ -908,6 +983,9 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
             Log.d(TAG, "extraction: opening BZip2+Tar streams on $tarballCanonical")
             val canonicalRoot = modelsDir.canonicalPath + File.separator
             var copiedSinceCheck = 0L
+            // 解压总量上限：正常归档 ~120MB。bzip2 解压炸弹（恶意/损坏归档）
+            // 不设顶会写满整盘。对齐 EPUB 导入的 200MB 上限思路，给 4 倍余量
+            var totalExtractedBytes = 0L
             java.io.FileInputStream(tarballFile).use { fis ->
                 BZip2CompressorInputStream(fis).use { bzis ->
                     TarArchiveInputStream(bzis).use { tis ->
@@ -949,6 +1027,12 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
                                         out.write(buf, 0, n)
                                         fileBytes += n
                                         copiedSinceCheck += n
+                                        totalExtractedBytes += n
+                                        if (totalExtractedBytes > MAX_EXTRACT_BYTES) {
+                                            throw java.io.IOException(
+                                                "归档解压总量超过 ${MAX_EXTRACT_BYTES / 1_000_000}MB，已中止（疑似损坏归档）",
+                                            )
+                                        }
                                         if (copiedSinceCheck >= 262144) {
                                             copiedSinceCheck = 0
                                             kotlin.coroutines.coroutineContext[kotlinx.coroutines.Job]
@@ -973,18 +1057,15 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
         } catch (e: kotlinx.coroutines.CancellationException) {
             // 被取消：清掉半截解压产物和 tarball，避免下次误用残文件
             Log.w(TAG, "extraction cancelled, cleaning partial files")
-            modelInfo.files.forEach { f ->
-                File(modelsDir, f.relativePath).let { if (it.exists()) it.delete() }
-            }
-            if (tarballFile.exists()) tarballFile.delete()
+            cleanExtractionPartials(modelsDir, modelInfo, tarballFile, tarballComplete)
             cancelDownloadNotification()
             throw e
         } catch (e: Exception) {
             Log.e(TAG, "解压失败", e)
-            // 删掉损坏的 tarball 与完成标记：否则下次进来标记检查直接跳过
-            // 下载、反复解压同一个坏归档，失败回退路径还可能让 ~100MB 永久驻盘
-            if (tarballFile.exists()) tarballFile.delete()
-            if (tarballComplete.exists()) tarballComplete.delete()
+            // 删掉损坏的 tarball、完成标记与半截解压产物：否则下次进来标记检查
+            // 直接跳过下载、反复解压同一个坏归档，失败回退路径还可能让
+            // ~100MB tarball 与几十 MB 残片（espeak-ng-data 半拉子目录）永久驻盘
+            cleanExtractionPartials(modelsDir, modelInfo, tarballFile, tarballComplete)
             cancelDownloadNotification()
             return false
         }
@@ -999,9 +1080,8 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
                 File(modelsDir, f.relativePath + COMPLETE_SUFFIX).createNewFile()
             } else {
                 Log.e(TAG, "解压后文件缺失或为空：${f.relativePath}")
-                // 归档缺文件：同样清掉 tarball，强制下次重新下载而不是重复解压
-                if (tarballFile.exists()) tarballFile.delete()
-                if (tarballComplete.exists()) tarballComplete.delete()
+                // 归档缺文件：同样清掉 tarball 与残片，强制下次重新下载而不是重复解压
+                cleanExtractionPartials(modelsDir, modelInfo, tarballFile, tarballComplete)
                 return false
             }
         }
@@ -1010,6 +1090,28 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
         tarballFile.delete()
         tarballComplete.delete()
         return true
+    }
+
+    /**
+     * 解压失败/取消/校验缺文件时的统一清理：
+     * 删 tarball + 完成标记 + manifest 声明的全部产物。
+     *
+     * 用 deleteRecursively 而不是 delete()：Piper 的 espeak-ng-data 是几百个
+     * 文件的目录树，File.delete() 对非空目录静默失败，会留下最多 ~30MB 残片
+     * 白占存储（没有 .complete 标记不会误用，但空间泄漏）。
+     */
+    private fun cleanExtractionPartials(
+        modelsDir: File,
+        modelInfo: ModelInfo,
+        tarballFile: File,
+        tarballComplete: File,
+    ) {
+        modelInfo.files.forEach { f ->
+            File(modelsDir, f.relativePath).let { if (it.exists()) it.deleteRecursively() }
+            File(modelsDir, f.relativePath + COMPLETE_SUFFIX).let { if (it.exists()) it.delete() }
+        }
+        if (tarballFile.exists()) tarballFile.delete()
+        if (tarballComplete.exists()) tarballComplete.delete()
     }
 
     /**
@@ -1055,8 +1157,10 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
                     code in 200..299 || code == 206 -> {
                         // 拿到响应 Content-Length 写到外面闭包的引用，供上层计算分母
                         val contentLen = conn.getHeaderField("Content-Length")?.toLongOrNull() ?: -1L
-                        onTotalSizeKnown?.invoke(if (contentLen > 0) contentLen else -1L)
-                        return fullStream(conn, target, onChunkDownloaded)
+                        return streamResponse(
+                            conn, code, contentLen, existingLen, target,
+                            onChunkDownloaded, onTotalSizeKnown,
+                        )
                     }
                     code in 300..399 -> {
                         // 手动跟随重定向：复用同一个 Proxy；只跟一次以避免循环
@@ -1084,10 +1188,26 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
                         conn = redirectedConn
                         if (redirectedCode in 200..299 || redirectedCode == 206) {
                             val contentLen = redirectedConn.getHeaderField("Content-Length")?.toLongOrNull() ?: -1L
-                            onTotalSizeKnown?.invoke(if (contentLen > 0) contentLen else -1L)
-                            return fullStream(redirectedConn, target, onChunkDownloaded)
+                            return streamResponse(
+                                redirectedConn, redirectedCode, contentLen, existingLen, target,
+                                onChunkDownloaded, onTotalSizeKnown,
+                            )
+                        }
+                        if (redirectedCode == 416) {
+                            // 与下方 416 分支同理：残片已失效，删掉让下个候选从头下
+                            Log.w(TAG, "download: HTTP 416 after redirect, deleting stale partial ${target.name}")
+                            target.delete()
+                            return false
                         }
                         lastError = RuntimeException("HTTP $redirectedCode after redirect")
+                    }
+                    code == 416 -> {
+                        // Range 不可满足：本地残片比服务端资源还长或已失效。
+                        // 删掉残片并短路返回——不删的话每个候选都会带着同一个
+                        // 越界 Range 再 416 一次，死循环浪费所有镜像
+                        Log.w(TAG, "download: HTTP 416, deleting stale partial ${target.name} (${existingLen}B)")
+                        target.delete()
+                        return false
                     }
                     else -> {
                         Log.e(TAG, "downloadFile: HTTP $code for $url via ${describeProxy(p)}")
@@ -1103,8 +1223,12 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
                 Log.w(TAG, "download: candidate #$idx (${describeProxy(p)}) failed: ${e.javaClass.simpleName}: ${e.message}")
                 lastError = e
             } finally {
-                // 没成功的连接要断开；成功的会被 fullStream 内部 dispose
-                if (conn?.inputStream == null) try { conn?.disconnect() } catch (_: Exception) {}
+                // 没成功的连接要断开；成功的会被 fullStream/appendStream 内部 dispose。
+                // inputStream 取值本身在 4xx 上会抛 FileNotFoundException——
+                // 必须包进 try，否则异常逃出 finally 会绕过剩余 proxy 候选
+                // 和调用方的镜像循环，一个 404/416 就终结整个下载
+                val opened = try { conn?.inputStream != null } catch (_: Exception) { false }
+                if (!opened) try { conn?.disconnect() } catch (_: Exception) {}
             }
         }
         Log.e(TAG, "download: all ${candidateProxies.size} candidates failed for $url", lastError)
@@ -1139,12 +1263,41 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
         if (p == null) "DIRECT" else "HTTP@${p.address()}"
 
     /**
-     * 续传流（append）：保留以备未来 Range 续传实现重启用。当前下载路径
-     * 不再调用（统一走 fullStream）。Range 续传逻辑仍由 downloadAndExtractTarball
-     * 调用上层的 `if (tarballComplete.exists() && tarballFile.length() > 0)` 短路：
-     * 残文件命中时直接进解压，不需要续传 byte 拼接。
+     * 按响应码把响应体写入 target：
+     *  - 206 + 本地有残片 → Content-Range 校验后 append 续传；
+     *  - 200（服务器忽略 Range）→ 全量覆盖（fullStream 以 truncate 模式打开）。
+     *
+     * 此前 206 也走 fullStream（append=false）：本地残片被截断后只写入尾部
+     * 字节，产出"只有后半截"的损坏文件，length>0 又骗过完成校验 → 必解压
+     * 失败。Content-Length 统一折算成"完整文件总长"汇报，让上层进度分母稳定。
      */
-    @Suppress("unused")
+    private suspend fun streamResponse(
+        conn: HttpURLConnection,
+        code: Int,
+        contentLen: Long,
+        existingLen: Long,
+        target: File,
+        onChunkDownloaded: (Int, Long) -> Unit,
+        onTotalSizeKnown: ((Long) -> Unit)?,
+    ): Boolean {
+        return if (code == 206 && existingLen > 0) {
+            // 续传：Content-Length 只是剩余字节数，总长要加上本地已有部分
+            onTotalSizeKnown?.invoke(if (contentLen > 0) existingLen + contentLen else -1L)
+            appendStream(conn, target, existingLen, onChunkDownloaded)
+        } else {
+            if (existingLen > 0) {
+                Log.i(TAG, "server ignored Range (HTTP $code), full re-download of ${target.name}")
+            }
+            onTotalSizeKnown?.invoke(if (contentLen > 0) contentLen else -1L)
+            fullStream(conn, target, onChunkDownloaded)
+        }
+    }
+
+    /**
+     * 续传流（append）：服务器返回 206 时从 existingLen 处继续写入。
+     * Content-Range 校验失败说明本地残片与服务端资源对不上（过期/损坏），
+     * 直接删掉残片返回 false，让后续候选走全量下载而不是叠加错数据。
+     */
     private suspend fun appendStream(
         conn: HttpURLConnection,
         target: File,
@@ -1157,7 +1310,13 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
             ?.substringBefore("-")
             ?.toLongOrNull()
         if (start == null || start != existingLen) {
-            Log.w(TAG, "Content-Range mismatch (start=$start, existing=$existingLen), aborting resume")
+            Log.w(TAG, "Content-Range mismatch (start=$start, existing=$existingLen), deleting partial and aborting resume")
+            // 残片与远端对不上（重发包/远端更新）：继续保留只会让后续候选
+            // 带着同样的 existingLen 反复 mismatch，删掉让下轮全量重来。
+            // 响应体未被消费，外层 finally 的 inputStream 探测在 206 上会成功
+            // （opened=true 不断开）——这里显式 disconnect，别留给 GC
+            target.delete()
+            try { conn.disconnect() } catch (_: Exception) {}
             return false
         }
         return try {
@@ -1679,8 +1838,18 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
         }
     }
 
+    /**
+     * 通知权限是否可用。Android 13+（targetSdk 34）下 POST_NOTIFICATIONS
+     * 是运行时权限，app 只在设置页提醒开关处申请——用户直接从阅读页
+     * 弹窗下载时大概率没授权，notify() 会被系统静默丢弃（部分 ROM 还会
+     * 抛 SecurityException）。下载本身不依赖通知，无权限就跳过通知。
+     */
+    private fun notificationsEnabled(): Boolean =
+        androidx.core.app.NotificationManagerCompat.from(context).areNotificationsEnabled()
+
     /** 显示/更新下载进度通知。progress 0..1，null 表示不确定。 */
     fun showDownloadNotification(progress: Float?, contentText: String) {
+        if (!notificationsEnabled()) return
         ensureDownloadChannel()
         // P1 修复: notificationManager 可能为 null,跳过通知发送(下载本身仍正常)
         val nm = notificationManager ?: return
@@ -1712,6 +1881,11 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
      * 这里改为普通通知 + autoCancel，同时结束进度通知的常驻状态。
      */
     private fun showDownloadCompleteNotification(contentText: String) {
+        if (!notificationsEnabled()) {
+            // 无权限：收尾通知发不出，但至少把 ongoing 进度通知残留清掉
+            cancelDownloadNotification()
+            return
+        }
         ensureDownloadChannel()
         val nm = notificationManager ?: run {
             // 服务不可用时至少要把 ongoing 进度通知撤掉
