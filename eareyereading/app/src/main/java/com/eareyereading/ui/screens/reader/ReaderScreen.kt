@@ -16,12 +16,20 @@ import androidx.compose.material.icons.outlined.Translate
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import com.eareyereading.util.notificationPermissionGranted
+import com.eareyereading.util.rememberNotificationPermissionRequester
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
@@ -111,26 +119,85 @@ fun ReaderScreen(
     }
 
     // issue 3.8：阅读沉浸态。默认收起顶部/底部操作栏（chrome），
-    // 点正文空白切换显隐；滚动/弹窗/选词/朗读等需要操作时自动亮出。
+    // 点正文空白切换显隐；滚动短暂显示后自动收起；弹窗/选词/朗读等需要操作时强制常亮。
     var chromeVisible by rememberSaveable { mutableStateOf(false) }
+    val autoHideScope = rememberCoroutineScope()
+    // 自动隐藏延迟任务：滚动/临时操作后无动作，延时收起 chrome（回到沉浸态）
+    var autoHideJob by remember { mutableStateOf<Job?>(null) }
 
-    // issue 3.8（保全诉求 #5）：弹窗 / 选词 / TTS 播放 / 自动朗读 / 速读等需要操作时强制显示 chrome，
-    // 避免用户切到某个弹窗或语音控制时找不到返回/暂停入口。
-    LaunchedEffect(
-        uiState.showWordDialog, uiState.showModeSelector,
-        uiState.showSettings, uiState.showChapterNav,
-        uiState.isTtsPlaying, uiState.isAutoReading, uiState.isPlaying,
-    ) {
-        if (uiState.showWordDialog || uiState.showModeSelector || uiState.showSettings ||
-            uiState.showChapterNav || uiState.isTtsPlaying || uiState.isAutoReading || uiState.isPlaying
-        ) {
+    // forceChrome：需要常亮 chrome 的强状态（弹窗/选词/朗读/自动朗读/速读/章节目录）
+    val forceChrome = uiState.showWordDialog || uiState.showModeSelector || uiState.showSettings ||
+        uiState.showChapterNav || uiState.isTtsPlaying || uiState.isAutoReading || uiState.isPlaying
+    // NestedScrollConnection 是 remember 一次创建，只能拿到"创建当下"的引用，
+    // 用 rememberUpdatedState 让它始终读到最新的 forceChrome / reveal 函数。
+    val currentForceChrome by rememberUpdatedState(forceChrome)
+
+    // 滚动短暂显示 chrome：每次滚动都重置自动隐藏计时器（scroll-driven reveal）
+    val revealChromeTemporarily: () -> Unit = {
+        chromeVisible = true
+        autoHideJob?.cancel()
+        // 自动朗读/弹窗等强状态期间的滚动也被强制显示，但收起交给 force 分支统一控制
+        autoHideJob = autoHideScope.launch {
+            delay(2500)
+            if (!currentForceChrome) chromeVisible = false
+        }
+    }
+    val currentReveal by rememberUpdatedState(revealChromeTemporarily)
+
+    val chromeScrollReveal = remember {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                if (!currentForceChrome && available.y != 0f) currentReveal()
+                return Offset.Zero
+            }
+            override fun onPostScroll(
+                consumed: Offset,
+                available: Offset,
+                source: NestedScrollSource,
+            ): Offset {
+                if (!currentForceChrome && (consumed.y != 0f || available.y != 0f)) currentReveal()
+                return Offset.Zero
+            }
+        }
+    }
+
+    // issue 3.8（保全诉求 #5）：弹窗 / 选词 / TTS 播放 / 自动朗读 / 速读等需要操作时强制常亮 chrome，
+    // 且取消自动隐藏；强状态解除后显隐恢复由滚动/点击驱动。
+    LaunchedEffect(forceChrome) {
+        if (forceChrome) {
+            autoHideJob?.cancel()
+            autoHideJob = null
             chromeVisible = true
+        }
+    }
+
+    // issue 5.1：阅读完成（读到书末）也作为通知权限申请入口。
+    // 到达最后一篇时弹一条 Snackbar，带"开启通知"动作；已授权则不打扰。
+    val snackbarHostState = remember { SnackbarHostState() }
+    val requestNotifications = rememberNotificationPermissionRequester()
+    // 每本书会话只提示一次（到达书末即记录），切换书时重置
+    var bookEndPrompted by remember(uiState.book?.id) { mutableStateOf(false) }
+    LaunchedEffect(uiState.currentParagraphIndex, uiState.book?.id) {
+        val paras = uiState.paragraphs
+        if (!bookEndPrompted && paras.isNotEmpty() &&
+            uiState.currentParagraphIndex == paras.size - 1
+        ) {
+            bookEndPrompted = true
+            if (notificationPermissionGranted(context)) return@LaunchedEffect
+            val action = snackbarHostState.showSnackbar(
+                message = "已读到本书末尾，开启通知不错过每日复习",
+                actionLabel = "开启通知",
+                duration = SnackbarDuration.Short,
+            )
+            if (action == SnackbarResult.ActionPerformed) requestNotifications()
         }
     }
 
     Scaffold(
         // issue 3.8（地基）：正文占满物理边缘，不再被根 Scaffold 额外预留系统栏。
         contentWindowInsets = WindowInsets(0),
+        // issue 5.1：阅读完成入口依托 Snackbar 展示
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             // issue 3.8：chrome 显隐用 AnimatedVisibility（200ms 滑动+淡入，不瞬切）
             AnimatedVisibility(
@@ -299,6 +366,9 @@ fun ReaderScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .background(backgroundColor)
+                // issue 3.8：滚动短暂显示 chrome（scroll-driven reveal）：nestedScroll 接到
+                // 当前渲染态 LazyColumn 的滚动增量，统一触发"显示 + 延时自动收起"
+                .nestedScroll(chromeScrollReveal)
                 // issue 3.8：轻击正文空白切换 chrome 显隐（段落文字上的点选/挖空事件由
                 // 各渲染态的内层手势先消费，这里只收到未被消费的"空白处点击"，符合方案 C）
                 .pointerInput(Unit) {
