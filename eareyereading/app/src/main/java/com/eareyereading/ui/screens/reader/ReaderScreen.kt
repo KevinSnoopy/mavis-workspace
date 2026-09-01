@@ -2180,7 +2180,9 @@ fun SentenceTranslationDialog(
 
 // ── 段落点击辅助：把点击位置解析为单词 / 句子 ──────────────
 private val WordRegex = Regex("[a-zA-Z]+")
-private val SentenceEndRegex = Regex("[.!?]")
+// issue 8.6：同时认 ASCII 与 CJK 句末标点——旧实现只认 [.!?]，
+// 双击中文/日文句子只会截到第一个英文句号，整句后半段丢失
+private val SentenceEndRegex = Regex("[.!?。！？；]")
 
 /**
  * 根据 TextLayoutResult 把点击位置反查成段落中命中位置的单词。

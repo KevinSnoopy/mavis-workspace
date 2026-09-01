@@ -87,6 +87,9 @@ fun ReviewScreen(
                     SessionSummaryView(
                         totalReviewed = uiState.totalReviewed,
                         correctCount = uiState.correctCount,
+                        // issue 11.4：loadDueReviews 一次只拉 50 张，仍有剩余待复习
+                        // 卡片时必须提示，否则用户以为全部复习完了
+                        remainingDue = (dueCount - uiState.totalReviewed).coerceAtLeast(0),
                         onRestart = viewModel::restartSession,
                         onBack = onBack,
                     )
@@ -190,6 +193,7 @@ private fun ErrorReviewView(
 private fun SessionSummaryView(
     totalReviewed: Int,
     correctCount: Int,
+    remainingDue: Int = 0,
     onRestart: () -> Unit,
     onBack: () -> Unit,
 ) {
@@ -223,12 +227,28 @@ private fun SessionSummaryView(
             StatItem(label = "正确率", value = "$accuracy%")
         }
 
+        // issue 11.4：本轮只拉了最多 50 张，剩更多时如实告知，避免"以为复习完了"
+        if (remainingDue > 0) {
+            Spacer(modifier = Modifier.height(16.dp))
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = Warning.copy(alpha = 0.12f),
+            ) {
+                Text(
+                    "还有 $remainingDue 张待复习",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Warning,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                )
+            }
+        }
+
         Spacer(modifier = Modifier.height(32.dp))
 
         FilledTonalButton(onClick = onRestart) {
             Icon(Icons.Default.Refresh, null)
             Spacer(modifier = Modifier.width(8.dp))
-            Text("再复习一轮")
+            Text(if (remainingDue > 0) "继续复习" else "再复习一轮")
         }
         Spacer(modifier = Modifier.height(12.dp))
         OutlinedButton(onClick = onBack) {
@@ -405,11 +425,14 @@ private fun ReviewCardView(
                             onClick = { onAnswer(1) },
                             modifier = Modifier.weight(1f),
                         )
+                        // issue 11.2：SM-2 里 q=2 才是"记得但困难"（重置 interval=1）。
+                        // 此前"困难"发 onAnswer(3)——q≥3 走"通过"分支，间隔涨到 6 天、
+                        // EF 增长，用户表达"答得吃力"算法却以为答得不错
                         AnswerButton(
                             label = "困难",
                             color = Warning,
                             enabled = !isSubmitting,
-                            onClick = { onAnswer(3) },
+                            onClick = { onAnswer(2) },
                             modifier = Modifier.weight(1f),
                         )
                         AnswerButton(

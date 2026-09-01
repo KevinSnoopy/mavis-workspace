@@ -40,6 +40,11 @@ class ArticleParser @Inject constructor() {
             "<(aside|nav|figure|figcaption|iframe|button|form|input|select|textarea|ins)\\b[^>]*/?>",
             RegexOption.IGNORE_CASE,
         )
+        // issue 7.5/10.10：块级标签边界 → 空行，保留原文段落结构（cleanText 分段用）
+        private val BLOCK_END_TAG = Regex(
+            "</(p|div|li|h[1-6]|blockquote|tr|section|article|figure|figcaption|header|footer|aside|nav)>|<br\\s*/?>",
+            RegexOption.IGNORE_CASE,
+        )
         // issue 7.2：按 class 名剔除的噪音容器（分享/订阅/广告/相关推荐/侧栏/面包屑/作者卡/评论区）
         private val NOISE_CLASS_BLOCK = Regex(
             "<\\s*(div|section)\\b[^>]*class\\s*=\\s*[\"'][^\"']*\\b(share|social|newsletter|subscribe|ad-|advert|promo|related|recommend|sidebar|breadcrumb|byline|author-bio|comments)\\b[^\"']*[\"'][^>]*>[\\s\\S]*?</\\1>",
@@ -254,10 +259,9 @@ class ArticleParser @Inject constructor() {
                     't' -> { sb.append('\t'); i += 2 }
                     'r' -> { sb.append('\r'); i += 2 }
                     'u' -> {
-                        val hex = s.getOrNull(i + 2)?.toString() ?: ""
                         val hex4 = s.substring(i + 2, minOf(i + 6, s.length))
                         val code = hex4.toIntOrNull(16)
-                        if (hex.isNotEmpty() && code != null && hex4.length == 4) {
+                        if (code != null && hex4.length == 4) {
                             sb.append(code.toChar()); i += 6
                         } else {
                             sb.append(c); i += 1
@@ -273,9 +277,9 @@ class ArticleParser @Inject constructor() {
     }
 
     /**
-     * 从 HTML 中提取文章内容
+     * 从 HTML 中提取文章内容（internal 供单元测试直接覆盖，无需走网络）
      */
-    private fun extractArticle(html: String): ArticleResult {
+    internal fun extractArticle(html: String): ArticleResult {
         // 清理脚本和样式 + issue 7.2 噪音元素（侧栏/导航/图注/iframe/按钮/
         // 表单/按 class 名的分享·订阅·广告·相关推荐容器）——策略命中容器前
         // 先剔除，否则 cleanText 的标签替换会把它们留进正文
@@ -356,27 +360,35 @@ class ArticleParser @Inject constructor() {
     }
 
     /**
-     * 清理 HTML 标签，提取纯文本并分段
+     * 清理 HTML 标签，提取纯文本并分段。
+     *
+     * issue 7.5 / 10.10：旧实现先把全文压成一行再"每 4 句硬切一段"，
+     * 原文的段落边界（<p>/<div> 等）被丢弃，且切句正则要求句子首字母大写，
+     * 小写开头的句子（引号/编号/缩写后）全被吞。改为保留块级标签边界：
+     * 块级标签闭合 → 空行，再按空行自然分段；纯文本页才回退到"每 4 句合并"。
      */
     private fun cleanText(html: String): List<String> {
-        val text = HtmlEntities.decode(html.replace(HTML_TAG, " "))
-            .replace("\\s+".toRegex(), " ") // 压缩空格
-            .trim()
+        // 块级标签边界 → 空行（先于通用标签替换，否则 </p> 会被替换成空格）
+        val text = HtmlEntities.decode(
+            html.replace(BLOCK_END_TAG, "\n\n").replace(HTML_TAG, " ")
+        )
+        val paragraphs = text.split(Regex("\n{2,}"))
+            .map { it.replace(Regex("\\s+"), " ").trim() }
+            .filter { it.isNotBlank() && it.length > 20 && it.any { c -> c.isLetter() } }
+        if (paragraphs.isNotEmpty()) return paragraphs
 
-        // 按句子分段
-        val sentences = text.split(Regex("(?<=[.!?])\\s+(?=[A-Z])"))
+        // 回退：页面没有块级标签（纯句子流）时，保持旧的"每 4 句一段"合并，
+        // 不返回空列表导致策略判定失败
+        val sentences = text.replace(Regex("\\s+"), " ").trim()
+            .split(Regex("(?<=[.!?])\\s+(?=[A-Z])"))
             .map { it.trim() }
             .filter { it.length > 30 && it.any { c -> c.isLetter() } }
-
-        // 合并成段落（每3-5句一段）
-        val paragraphs = mutableListOf<String>()
+        if (sentences.isEmpty()) return listOf(text.replace(Regex("\\s+"), " ").trim())
+        val merged = mutableListOf<String>()
         for (i in sentences.indices step 4) {
-            val end = minOf(i + 4, sentences.size)
-            val para = sentences.subList(i, end).joinToString(" ")
-            paragraphs.add(para)
+            merged.add(sentences.subList(i, minOf(i + 4, sentences.size)).joinToString(" "))
         }
-
-        return paragraphs.ifEmpty { listOf(text) }
+        return merged
     }
 }
 

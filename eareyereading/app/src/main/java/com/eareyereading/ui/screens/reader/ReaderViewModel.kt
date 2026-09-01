@@ -665,7 +665,7 @@ class ReaderViewModel @Inject constructor(
                     // parseBook 是阻塞式 zip IO + 正则解析，viewModelScope 跑在
                     // Main 上——大书打开时直接 ANR（R9 修过 addBook 同款调用点，
                     // 阅读加载路径这条漏网）
-                    withContext(Dispatchers.IO) { epubParser.parseBook(book.filePath) }
+                    withContext(Dispatchers.IO) { epubParser.parseBook(book.filePath).paragraphs }
                 }
                 val state = readingRepository.getState(bookId)
                 // 与 saveState 持久化的 totalCharacters 口径一致（都按段落分隔符拼接）

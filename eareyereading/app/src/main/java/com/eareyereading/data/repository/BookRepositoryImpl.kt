@@ -62,6 +62,18 @@ class BookRepositoryImpl @Inject constructor(
         bookDao.getBookByIdFlow(id).map { it?.toDomain() }
 
     override suspend fun addBook(book: Book): Long = withContext(Dispatchers.IO) {
+        // issue 9.7：同文件路径重复导入去重。SAF 导入会带时间戳前缀（避免重名覆盖），
+        // 这里至少能挡住同一路径（如重试同一 URL 拷贝、重复选择同一文件）的重复入库。
+        if (book.filePath.isNotBlank()) {
+            bookDao.findByFilePath(book.filePath)?.let { existing ->
+                android.util.Log.i("BookRepository", "Book already imported (filePath=${book.filePath}), reusing id=${existing.id}")
+                return@withContext existing.id
+            }
+        }
+
+        // issue 9.1：EPUB 解析携带 OPF 元数据（标题/作者/语言），
+        // 导入时填充，替代"标题=文件名、作者=Unknown、语言=en(永远)"
+        var parsedMetadata: com.eareyereading.util.ParsedBook? = null
         val paragraphs = if (book.content.isNotBlank()) {
             book.content.split("\n\n").filter { it.isNotBlank() }
         } else if (book.filePath.isNotBlank()) {
@@ -70,17 +82,25 @@ class BookRepositoryImpl @Inject constructor(
             // 这里必须感知，否则会静默创建一本 0 词的空书。
             // 解析是重 IO + 正则工作：整体放 IO 调度器，主线程只拿结果，
             // 否则大 EPUB 的 zip 读取会阻塞 UI 线程（ANR）。
-            val parsed = if (book.filePath.lowercase(Locale.ROOT).endsWith(".txt")) {
+            if (book.filePath.lowercase(Locale.ROOT).endsWith(".txt")) {
                 parsePlainText(File(book.filePath))
             } else {
-                epubParser.parseBook(book.filePath)
+                val parsed = epubParser.parseBook(book.filePath)
+                parsedMetadata = parsed
+                // issue 9.2：MAX_TOTAL_CHARS 截断不再是静默行为，至少打日志告警
+                if (parsed.wasTruncated) {
+                    android.util.Log.w(
+                        "BookRepository",
+                        "EPUB was truncated at ${parsed.paragraphs.size} paragraphs (${book.filePath})",
+                    )
+                }
+                parsed.paragraphs
             }
-            if (parsed.isEmpty()) {
-                throw java.io.IOException("Failed to parse book file: ${book.filePath}")
-            }
-            parsed
         } else {
             emptyList()
+        }
+        if (paragraphs.isEmpty()) {
+            throw java.io.IOException("Failed to parse book file: ${book.filePath}")
         }
 
         val joined = paragraphs.joinToString(" ")
@@ -93,7 +113,15 @@ class BookRepositoryImpl @Inject constructor(
         val contentToSave = if (book.content.isNotBlank()) book.content
             else paragraphs.joinToString("\n\n")
 
+        // 元数据填充优先级：显式传入 > OPF 解析 > 文件名/Unknown/en 兜底。
+        // language 仅在 OPF 声明且非默认值时才覆盖——避免把所有导入书都改回 en
         val entity = book.toEntity().copy(
+            title = book.title.ifBlank { parsedMetadata?.title.orEmpty() }
+                .ifBlank { File(book.filePath).nameWithoutExtension },
+            author = book.author.ifBlank { parsedMetadata?.author ?: "Unknown" }
+                .ifBlank { "Unknown" },
+            language = if (!book.language.equals("en", ignoreCase = true)) book.language
+                else parsedMetadata?.language?.ifBlank { "en" } ?: "en",
             totalWords = totalWords,
             content = contentToSave,
             addedAt = book.addedAt,

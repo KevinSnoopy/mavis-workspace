@@ -18,6 +18,11 @@ interface BookDao {
     @Query("SELECT * FROM books WHERE id = :id")
     fun getBookByIdFlow(id: Long): Flow<BookEntity?>
 
+    // issue 9.7：同路径重复导入去重——addBook 命中已存在路径时直接复用旧 id，
+    // 不再无限插入重复书籍
+    @Query("SELECT * FROM books WHERE filePath = :filePath LIMIT 1")
+    suspend fun findByFilePath(filePath: String): BookEntity?
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(book: BookEntity): Long
 

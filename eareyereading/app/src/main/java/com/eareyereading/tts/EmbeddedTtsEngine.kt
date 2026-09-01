@@ -1573,6 +1573,11 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
         speed: Float = 1.0f,
         onDone: () -> Unit = {},
     ): Boolean = withContext(Dispatchers.IO) {
+        // issue 2.11：入口即检查取消。TtsHelper.speak 先 cancel 旧 job 再 launch
+        // 新 job——cancel() 非阻塞，旧协程可能还挂在 speakMutex 上等锁，新协程
+        // 已在队列里；入口 ensureActive 让被取消的旧协程在抢锁前就放弃，避免
+        // 两个 speak 协程几乎同时进入 doSpeakLocked 造成音频叠播/错序。
+        coroutineContext[Job]?.ensureActive()
         // 关键：native sherpa-onnx OfflineTts 指针不能并发使用。
         // 之前 TtsHelper.speak() 在 scope.launch 里多次并发调用，
         // 两个 IO 协程同时调 generate() → JNI 段错误 SIGSEGV。
