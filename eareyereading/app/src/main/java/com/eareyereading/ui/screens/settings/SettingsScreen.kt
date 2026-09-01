@@ -493,7 +493,7 @@ class SettingsViewModel @Inject constructor(
                     o.put("interval", r.interval)
                     o.put("repetitions", r.repetitions)
                     o.put("nextReviewDate", r.nextReviewDate)
-                    o.put("lastReviewDate", r.lastReviewDate)
+                    o.put("lastReviewDate", r.lastReviewedAt)
                     o.put("lastQuality", r.lastQuality)
                     reviewArr.put(o)
                 }
@@ -585,7 +585,7 @@ class SettingsViewModel @Inject constructor(
                             interval = reviewObj.optInt("interval", 1),
                             repetitions = reviewObj.optInt("repetitions", 0),
                             nextReviewDate = reviewObj.optLong("nextReviewDate", System.currentTimeMillis()),
-                            lastReviewDate = reviewObj.optLong("lastReviewDate", System.currentTimeMillis()),
+                            lastReviewedAt = reviewObj.optLong("lastReviewDate", System.currentTimeMillis()),
                             lastQuality = reviewObj.optInt("lastQuality", 0),
                         ),
                     )

@@ -15,8 +15,10 @@ import com.eareyereading.data.local.entity.*
         ReviewRecordEntity::class,
         BookmarkEntity::class,
         HighlightEntity::class,
+        // issue 8.5：段落翻译本地缓存（migration 7→8 建表）
+        ParagraphTranslationEntity::class,
     ],
-    version = 7,
+    version = 8,
     // 导出 schema 到 app/schemas/：手写 migration 可以与 Room 期望的表结构
     // 逐版本对照，杜绝"迁移后 schema 校验失败 → 升级用户启动即崩"的漂移
     exportSchema = true
@@ -30,4 +32,5 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun reviewRecordDao(): ReviewRecordDao
     abstract fun bookmarkDao(): BookmarkDao
     abstract fun highlightDao(): HighlightDao
+    abstract fun paragraphTranslationDao(): ParagraphTranslationDao
 }

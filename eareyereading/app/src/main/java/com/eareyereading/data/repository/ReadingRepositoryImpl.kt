@@ -1,6 +1,8 @@
 package com.eareyereading.data.repository
 
+import com.eareyereading.data.local.dao.ParagraphTranslationDao
 import com.eareyereading.data.local.dao.ReadingStateDao
+import com.eareyereading.data.local.entity.ParagraphTranslationEntity
 import com.eareyereading.data.local.entity.ReadingStateEntity
 import com.eareyereading.domain.model.ReadingMode
 import com.eareyereading.domain.model.ReadingState
@@ -14,6 +16,7 @@ import javax.inject.Singleton
 @Singleton
 class ReadingRepositoryImpl @Inject constructor(
     private val readingStateDao: ReadingStateDao,
+    private val paragraphTranslationDao: ParagraphTranslationDao,
 ) : ReadingRepository {
 
     override suspend fun getState(bookId: Long): ReadingState? =
@@ -38,6 +41,33 @@ class ReadingRepositoryImpl @Inject constructor(
     override suspend fun updateRsvpSpeed(bookId: Long, speed: Int) {
         readingStateDao.updateRsvpSpeed(bookId, speed)
     }
+
+    // ── issue 8.5：段落翻译缓存 ─────────────────────────
+    override suspend fun getTranslations(bookId: Long, langPair: String): Map<Int, String> =
+        paragraphTranslationDao.getForBook(bookId, langPair)
+            .associate { it.paragraphIndex to it.translatedText }
+
+    override suspend fun saveTranslation(
+        bookId: Long,
+        langPair: String,
+        paragraphIndex: Int,
+        sourceText: String,
+        translatedText: String,
+    ) {
+        paragraphTranslationDao.upsert(
+            ParagraphTranslationEntity(
+                bookId = bookId,
+                paragraphIndex = paragraphIndex,
+                sourceText = sourceText,
+                translatedText = translatedText,
+                langPair = langPair,
+                translatedAt = System.currentTimeMillis(),
+            )
+        )
+    }
+
+    override suspend fun deleteTranslations(bookId: Long) =
+        paragraphTranslationDao.deleteForBook(bookId)
 
     private fun ReadingStateEntity.toDomain() = ReadingState(
         bookId = bookId,

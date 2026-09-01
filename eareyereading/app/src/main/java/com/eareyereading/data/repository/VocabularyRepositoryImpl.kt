@@ -25,6 +25,9 @@ class VocabularyRepositoryImpl @Inject constructor(
     override fun getLearnedWords(): Flow<List<Vocabulary>> =
         vocabularyDao.getLearnedWords().map { list -> list.map { it.toDomain() } }
 
+    override fun getWordsByBook(bookId: Long): Flow<List<Vocabulary>> =
+        vocabularyDao.getWordsByBook(bookId).map { list -> list.map { it.toDomain() } }
+
     override suspend fun getWord(word: String): Vocabulary? =
         vocabularyDao.getWord(word)?.toDomain()
 
@@ -72,7 +75,7 @@ class VocabularyRepositoryImpl @Inject constructor(
                     vocabularyId = vocabularyId,
                     word = word,
                     nextReviewDate = now,
-                    lastReviewDate = now,
+                    lastReviewedAt = now,
                 )
             )
         }

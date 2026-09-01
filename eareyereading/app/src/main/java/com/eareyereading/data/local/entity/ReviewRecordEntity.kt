@@ -1,5 +1,6 @@
 package com.eareyereading.data.local.entity
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
@@ -26,6 +27,10 @@ data class ReviewRecordEntity(
     val interval: Int = 1,
     val repetitions: Int = 0,
     val nextReviewDate: Long,
-    val lastReviewDate: Long,
+    // issue 11.18：字段改名 lastReviewDate → lastReviewedAt，与 VocabularyEntity.lastReviewTime
+    // 的"最后复习"语义对齐；DB 列名保持不变（@ColumnInfo），无需 schema 迁移。
+    // 备份导入导出（SettingsScreen）的 JSON 键仍叫 lastReviewDate，保持跨机兼容。
+    @ColumnInfo(name = "lastReviewDate")
+    val lastReviewedAt: Long,
     val lastQuality: Int = 0,
 )

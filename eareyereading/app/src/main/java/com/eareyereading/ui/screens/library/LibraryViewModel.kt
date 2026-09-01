@@ -160,6 +160,18 @@ class LibraryViewModel @Inject constructor(
 
         // 加载阅读统计（切回书库 tab 时刷新，见 setTab）
         loadReadingStats()
+
+        // issue 9.10：系统"打开方式"选 .epub 进入（MainActivity 转发 content:// URI），
+        // 复用既有 importBook 流程（同样的 loading/结果 snackbar 消息）
+        handlePendingExternalImport()
+    }
+
+    /** 待导入的外部 content:// URI 队列（主线程单向入队）。 */
+    private fun handlePendingExternalImport() {
+        while (true) {
+            val uri = pendingExternalImports.poll() ?: break
+            importBook(uri)
+        }
     }
 
     private fun loadReadingStats() {
@@ -570,6 +582,20 @@ class LibraryViewModel @Inject constructor(
                 inFlightArticleLinks.remove(article.link)
                 endImportOp()
             }
+        }
+    }
+
+    companion object {
+        /** issue 9.10：ACTION_VIEW 转发的 content:// URI。编辑器外部无法直达
+         * nav 作用域的 LibraryViewModel 实例（MainActivity 拿不到它），用进程级
+         * 队列中转：MainActivity 入队，书库 VM 首次创建时取出走 importBook。
+         * 主线程单向入队，无需 CAS。 */
+        private val pendingExternalImports =
+            java.util.concurrent.ConcurrentLinkedQueue<Uri>()
+
+        /** 供 MainActivity 在收到 VIEW intent 时投递待导入的 EPUB URI。 */
+        fun requestImport(uri: Uri) {
+            pendingExternalImports.offer(uri)
         }
     }
 }

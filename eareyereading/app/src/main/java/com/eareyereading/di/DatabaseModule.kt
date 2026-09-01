@@ -229,6 +229,33 @@ object DatabaseModule {
                         )
                     }
                 },
+                object : Migration(7, 8) {
+                    // issue 8.5：段落翻译缓存表。全新表，无存量改造，
+                    // 建表 SQL 与 ParagraphTranslationEntity 的 schema 严格对齐。
+                    override fun migrate(db: SupportSQLiteDatabase) {
+                        db.execSQL(
+                            """
+                            CREATE TABLE IF NOT EXISTS `paragraph_translations` (
+                                `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                                `bookId` INTEGER NOT NULL,
+                                `paragraphIndex` INTEGER NOT NULL,
+                                `sourceText` TEXT NOT NULL,
+                                `translatedText` TEXT NOT NULL,
+                                `langPair` TEXT NOT NULL,
+                                `translatedAt` INTEGER NOT NULL
+                            )
+                            """
+                        )
+                        db.execSQL(
+                            "CREATE UNIQUE INDEX IF NOT EXISTS `index_paragraph_translations_bookId_paragraphIndex` " +
+                                "ON `paragraph_translations` (`bookId`, `paragraphIndex`)"
+                        )
+                        db.execSQL(
+                            "CREATE INDEX IF NOT EXISTS `index_paragraph_translations_bookId_langPair` " +
+                                "ON `paragraph_translations` (`bookId`, `langPair`)"
+                        )
+                    }
+                },
             )
             .build()
     }
@@ -266,6 +293,10 @@ object DatabaseModule {
     @Singleton
     @Provides
     fun provideHighlightDao(db: AppDatabase): HighlightDao = db.highlightDao()
+
+    @Singleton
+    @Provides
+    fun provideParagraphTranslationDao(db: AppDatabase): ParagraphTranslationDao = db.paragraphTranslationDao()
 
     @Provides
     @Singleton

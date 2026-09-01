@@ -176,7 +176,7 @@ class ReviewViewModel @Inject constructor(
                     interval = newInterval,
                     repetitions = newReps,
                     nextReviewDate = nextReview,
-                    lastReviewDate = now,
+                    lastReviewedAt = now,
                     lastQuality = q,
                 )
                 // 两次写必须原子：SM-2 推进 + 词汇统计若只成功一半，

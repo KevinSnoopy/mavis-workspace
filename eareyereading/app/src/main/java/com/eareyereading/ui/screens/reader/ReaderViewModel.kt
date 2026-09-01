@@ -22,6 +22,9 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -442,6 +445,9 @@ class ReaderViewModel @Inject constructor(
 
         private const val SETTINGS_PERSIST_DEBOUNCE_MS = 300L
 
+        // 单段翻译字符上限（与 TranslationHelper 侧一致，避免超出 ML Kit 请求限制）
+        private const val TRANSLATION_CHAR_LIMIT = 4000
+
         // 句子边界（ASCII）：句末标点 + 空白 + 大写字母/引号/左括号。
         // "Aug." "Mr." "Dr." 这类缩写后的 "." + 空格 + 小写/数字不会误切，
         // 而 "happened. The" 的正常句子边界仍能切出。提升为常量避免热路径重复编译。
@@ -673,6 +679,11 @@ class ReaderViewModel @Inject constructor(
                 // 内容可能比重导入/重切分，持久化的位置必须按新内容收敛，
                 // 否则 Slider/进度/朗读索引全部越界
                 val maxIdx = (paragraphs.size - 1).coerceAtLeast(0)
+                // issue 8.5：优先从 Room 读本书语言对的翻译缓存。回译/分栏模式
+                // 重开书直接展示已缓存的译文，不再重跑整本翻译；翻译结果首次落地后
+                // 由 translateAllParagraphs 写入缓存表
+                val bookLang = book.language.takeIf { it.isNotBlank() } ?: "en"
+                val cachedTranslations = readingRepository.getTranslations(bookId, "$bookLang>zh")
 
                 _uiState.update {
                     it.copy(
@@ -688,7 +699,8 @@ class ReaderViewModel @Inject constructor(
                         totalReadChars = totalChars,
                         // 换书必须清掉上一本书的派生状态，否则旧书内容在新书里诈尸：
                         // 译文 Map 按下标键控会直接张冠李戴；词卡/答案弹窗引用旧书内容
-                        paragraphTranslations = emptyMap(),
+                        // issue 8.5：不再硬清 paragraphTranslations，改为读新书的 Room 缓存
+                        paragraphTranslations = cachedTranslations,
                         showTranslation = false,
                         isTranslating = false,
                         selectedVocab = null,
@@ -1561,18 +1573,57 @@ class ReaderViewModel @Inject constructor(
         // 书本身份快照：换书会取消本 Job，但取消/失败的收尾写仍可能落在
         // 新书加载之后——所有 uiState 写入与 toast 都要先核对当前书
         val myBookId = currentBookId
+        val sourceLang = _uiState.value.book?.language?.takeIf { it.isNotBlank() } ?: "en"
+        val langPair = "$sourceLang>zh"
         translationJob = viewModelScope.launch {
             _uiState.update { it.copy(isTranslating = true) }
             try {
                 val paragraphs = _uiState.value.paragraphs
-                // issue 8.1：全书翻译随书语言进行，不再写死 en→zh
-                val sourceLang = _uiState.value.book?.language?.takeIf { it.isNotBlank() } ?: "en"
-                val translations = translationHelper.translateParagraphs(paragraphs, sourceLang)
-                // 全空视为失败：translateParagraphs 对失败段落填 ""（ML Kit 模型
-                // 在无 GMS ROM 上下载失败是主失败路径），非空 Map 会把
+                val bookId = myBookId
+                if (bookId == null) {
+                    if (currentBookId == myBookId) {
+                        _uiState.update { it.copy(isTranslating = false, showTranslation = false) }
+                    }
+                    return@launch
+                }
+                // issue 8.5：优先读 Room 缓存，只有未缓存的段落才重新翻译。
+                // 这样回译/分栏模式重开书、或本地部分缺失时，只补缺不整本重跑
+                val cached = readingRepository.getTranslations(bookId, langPair)
+                val merged = cached.toMutableMap()
+                // 需要翻译的段落：有源文、尚未缓存
+                val missing = paragraphs.indices.filter { idx ->
+                    paragraphs[idx].isNotBlank() && !merged.containsKey(idx)
+                }
+                if (missing.isNotEmpty()) {
+                    // issue 8.1：全书翻译随书语言进行，不再写死 en→zh；
+                    // 逐段并发（与 TranslationHelper.translateParagraphs 同型），失败段返回 null
+                    val fresh = coroutineScope {
+                        missing.map { idx ->
+                            async(Dispatchers.IO) {
+                                idx to translationHelper.translate(
+                                    paragraphs[idx].take(TRANSLATION_CHAR_LIMIT),
+                                    sourceLang,
+                                )
+                            }
+                        }.awaitAll()
+                    }.toMap()
+                    // issue 8.3：失败段（null/空）不写入显示，也不落缓存
+                    val freshMap = fresh.filterValues { !it.isNullOrBlank() }
+                        .mapValues { it.value.orEmpty() }
+                    // 成功段落库缓存；单条失败不影响其他段（逐段 try，不做整批事务）
+                    freshMap.forEach { (idx, text) ->
+                        try {
+                            readingRepository.saveTranslation(bookId, langPair, idx, paragraphs[idx], text)
+                        } catch (e: Exception) {
+                            android.util.Log.e("ReaderViewModel", "save translation cache failed", e)
+                        }
+                    }
+                    merged.putAll(freshMap)
+                }
+                // 全空视为失败：所有段落要么失败要么无缓存——非空 Map 会把
                 // hasTranslation 顶成 true——回译视图变永久空白栏，
                 // retryTranslation 的 isEmpty() 守卫又让重试永远不可达
-                if (translations.values.none { it.isNotBlank() } && paragraphs.isNotEmpty()) {
+                if (merged.values.none { it.isNotBlank() } && paragraphs.isNotEmpty()) {
                     if (currentBookId == myBookId) {
                         _uiState.update { it.copy(isTranslating = false, showTranslation = false) }
                         showToast("翻译失败：翻译模型不可用，请检查网络后重试")
@@ -1583,7 +1634,7 @@ class ReaderViewModel @Inject constructor(
                 // 本段仍会执行——按书核对，旧书译文不写进新书状态
                 if (currentBookId != myBookId) return@launch
                 _uiState.update { it.copy(
-                    paragraphTranslations = translations,
+                    paragraphTranslations = merged,
                     isTranslating = false,
                 ) }
             } catch (e: kotlinx.coroutines.CancellationException) {

@@ -55,6 +55,12 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- issue 9.10：系统"打开方式"选择 .epub 直接进入并导入书库 -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="application/epub+zip" />
+            </intent-filter>
         </activity>
 
         <!-- 复习提醒闹钟接收器 -->

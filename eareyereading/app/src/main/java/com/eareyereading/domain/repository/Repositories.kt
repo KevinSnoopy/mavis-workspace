@@ -19,6 +19,8 @@ interface VocabularyRepository {
     fun getAllVocabulary(): Flow<List<Vocabulary>>
     fun getNewWords(): Flow<List<Vocabulary>>
     fun getLearnedWords(): Flow<List<Vocabulary>>
+    /** issue 11.20：按书过滤生词（DAO 早已暴露 getWordsByBook，仓库层此前未接通）。 */
+    fun getWordsByBook(bookId: Long): Flow<List<Vocabulary>>
     suspend fun getWord(word: String): Vocabulary?
     /** 按主键批量取词（复习会话组队用，避免逐词查询与字符串匹配歧义）。 */
     suspend fun getWordsByIds(ids: List<Long>): Map<Long, Vocabulary>
@@ -42,6 +44,14 @@ interface ReadingRepository {
     suspend fun updatePosition(bookId: Long, paragraph: Int, position: Int)
     suspend fun updateMode(bookId: Long, mode: ReadingMode)
     suspend fun updateRsvpSpeed(bookId: Long, speed: Int)
+
+    // ── issue 8.5：段落翻译缓存 ─────────────────────────
+    /** 读取整本书某语言对的译文缓存（Map: paragraphIndex → translatedText）。 */
+    suspend fun getTranslations(bookId: Long, langPair: String): Map<Int, String>
+    /** 缓存某段的译文（同段 REPLACE 覆盖）。 */
+    suspend fun saveTranslation(bookId: Long, langPair: String, paragraphIndex: Int, sourceText: String, translatedText: String)
+    /** 删书时清空该书全部译文缓存。 */
+    suspend fun deleteTranslations(bookId: Long)
 }
 
 interface SettingsRepository {
