@@ -256,6 +256,35 @@ object DatabaseModule {
                         )
                     }
                 },
+                object : Migration(8, 9) {
+                    // issue 9.9：books 增加 sourceUri 列（外部 content:// URI 的回退读取源）。
+                    // 存量书无外部 URI，列默认 NULL；新导入的 SAF/ACTION_VIEW content:// 书写入此列
+                    override fun migrate(db: SupportSQLiteDatabase) {
+                        // 可空 TEXT 列，不加 DEFAULT：Room 校验会把存储的 "NULL" 默认识别为
+                        // null 之外的字符串，导致 schema 校验失败（与 Migration(3,4) 同款写法）
+                        db.execSQL("ALTER TABLE books ADD COLUMN `sourceUri` TEXT")
+                    }
+                },
+                object : Migration(9, 10) {
+                    // issue 12.5：大词典条目落库。全新表，无存量改造，建表 SQL 与
+                    // DictionaryEntryEntity 的 schema 严格对齐（含唯一索引）。
+                    override fun migrate(db: SupportSQLiteDatabase) {
+                        db.execSQL(
+                            """
+                            CREATE TABLE IF NOT EXISTS `dictionary_entries` (
+                                `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                                `dictId` TEXT NOT NULL,
+                                `word` TEXT NOT NULL,
+                                `definition` TEXT NOT NULL
+                            )
+                            """
+                        )
+                        db.execSQL(
+                            "CREATE UNIQUE INDEX IF NOT EXISTS `index_dictionary_entries_dictId_word` " +
+                                "ON `dictionary_entries` (`dictId`, `word`)"
+                        )
+                    }
+                },
             )
             .build()
     }
@@ -297,6 +326,10 @@ object DatabaseModule {
     @Singleton
     @Provides
     fun provideParagraphTranslationDao(db: AppDatabase): ParagraphTranslationDao = db.paragraphTranslationDao()
+
+    @Singleton
+    @Provides
+    fun provideDictionaryEntryDao(db: AppDatabase): DictionaryEntryDao = db.dictionaryEntryDao()
 
     @Provides
     @Singleton

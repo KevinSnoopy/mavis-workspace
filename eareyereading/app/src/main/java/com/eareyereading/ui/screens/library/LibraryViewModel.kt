@@ -41,6 +41,11 @@ data class LibraryUiState(
     val searchQuery: String = "",
     val isLoading: Boolean = false,
     val loadingMessage: String = "",
+    // issue 11.16：Snackbar 同字符串去重。loadingMessage 会连续发射相同文案
+    // （如两次"导入成功"），收集端若只以消息值为 key，相同字符串会被折叠成一条、
+    // 第二条不显示。每条消息带自增 eventId，收集端以 isLoading+eventId 为 key 展示，
+    // 使相同文案也能重复出现。
+    val messageEventId: Long = 0L,
     val totalWordCount: Int = 0,
     val learnedWordCount: Int = 0,
     val dueReviewCount: Int = 0,
@@ -71,6 +76,15 @@ class LibraryViewModel @Inject constructor(
 
     private val _uiState = MutableStateFlow(LibraryUiState())
     val uiState: StateFlow<LibraryUiState> = _uiState.asStateFlow()
+
+    /** issue 11.16：结果消息自增序列号，保证相同文案也能触发 Snackbar 重新展示 */
+    private var messageEventId = 0L
+
+    /** 每条结果消息统一入口：message 写入 loadingMessage，并递增 eventId 供收集端去重展示 */
+    private fun setResultMessage(message: String) {
+        messageEventId += 1
+        _uiState.update { it.copy(loadingMessage = message, messageEventId = messageEventId) }
+    }
 
     private val searchQuery = MutableStateFlow("")
 
@@ -264,16 +278,16 @@ class LibraryViewModel @Inject constructor(
                     )
                     bookRepository.addBook(book)
                     refreshDueTimestamp()
-                    _uiState.update { it.copy(loadingMessage = "文章已加入书库") }
+                    setResultMessage("文章已加入书库")
                 } else {
-                    _uiState.update { it.copy(loadingMessage = "抓取失败，请检查链接") }
+                    setResultMessage("抓取失败，请检查链接")
                 }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: java.io.IOException) {
-                _uiState.update { it.copy(loadingMessage = "抓取失败: 网络错误") }
+                setResultMessage("抓取失败: 网络错误")
             } catch (e: java.lang.RuntimeException) {
-                _uiState.update { it.copy(loadingMessage = "抓取失败: ${e.message}") }
+                setResultMessage("抓取失败: ${e.message}")
             } finally {
                 endImportOp()
             }
@@ -299,6 +313,9 @@ class LibraryViewModel @Inject constructor(
             beginImportOp("正在导入...")
             var destFile: File? = null
             try {
+                // issue 9.9：尝试持久化原始 content:// 读权限，使本地拷贝失效后仍能
+                // 凭 contentResolver 重新打开；Provider 拒绝只告警不阻断拷贝
+                tryTakePersistableReadPermission(uri)
                 val inputStream = context.contentResolver.openInputStream(uri)
                     ?: throw java.io.IOException("无法读取文件内容")
                 // SAF content:// URI 的 lastPathSegment 常常只是文档 id（"12"）或通用名（"book.epub"），
@@ -332,32 +349,48 @@ class LibraryViewModel @Inject constructor(
                     title = rawName.removeSuffix(".epub").removeSuffix(".txt"),
                     author = "Unknown",
                     filePath = dest.absolutePath,
+                    // issue 9.9：持久化原始 content:// URI，本地拷贝失效时回退读取
+                    sourceUri = uri.toString(),
                 )
                 bookRepository.addBook(book)
                 destFile = null // 成功入库后文件由 deleteBook 生命周期接管
                 refreshDueTimestamp()
-                _uiState.update { it.copy(loadingMessage = "导入成功") }
+                setResultMessage("导入成功")
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: EpubParseException) {
                 android.util.Log.e("LibraryViewModel", "Error importing book file", e)
                 // EPUB 解析失败此前一律"文件读取错误"（issue 9.3）：
                 // 按异常类型区分损坏/加密/空文件/缺 OPF/无可读章节
-                _uiState.update { it.copy(loadingMessage = "导入失败: ${e.message}") }
+                setResultMessage("导入失败: ${e.message}")
             } catch (e: java.io.IOException) {
                 android.util.Log.e("LibraryViewModel", "Error importing book file", e)
-                _uiState.update { it.copy(loadingMessage = "导入失败: 文件读取错误") }
+                setResultMessage("导入失败: 文件读取错误")
             } catch (e: java.lang.SecurityException) {
                 android.util.Log.e("LibraryViewModel", "Security error importing book", e)
-                _uiState.update { it.copy(loadingMessage = "导入失败: 权限错误") }
+                setResultMessage("导入失败: 权限错误")
             } catch (e: Exception) {
                 android.util.Log.e("LibraryViewModel", "Unexpected error importing book", e)
-                _uiState.update { it.copy(loadingMessage = "导入失败: ${e.javaClass.simpleName}") }
+                setResultMessage("导入失败: ${e.javaClass.simpleName}")
             } finally {
                 // 失败/取消时删除已拷贝的孤儿文件，防存储泄漏
                 destFile?.delete()
                 endImportOp()
             }
+        }
+    }
+
+    /** issue 9.9：为 SAF/ACTION_VIEW 转发的 content:// URI 申请可持久化读权限。
+     * 仅在带 FLAG_GRANT_PERSISTABLE_URI_PERMISSION 且 Provider 支持时才生效；
+     * 权限不足会抛 SecurityException，此处只告警不阻断导入（本地拷贝仍可读）。 */
+    private fun tryTakePersistableReadPermission(uri: Uri) {
+        try {
+            context.contentResolver.takePersistableUriPermission(
+                uri,
+                android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION,
+            )
+        } catch (e: SecurityException) {
+            android.util.Log.w("LibraryViewModel", "takePersistableUriPermission denied for $uri", e)
         }
     }
 
@@ -371,7 +404,7 @@ class LibraryViewModel @Inject constructor(
                 throw e
             } catch (e: Exception) {
                 android.util.Log.e("LibraryVM", "deleteBook failed", e)
-                _uiState.update { it.copy(loadingMessage = "删除失败：${e.message ?: "未知错误"}") }
+                setResultMessage("删除失败：${e.message ?: "未知错误"}")
             }
         }
     }
@@ -522,7 +555,7 @@ class LibraryViewModel @Inject constructor(
 
     fun addArticleToLibrary(article: RssParser.RssArticle) {
         if (article.link.isBlank()) {
-            _uiState.update { it.copy(loadingMessage = "文章链接无效，无法导入") }
+            setResultMessage("文章链接无效，无法导入")
             return
         }
         // 已成功的导入不重复抓取入库
@@ -562,22 +595,18 @@ class LibraryViewModel @Inject constructor(
                     // 成功后才标记"已添加"：失败时卡片保持可重试状态
                     _addedArticleLinks.update { it + article.link }
                     refreshDueTimestamp()
-                    _uiState.update {
-                        it.copy(
-                            loadingMessage = "「${article.title.take(20)}...」已加入书库！",
-                            selectedTab = 0,
-                        )
-                    }
+                    setResultMessage("「${article.title.take(20)}...」已加入书库！")
+                    _uiState.update { it.copy(selectedTab = 0) }
                 } else {
-                    _uiState.update { it.copy(loadingMessage = "该源文章内容为空，无法导入") }
+                    setResultMessage("该源文章内容为空，无法导入")
                 }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: java.io.IOException) {
-                _uiState.update { it.copy(loadingMessage = "导入失败: 网络错误") }
+                setResultMessage("导入失败: 网络错误")
             } catch (e: java.lang.RuntimeException) {
                 val msg = e.message ?: e.javaClass.simpleName
-                _uiState.update { it.copy(loadingMessage = "导入失败: $msg") }
+                setResultMessage("导入失败: $msg")
             } finally {
                 inFlightArticleLinks.remove(article.link)
                 endImportOp()

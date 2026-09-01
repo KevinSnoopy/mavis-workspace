@@ -6,6 +6,8 @@ data class Book(
     val author: String,
     val coverPath: String? = null,
     val filePath: String,
+    // issue 9.9：外部 content:// URI（SAF/ACTION_VIEW 导入），本地拷贝失效时回退读取
+    val sourceUri: String? = null,
     val totalWords: Int = 0,
     val readProgress: Float = 0f,
     val lastReadPosition: Int = 0,

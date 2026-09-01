@@ -2,6 +2,8 @@ package com.eareyereading.util
 
 import android.content.Context
 import com.eareyereading.BuildConfig
+import com.eareyereading.data.local.dao.DictionaryEntryDao
+import com.eareyereading.data.local.entity.DictionaryEntryEntity
 import com.google.gson.Gson
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
@@ -61,6 +63,7 @@ data class DictionaryStatus(
 @Singleton
 class DictionaryManager @Inject constructor(
     @ApplicationContext private val context: Context,
+    private val dictionaryEntryDao: DictionaryEntryDao,
 ) {
     companion object {
         // manifest.json 的下载地址（托管在 jsDelivr CDN，从 GitHub 仓库拉取）。
@@ -77,6 +80,17 @@ class DictionaryManager @Inject constructor(
         // 文本类（manifest）上限 1MB；词典文件上限 500MB（分级词表实际只有几十 MB）。
         private const val MAX_TEXT_BYTES = 1L * 1024 * 1024
         private const val MAX_FILE_BYTES = 500L * 1024 * 1024
+
+        // issue 12.5：小于该字节数的词典仍整份载内存（保最快）；
+        // 大于等于该值视为大词典，写 Room 表按需单条查询，避免 OOM。
+        private const val LARGE_DICT_THRESHOLD_BYTES = 10L * 1024 * 1024
+
+        // 大词典按需查询的批量写入批次大小（毫秒级小节流，避免单次事务过大）
+        private const val BIG_DICT_IMPORT_BATCH = 2000
+
+        // 大词典最近命中的小 LRU：阅读/RSVP 热路径同一词会反复查询，
+        // 缓存最近命中可大幅减少对 Room 的单条查询次数。
+        private const val BIG_DICT_LRU_MAX = 256
     }
 
     private val gson = Gson()
@@ -91,11 +105,18 @@ class DictionaryManager @Inject constructor(
     private val _manifestError = MutableStateFlow<String?>(null)
     val manifestError: StateFlow<String?> = _manifestError.asStateFlow()
 
-    // 当前已加载到内存的词典（按 activeDictId 对应的文件加载）
+    // 当前已加载到内存的词典（按 activeDictId 对应的文件加载，仅小词典）
     @Volatile
     private var loadedDict: Map<String, String>? = null
     @Volatile
     private var loadedDictId: String? = null
+
+    // issue 12.5：大词典最近命中缓存（accessOrder=true 即访问序 LRU）。
+    // key 用 "dictId\u0000word"，跨词典复用互不污染；仅在方法内 synchronized 访问。
+    private val bigDictCache = object : LinkedHashMap<String, String>(64, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String>): Boolean =
+            size > BIG_DICT_LRU_MAX
+    }
 
     // 下载中的词典 id 集合：防双击/刷新后按钮复活引发同一 .tmp 文件
     // 两个下载协程交错写入（产物损坏且 rename 会把坏文件转正）
@@ -297,6 +318,10 @@ class DictionaryManager @Inject constructor(
         // manifest 的 fileName 不可信，同样走安全解析；拿不到时用 id 兜底（再过一次校验）
         val file = safeDictFile(info?.fileName ?: "") ?: safeDictFile("$dictId.txt")
         val ok = file?.delete() == true
+        if (ok) {
+            // issue 12.5：删除词典时同步清掉已入库的大词典条目，避免孤儿行常驻 DB
+            dictionaryEntryDao.deleteByDictId(dictId)
+        }
         if (ok && _activeDictId.value == dictId) {
             setActiveDict(null)
         }
@@ -322,6 +347,8 @@ class DictionaryManager @Inject constructor(
     /**
      * 获取当前选中词典的已加载内存 Map。
      * 如果没有选中任何下载的词典，返回 null（调用方回退到内置词典）。
+     * issue 12.5：对"大词典"（文件 >= 10MB）同样返回 null，不整份载内存，
+     * 由 [lookup] 走 Room 表按需单条查询。
      */
     suspend fun getActiveDict(): Map<String, String>? = withContext(Dispatchers.IO) {
         val activeId = _activeDictId.value ?: return@withContext null
@@ -331,6 +358,8 @@ class DictionaryManager @Inject constructor(
         val info = manifest.dictionaries.find { it.id == activeId } ?: return@withContext null
         val file = safeDictFile(info.fileName) ?: return@withContext null
         if (!file.exists()) return@withContext null
+        // issue 12.5：大词典不整份载内存（OOM 隐患），由 lookup 走 Room 按需查询
+        if (file.length() >= LARGE_DICT_THRESHOLD_BYTES) return@withContext null
 
         // issue 12.6：delete() 删除当前选中词典时，此处与删除协程存在竞态——
         // exists() 通过后文件可能在读盘途中被删 -> FileNotFoundException 裸抛。
@@ -361,18 +390,99 @@ class DictionaryManager @Inject constructor(
 
     /**
      * 查询当前选中词典。未命中返回 null（调用方可继续查内置词典）。
+     *
+     * issue 12.5：小词典（文件 <10MB）仍整份载内存查 Map（最快）；
+     * 大词典（>=10MB）首次查询时把文件写入 Room 的 `dictionary_entries` 表，
+     * 之后每次查词走 (dictId, word) 单条查询 + 最近命中 LRU，不整份载入内存。
      */
-    suspend fun lookup(word: String): String? {
-        val dict = getActiveDict() ?: return null
+    suspend fun lookup(word: String): String? = withContext(Dispatchers.IO) {
+        val activeId = _activeDictId.value
+        if (activeId == null) return@withContext null
+
         // Locale.ROOT：避免土耳其语等 locale 的 lowercase 变体（I→ı）破坏查词。
         // 保留撇号/连字符先试原形（词典键可能保留它们，如 "don't"），
         // 未命中再退回剥离非字母的旧归一化，两种键格式都不漏
         val lower = word.trim().lowercase(java.util.Locale.ROOT)
-        if (lower.length < 2) return null
-        dict[lower]?.let { return it }
+        if (lower.length < 2) return@withContext null
         val clean = lower.replace(Regex("[^a-z]"), "")
-        if (clean.length < 2 || clean == lower) return null
-        return dict[clean]
+        val candidates = if (clean.length >= 2 && clean != lower) listOf(lower, clean) else listOf(lower)
+
+        // 小词典：优先整份载内存查（getActiveDict 对大词典返回 null）
+        val dict = getActiveDict()
+        if (dict != null) {
+            for (c in candidates) dict[c]?.let { return@withContext it }
+            return@withContext null
+        }
+
+        // 大词典路径：只有当文件确实存在且为大（>=10MB）时才走 Room，
+        // 避免 getActiveDict 因 manifest/文件缺失等其它原因返回 null 时误查 DB
+        val file = resolveActiveFile(activeId) ?: return@withContext null
+        if (file.length() < LARGE_DICT_THRESHOLD_BYTES) return@withContext null
+        ensureBigDictImported(activeId, file)
+        for (c in candidates) {
+            cachedBigLookup(activeId, c)?.let { return@withContext it }
+        }
+        return@withContext null
+    }
+
+    /** 解析当前选中词典对应的有效文件；不存在或不可用返回 null。 */
+    private fun resolveActiveFile(activeId: String): File? {
+        val manifest = parseManifest() ?: return null
+        val info = manifest.dictionaries.find { it.id == activeId } ?: return null
+        val file = safeDictFile(info.fileName) ?: return null
+        return if (file.exists()) file else null
+    }
+
+    /**
+     * 首次查询某大词典时把文件按行写入 Room（幂等：已入库则直接复用，
+     * 不重复扫描）。(dictId, word) 唯一 + REPLACE 覆盖，重复导入无副作用。
+     */
+    private suspend fun ensureBigDictImported(dictId: String, file: File) {
+        if (dictionaryEntryDao.countByDictId(dictId) > 0L) return
+        val buffer = ArrayList<DictionaryEntryEntity>(BIG_DICT_IMPORT_BATCH)
+        try {
+            file.bufferedReader().useLines { lines ->
+                for (line in lines) {
+                    val trimmed = line.trim()
+                    if (trimmed.isEmpty() || trimmed.startsWith("#")) continue
+                    val sep = trimmed.indexOf('|')
+                    if (sep <= 0) continue
+                    buffer.add(
+                        DictionaryEntryEntity(
+                            dictId = dictId,
+                            word = trimmed.substring(0, sep).trim(),
+                            definition = trimmed.substring(sep + 1).trim(),
+                        ),
+                    )
+                    if (buffer.size >= BIG_DICT_IMPORT_BATCH) {
+                        dictionaryEntryDao.insertAll(buffer)
+                        buffer.clear()
+                    }
+                }
+            }
+            if (buffer.isNotEmpty()) dictionaryEntryDao.insertAll(buffer)
+            android.util.Log.i(
+                "DictionaryManager",
+                "已导入大词典到 Room: $dictId (${dictionaryEntryDao.countByDictId(dictId)} 条)",
+            )
+        } catch (e: java.io.IOException) {
+            android.util.Log.w("DictionaryManager", "导入大词典到 Room 失败 $dictId: ${e.message}")
+        }
+    }
+
+    /** 大词典单条查询，命中最近的查询结果用 LRU 缓存减少反复敲 DB。 */
+    private suspend fun cachedBigLookup(dictId: String, word: String): String? {
+        val key = "$dictId\u0000$word"
+        synchronized(bigDictCache) {
+            bigDictCache[key]?.let { return it }
+        }
+        val def = dictionaryEntryDao.getDefinition(dictId, word)
+        if (def != null) {
+            synchronized(bigDictCache) {
+                bigDictCache[key] = def
+            }
+        }
+        return def
     }
 
     private fun updateStatusDownloading(dictId: String, downloading: Boolean, progress: Float) {

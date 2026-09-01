@@ -8,11 +8,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.setValue
+import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.navigation.NavHostController
@@ -22,6 +18,7 @@ import com.eareyereading.ui.AppNavigation
 import com.eareyereading.ui.Screen
 import com.eareyereading.ui.navigateToTopLevel
 import com.eareyereading.ui.screens.library.LibraryViewModel
+import com.eareyereading.ui.screens.onboarding.FirstLaunchOnboarding
 import com.eareyereading.ui.theme.EareyeReadingTheme
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
@@ -48,8 +45,17 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             val theme by settingsRepository.getTheme().collectAsState(initial = com.eareyereading.domain.model.ReadingTheme.LIGHT)
-            val darkMode by settingsRepository.getDarkMode().collectAsState(initial = false)
             val navController = rememberNavController()
+
+            // issue 5.1：首次启动展示轻量通知引导页（SharedPreferences 记一次，简单不引入 DataStore）
+            val prefs = remember { getSharedPreferences("app_prefs", android.content.Context.MODE_PRIVATE) }
+            var showOnboarding by remember {
+                mutableStateOf(!prefs.getBoolean("has_seen_onboarding", false))
+            }
+            val finishOnboarding = {
+                prefs.edit().putBoolean("has_seen_onboarding", true).apply()
+                showOnboarding = false
+            }
 
             // 收到外部 EPub 后跳到书库展示导入进度（冷启动时 pendingViewUri 已在
             // 首次组合前由 onCreate 写值，onNewIntent 时靠 state 触达重组）
@@ -60,9 +66,17 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
-            EareyeReadingTheme(readingTheme = theme, darkTheme = darkMode) {
+            // issue 4.1：App 主题完全由阅读主题（ReadingTheme）控制，不再读 darkMode。
+            // 移除"外观->深色模式"开关后全局恒为浅色；阅读页内由 ReaderScreen 按书主题渲染，
+            // 深浅色由各阅读主题（LIGHT/DARK/SEPIA）自己决定。
+            EareyeReadingTheme(readingTheme = theme, darkTheme = false) {
                 Surface(modifier = Modifier.fillMaxSize()) {
-                    AppNavigation(navController = navController)
+                    // issue 5.1：首启引导页（单次）在上层，之后进主界面
+                    if (showOnboarding) {
+                        FirstLaunchOnboarding(onDone = finishOnboarding)
+                    } else {
+                        AppNavigation(navController = navController)
+                    }
                 }
             }
         }

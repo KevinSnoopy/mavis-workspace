@@ -260,25 +260,15 @@ class SettingsViewModel @Inject constructor(
                         is com.eareyereading.tts.EmbeddedTtsEngine.Progress.Downloading ->
                             Triple(progress.fraction, "下载中 ${(progress.fraction * 100).toInt()}%", false)
                         is com.eareyereading.tts.EmbeddedTtsEngine.Progress.Extracting -> {
-                            // entriesTotal=0 表示正在预扫 tar 统计文件数（耗时数秒），
-                            // 此时显示"解压中（统计文件数…）"而非"x/0"
-                            if (progress.entriesTotal == 0) {
-                                Triple(progress.fraction, "解压中（统计文件数…）", false)
-                            } else {
-                                // 显示当前正在解压的文件名，让用户看到进展而非只看数字跳
-                                // espeak-ng-data 下几百个小文件，只显示 x/y 会让人觉得卡住
-                                val entry = progress.currentEntryName
-                                val shortEntry = entry?.substringAfterLast('/')
-                                Triple(
-                                    progress.fraction,
-                                    if (shortEntry != null) {
-                                        "解压中 (${progress.entriesDone}/${progress.entriesTotal}) $shortEntry"
-                                    } else {
-                                        "解压中 (${progress.entriesDone}/${progress.entriesTotal})"
-                                    },
-                                    false,
-                                )
-                            }
+                            // 1.3：不再预扫统计文件数，进度按字节推进并附 ETA。
+                            // 显示当前正在解压的文件名，让用户看到进展而非只看数字跳
+                            val entry = progress.currentEntryName
+                            val shortEntry = entry?.substringAfterLast('/')
+                            Triple(
+                                progress.fraction,
+                                formatExtractingStage(progress, shortEntry),
+                                false,
+                            )
                         }
                         com.eareyereading.tts.EmbeddedTtsEngine.Progress.Initializing ->
                             Triple(0.99f, "正在初始化模型…", true)
@@ -1114,33 +1104,6 @@ fun SettingsScreen(
                 Spacer(modifier = Modifier.height(20.dp))
             }
 
-            // ── 外观 ──────────────────────────────────
-            item {
-                SettingsSectionTitle("外观")
-            }
-            item {
-                SettingsListCard {
-                    SettingRowToggle(
-                        icon = Icons.Default.DarkMode,
-                        iconBg = SurfaceSecondary,
-                        iconColor = OnSurfaceTertiary,
-                        title = "深色模式",
-                        checked = uiState.darkMode,
-                        onCheckedChange = viewModel::setDarkMode,
-                    )
-                    Divider(modifier = Modifier.padding(horizontal = 20.dp))
-                    SettingRowToggle(
-                        icon = Icons.Default.Highlight,
-                        iconBg = WarningBg,
-                        iconColor = Warning,
-                        title = "高亮 Collins 等级",
-                        checked = uiState.collinsHighlight,
-                        onCheckedChange = viewModel::setCollinsHighlight,
-                    )
-                }
-                Spacer(modifier = Modifier.height(20.dp))
-            }
-
             // ── 数据 ──────────────────────────────────
             item {
                 SettingsSectionTitle("数据")
@@ -1233,6 +1196,24 @@ private fun openAppNotificationSettings(context: Context) {
     } catch (e: Exception) {
         android.util.Log.w("SettingsScreen", "open notification settings failed", e)
     }
+}
+
+/**
+ * 1.3：解压进度文案 —— 按已解压字节百分比 + ETA 估算（替代旧"entriesDone/entriesTotal"）。
+ */
+private fun formatExtractingStage(
+    p: com.eareyereading.tts.EmbeddedTtsEngine.Progress.Extracting,
+    shortEntry: String?,
+): String {
+    val pct = (p.fraction * 100).toInt().coerceIn(0, 100)
+    val eta = when {
+        p.fraction <= 0.01f || p.fraction >= 0.99f || p.elapsedMs <= 0 -> ""
+        else -> {
+            val remainingMs = (p.elapsedMs / p.fraction * (1f - p.fraction)).toLong()
+            if (remainingMs > 0) " · 剩余约${(remainingMs / 1000).coerceAtMost(999)}s" else ""
+        }
+    }
+    return if (shortEntry != null) "解压中 $pct%$eta $shortEntry" else "解压中 $pct%$eta"
 }
 
 @Composable

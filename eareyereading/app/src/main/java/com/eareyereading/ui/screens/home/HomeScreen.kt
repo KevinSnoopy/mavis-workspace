@@ -23,6 +23,8 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.eareyereading.domain.model.Book
 import com.eareyereading.ui.theme.*
+import com.eareyereading.util.notificationPermissionGranted
+import com.eareyereading.util.rememberNotificationPermissionRequester
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -36,6 +38,12 @@ fun HomeScreen(
     viewModel: HomeViewModel = hiltViewModel(),
 ) {
     val uiState by viewModel.uiState.collectAsState()
+
+    // issue 5.1：主页有到期卡时也作为通知权限申请入口（此前只有设置页能申请）。
+    // 已授权则不显示该入口。
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val requestNotifications = rememberNotificationPermissionRequester()
+    val notificationsGranted = notificationPermissionGranted(context)
 
     // issue 11.15：此前 remember 一次后跨午夜不更新；每分钟 tick 刷新
     var dateText by remember { mutableStateOf(SimpleDateFormat("MM月dd日 E", Locale.CHINA).format(Date())) }
@@ -125,6 +133,9 @@ fun HomeScreen(
                     ReviewReminderBanner(
                         count = uiState.dueReviewCount,
                         onReview = onNavigateToReview,
+                        // issue 5.1：未授权时给"开启通知"入口
+                        showEnableNotifications = !notificationsGranted,
+                        onEnableNotifications = requestNotifications,
                         modifier = Modifier.padding(horizontal = 16.dp),
                     )
                 }
@@ -238,42 +249,75 @@ private fun StatCard(
 private fun ReviewReminderBanner(
     count: Int,
     onReview: () -> Unit,
+    showEnableNotifications: Boolean,
+    onEnableNotifications: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Surface(
         modifier = modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
         color = Warning.copy(alpha = 0.12f),
-        onClick = onReview,
     ) {
-        Row(
+        Column(
             modifier = Modifier.padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Box(
-                modifier = Modifier
-                    .size(44.dp)
-                    .clip(CircleShape)
-                    .background(Warning.copy(alpha = 0.2f)),
-                contentAlignment = Alignment.Center,
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Icon(Icons.Default.Replay, null, tint = Warning, modifier = Modifier.size(22.dp))
+                Box(
+                    modifier = Modifier
+                        .size(44.dp)
+                        .clip(CircleShape)
+                        .background(Warning.copy(alpha = 0.2f)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(Icons.Default.Replay, null, tint = Warning, modifier = Modifier.size(22.dp))
+                }
+                Spacer(modifier = Modifier.width(14.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        "待复习 $count 个生词",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Warning,
+                    )
+                    Text(
+                        "基于 SM-2 遗忘曲线，科学安排复习时间",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = Warning.copy(alpha = 0.15f),
+                    onClick = onReview,
+                ) {
+                    Box(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text("去复习", style = MaterialTheme.typography.labelMedium, color = Warning.copy(alpha = 0.9f))
+                    }
+                }
             }
-            Spacer(modifier = Modifier.width(14.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    "待复习 $count 个生词",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    color = Warning,
-                )
-                Text(
-                    "基于 SM-2 遗忘曲线，科学安排复习时间",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+            // issue 5.1：到期卡存在且未授权时，提供"开启通知"入口
+            if (showEnableNotifications) {
+                Spacer(modifier = Modifier.height(12.dp))
+                OutlinedButton(
+                    onClick = onEnableNotifications,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(10.dp),
+                ) {
+                    Icon(
+                        Icons.Default.Notifications,
+                        contentDescription = null,
+                        tint = Warning,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("开启每日复习提醒", color = Warning, style = MaterialTheme.typography.labelLarge)
+                }
             }
-            Icon(Icons.Default.ChevronRight, null, tint = Warning.copy(alpha = 0.6f))
         }
     }
 }

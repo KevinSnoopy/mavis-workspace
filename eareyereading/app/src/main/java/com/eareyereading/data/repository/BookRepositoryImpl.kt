@@ -85,7 +85,7 @@ class BookRepositoryImpl @Inject constructor(
             if (book.filePath.lowercase(Locale.ROOT).endsWith(".txt")) {
                 parsePlainText(File(book.filePath))
             } else {
-                val parsed = epubParser.parseBook(book.filePath)
+                val parsed = epubParser.parseBook(book.filePath, book.sourceUri, context.contentResolver)
                 parsedMetadata = parsed
                 // issue 9.2：MAX_TOTAL_CHARS 截断不再是静默行为，至少打日志告警
                 if (parsed.wasTruncated) {
@@ -241,7 +241,7 @@ class BookRepositoryImpl @Inject constructor(
 
     private fun BookEntity.toDomain() = Book(
         id = id, title = title, author = author, coverPath = coverPath,
-        filePath = filePath, totalWords = totalWords, readProgress = readProgress,
+        filePath = filePath, sourceUri = sourceUri, totalWords = totalWords, readProgress = readProgress,
         lastReadPosition = lastReadPosition, lastReadTime = lastReadTime,
         dateAdded = dateAdded, language = language, isArchived = isArchived,
         content = content, addedAt = addedAt,
@@ -249,7 +249,7 @@ class BookRepositoryImpl @Inject constructor(
 
     private fun Book.toEntity() = BookEntity(
         id = id, title = title, author = author, coverPath = coverPath,
-        filePath = filePath, totalWords = totalWords, readProgress = readProgress,
+        filePath = filePath, sourceUri = sourceUri, totalWords = totalWords, readProgress = readProgress,
         lastReadPosition = lastReadPosition, lastReadTime = lastReadTime,
         dateAdded = dateAdded, language = language, isArchived = isArchived,
         content = content, addedAt = addedAt,

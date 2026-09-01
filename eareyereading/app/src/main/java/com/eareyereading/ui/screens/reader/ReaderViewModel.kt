@@ -296,17 +296,21 @@ class ReaderViewModel @Inject constructor(
                         is com.eareyereading.tts.EmbeddedTtsEngine.Progress.Downloading ->
                             progress.fraction to "下载中 ${(progress.fraction * 100).toInt()}%"
                         is com.eareyereading.tts.EmbeddedTtsEngine.Progress.Extracting -> {
-                            // entriesTotal=0 表示正在预扫 tar 统计文件数
-                            if (progress.entriesTotal == 0) {
-                                progress.fraction to "解压中（统计文件数…）"
-                            } else {
-                                // 显示当前正在解压的文件名，让用户看到进展而非只看数字跳
-                                val shortEntry = progress.currentEntryName?.substringAfterLast('/')
-                                progress.fraction to if (shortEntry != null) {
-                                    "解压中 (${progress.entriesDone}/${progress.entriesTotal}) $shortEntry"
-                                } else {
-                                    "解压中 (${progress.entriesDone}/${progress.entriesTotal})"
+                            // 1.3：不再预扫统计文件数，进度按字节推进并附 ETA。
+                            // 显示当前正在解压的文件名，让用户看到进展而非只看数字跳
+                            val shortEntry = progress.currentEntryName?.substringAfterLast('/')
+                            val pct = (progress.fraction * 100).toInt().coerceIn(0, 100)
+                            val eta = when {
+                                progress.fraction <= 0.01f || progress.fraction >= 0.99f || progress.elapsedMs <= 0 -> ""
+                                else -> {
+                                    val remainingMs = (progress.elapsedMs / progress.fraction * (1f - progress.fraction)).toLong()
+                                    if (remainingMs > 0) " · 剩余约${(remainingMs / 1000).coerceAtMost(999)}s" else ""
                                 }
+                            }
+                            progress.fraction to if (shortEntry != null) {
+                                "解压中 $pct%$eta $shortEntry"
+                            } else {
+                                "解压中 $pct%$eta"
                             }
                         }
                         com.eareyereading.tts.EmbeddedTtsEngine.Progress.Initializing ->
@@ -671,7 +675,10 @@ class ReaderViewModel @Inject constructor(
                     // parseBook 是阻塞式 zip IO + 正则解析，viewModelScope 跑在
                     // Main 上——大书打开时直接 ANR（R9 修过 addBook 同款调用点，
                     // 阅读加载路径这条漏网）
-                    withContext(Dispatchers.IO) { epubParser.parseBook(book.filePath).paragraphs }
+                    // issue 9.9：统一读取代理，本地文件失效时回退用持久化的 content:// URI 读取
+                    withContext(Dispatchers.IO) {
+                        epubParser.parseBook(book.filePath, book.sourceUri, context.contentResolver).paragraphs
+                    }
                 }
                 val state = readingRepository.getState(bookId)
                 // 与 saveState 持久化的 totalCharacters 口径一致（都按段落分隔符拼接）

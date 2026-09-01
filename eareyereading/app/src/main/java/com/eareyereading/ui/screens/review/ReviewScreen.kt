@@ -19,6 +19,9 @@ import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.eareyereading.ui.screens.review.ReviewViewModel
 import com.eareyereading.ui.theme.*
+import com.eareyereading.util.notificationPermissionGranted
+import com.eareyereading.util.rememberNotificationPermissionRequester
+import androidx.compose.ui.platform.LocalContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -28,6 +31,12 @@ fun ReviewScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val dueCount by viewModel.dueCount.collectAsState()
+
+    // issue 5.1：复习完成页也作为通知权限申请入口（此前只有设置页能申请）。
+    // 已授权则不展示该入口。
+    val context = LocalContext.current
+    val requestNotifications = rememberNotificationPermissionRequester()
+    val onEnableNotifications = if (!notificationPermissionGranted(context)) requestNotifications else null
 
     LaunchedEffect(Unit) {
         viewModel.loadDueReviews()
@@ -92,6 +101,7 @@ fun ReviewScreen(
                         remainingDue = (dueCount - uiState.totalReviewed).coerceAtLeast(0),
                         onRestart = viewModel::restartSession,
                         onBack = onBack,
+                        onEnableNotifications = onEnableNotifications,
                     )
                 }
                 else -> {
@@ -196,6 +206,8 @@ private fun SessionSummaryView(
     remainingDue: Int = 0,
     onRestart: () -> Unit,
     onBack: () -> Unit,
+    // issue 5.1：非空时展示"开启每日复习提醒"入口（未授权通知权限时）
+    onEnableNotifications: (() -> Unit)? = null,
 ) {
     Column(
         modifier = Modifier
@@ -245,6 +257,16 @@ private fun SessionSummaryView(
 
         Spacer(modifier = Modifier.height(32.dp))
 
+        // issue 5.1：复习完成时若还没授予通知权限，这里给出开启入口
+        if (onEnableNotifications != null) {
+            Button(onClick = onEnableNotifications) {
+                Icon(Icons.Default.Notifications, null)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("开启每日复习提醒")
+            }
+            Spacer(modifier = Modifier.height(12.dp))
+        }
+
         FilledTonalButton(onClick = onRestart) {
             Icon(Icons.Default.Refresh, null)
             Spacer(modifier = Modifier.width(8.dp))
@@ -283,7 +305,7 @@ private fun ReviewCardView(
     isSubmitting: Boolean,
     errorMessage: String?,
     onReveal: () -> Unit,
-    onAnswer: (Int) -> Unit,
+    onAnswer: (Int, Int) -> Unit,
     onDismissError: () -> Unit,
 ) {
     Column(
@@ -422,7 +444,7 @@ private fun ReviewCardView(
                             label = "忘了",
                             color = Error,
                             enabled = !isSubmitting,
-                            onClick = { onAnswer(1) },
+                            onClick = { onAnswer(currentIndex, 1) },
                             modifier = Modifier.weight(1f),
                         )
                         // issue 11.2：SM-2 里 q=2 才是"记得但困难"（重置 interval=1）。
@@ -432,21 +454,21 @@ private fun ReviewCardView(
                             label = "困难",
                             color = Warning,
                             enabled = !isSubmitting,
-                            onClick = { onAnswer(2) },
+                            onClick = { onAnswer(currentIndex, 2) },
                             modifier = Modifier.weight(1f),
                         )
                         AnswerButton(
                             label = "一般",
                             color = Info,
                             enabled = !isSubmitting,
-                            onClick = { onAnswer(4) },
+                            onClick = { onAnswer(currentIndex, 4) },
                             modifier = Modifier.weight(1f),
                         )
                         AnswerButton(
                             label = "完美",
                             color = Success,
                             enabled = !isSubmitting,
-                            onClick = { onAnswer(5) },
+                            onClick = { onAnswer(currentIndex, 5) },
                             modifier = Modifier.weight(1f),
                         )
                     }

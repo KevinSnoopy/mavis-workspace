@@ -113,7 +113,12 @@ class ReviewViewModel @Inject constructor(
      * 写库 fire-and-forget，写入失败/进程被杀时评分静默丢失（卡片原地复活），
      * 且过渡动画期间的二次点击会把评分记到下一张未展示的卡片上。
      */
-    fun answerCard(quality: Int) {
+    fun answerCard(index: Int, quality: Int) {
+        // issue 11.6：答题按钮携带其所属卡片 index。AnimatedContent 退场期间旧内容
+        // 仍在合成且可命中，此时第一次评分已把 currentIndex 前移并释放 isSubmitting，
+        // 退场旧按钮若按新的 currentIndex 评分会记错卡片。用调用时的 index 与当前
+        // currentIndex 比对，不一致即过期点击，直接忽略（稳健，不依赖帧回调）。
+        if (index != _uiState.value.currentIndex) return
         val state = _uiState.value
         // 未揭示答案/正在提交/队列已尽：一律不受理
         if (!state.isShowingAnswer || state.isSubmitting) return

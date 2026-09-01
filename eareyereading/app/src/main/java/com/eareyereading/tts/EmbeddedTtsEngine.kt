@@ -177,12 +177,14 @@ class EmbeddedTtsEngine @Inject constructor(
                 get() = if (totalBytes > 0) (bytesSoFar.toFloat() / totalBytes.toFloat()).coerceIn(0f, 1f) else 0f
         }
         data class Extracting(
-            val entriesDone: Int,
-            val entriesTotal: Int,
+            val bytesDone: Long,
+            val bytesTotal: Long,
             val currentEntryName: String?,
+            // 解压已耗时（ms），供 UI 计算 ETA
+            val elapsedMs: Long = 0L,
         ) : Progress() {
             val fraction: Float
-                get() = if (entriesTotal > 0) (entriesDone.toFloat() / entriesTotal.toFloat()).coerceIn(0f, 1f) else 0f
+                get() = if (bytesTotal > 0) (bytesDone.toFloat() / bytesTotal.toFloat()).coerceIn(0f, 1f) else 0f
         }
         object Initializing : Progress()
         object Completed : Progress()
@@ -255,10 +257,10 @@ class EmbeddedTtsEngine @Inject constructor(
         /** 文件完整下载标记后缀。存在表示该文件已完整下载，避免误用残缺文件。 */
         private const val COMPLETE_SUFFIX = ".complete"
         /**
-         * 解压总字节上限：正常 Piper 归档解压后 ~120MB，给 4 倍余量。
-         * 防 bzip2 解压炸弹（恶意/损坏归档写满整盘）。
+         * 解压总字节上限：正常 Piper 归档解压后 ~120MB，给 2 倍余量。
+         * 防 bzip2 解压炸弹（恶意/损坏归档写满整盘）。（1.3：512MB → 256MB）
          */
-        private const val MAX_EXTRACT_BYTES = 512L * 1_000_000L
+        private const val MAX_EXTRACT_BYTES = 256L * 1_000_000L
 
         /**
          * 内置可用模型列表。
@@ -454,13 +456,16 @@ private fun preprocessForTts(text: String): String {
     s = s.replace(Regex("\\bA\\.M\\.\\b"), "A M")
     s = s.replace(Regex("\\bD\\.C\\.\\b"), "D C")
     s = s.replace(Regex("\\bN\\.Y\\.\\b"), "New York")
-    // 时间缩写 PM/AM/ET/CT/PT/MT（无点号的全大写）
+    // 时间缩写 PM/AM（无点号的全大写）
     s = s.replace(Regex("\\bPM\\b"), "P M")
     s = s.replace(Regex("\\bAM\\b"), "A M")
-    s = s.replace(Regex("\\bET\\b"), "Eastern Time")
-    s = s.replace(Regex("\\bCT\\b"), "Central Time")
-    s = s.replace(Regex("\\bPT\\b"), "Pacific Time")
-    s = s.replace(Regex("\\bMT\\b"), "Mountain Time")
+    // 时区缩写 ET/CT/PT/MT：语境白名单启发式（2.10）——
+    // 仅当明确是时间/时段语境才展开为时区名，否则按缩写逐字母读，
+    // 避免 "CT scan" 被误读为 "Central Time scan"。
+    s = disambiguateTimeZoneAbb(s, "ET", "Eastern Time")
+    s = disambiguateTimeZoneAbb(s, "CT", "Central Time")
+    s = disambiguateTimeZoneAbb(s, "PT", "Pacific Time")
+    s = disambiguateTimeZoneAbb(s, "MT", "Mountain Time")
     s = s.replace(Regex("\\bAP\\b"), "Associated Press")
     s = s.replace(Regex("\\bCEO\\b"), "C E O")
     s = s.replace(Regex("\\bGDP\\b"), "G D P")
@@ -477,6 +482,27 @@ private fun preprocessForTts(text: String): String {
     // 把连续空白合并
     s = s.replace(Regex("\\s+"), " ").trim()
     return s
+}
+
+/**
+ * 时区缩写歧义消解（2.10，词典白名单启发式）：
+ * ET/CT/PT/MT 既是时区名也是通用缩写，不能无条件展开——
+ * "CT scan"（计算机断层扫描）会被误读成 "Central Time scan"。
+ * 仅当明确是时间/时段语境时展开为时区名，否则按缩写逐字母读（"C T scan"）。
+ * 语境判定白名单：后跟 time/am/pm，或前跟数字（小时 / HH:mm）。
+ */
+private fun disambiguateTimeZoneAbb(s: String, abbrev: String, timezone: String): String {
+    return Regex("\\b$abbrev\\b").replace(s) { m ->
+        val after = s.substring(m.range.last + 1).trimStart()
+        val before = s.substring(0, m.range.first).trimEnd()
+        val timeContext =
+            after.startsWith("time", ignoreCase = true) ||
+                after.startsWith("am", ignoreCase = true) ||
+                after.startsWith("pm", ignoreCase = true) ||
+                before.lastOrNull()?.isDigit() == true ||
+                Regex("\\d{1,2}:\\d{1,2}$").containsMatchIn(before)
+        if (timeContext) timezone else abbrev.map(Char::toString).joinToString(" ")
+    }
 }
 
 /**
@@ -861,33 +887,6 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
             File(modelsDir, entry.name).canonicalPath.startsWith(canonicalRoot)
 
     /**
-     * 轻量预扫 tar：只遍历 entry 头（文件 + 目录都算），不写盘、不落盘，
-     * 用于解压进度分母。tar 里 espeak-ng-data 下可能数百个条目，manifest 只声明 3 项，
-     * 用 manifest 当分母会让进度卡在 1/3 不动。失败返回 -1（调用方退回动态分母）。
-     */
-    private fun countTarEntries(tarballFile: File, modelsDir: File): Int {
-        val canonicalRoot = modelsDir.canonicalPath + File.separator
-        var count = 0
-        try {
-            java.io.FileInputStream(tarballFile).use { fis ->
-                BZip2CompressorInputStream(fis).use { bzis ->
-                    TarArchiveInputStream(bzis).use { tis ->
-                        var entry = tis.nextEntry
-                        while (entry != null) {
-                            if (shouldCountTarEntry(entry, modelsDir, canonicalRoot)) count++
-                            entry = tis.nextEntry
-                        }
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "countTarEntries failed, falling back to dynamic denominator", e)
-            return -1
-        }
-        return count
-    }
-
-    /**
      * 下载 tarball 并解压到 models 目录。
      * tarball 内顶层目录应为模型 id（如 vits-piper-en_US-lessac-medium/），
      * 解压后路径与 files.relativePath 对齐。
@@ -961,41 +960,31 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
         // 解压
         showDownloadNotification(null, "解压中...")
         Log.i(TAG, "extraction: starting, tarball=${tarballFile.length()} bytes at ${tarballFile.absolutePath}")
-        // 立刻把阶段推到 Extracting(entriesTotal=0)，让 UI 立即切到"解压中"，
-        // 不要停在 Downloading(100%) 让用户以为卡死。entriesTotal=0 表示"预扫中"，
-        // UI 显示"解压中（统计文件数…）"。预扫完成后用真实 totalEntries 替换。
-        _downloadProgress.value = Progress.Extracting(0, 0, null)
-        onProgress(0f)
-        // 进度分母用"tar 内真实条目数"，不是 manifest 声明数（manifest 只有 3 项，
-        // 而 espeak-ng-data 下有几百个文件——用 manifest 当分母会让进度卡在 1/3 不动，
-        // 用户误以为卡死）。先做一次轻量预扫：只遍历 tar 头、不写盘、不落盘，数出总条目数。
-        val preCountedEntries = countTarEntries(tarballFile, modelsDir)
-        // 分母：预扫失败（-1）时退回动态分母（已见条目数+1，进度也能单调前进）
-        var totalEntries = if (preCountedEntries > 0) preCountedEntries else 1
-        var extractedEntries = 0
-        var lastExtractionEntry: String? = null
+        // 立刻把阶段推到 Extracting，让 UI 立即切到"解压中"，不要在 Downloading(100%) 停住。
+        // 1.3：不再预扫（旧 countTarEntries 会完整解压一遍 bzip2 数条目，白费一整个解压时长）。
+        // 分母改用"解压放大系数 × 归档大小"估算总字节；末态强制分子对齐到 100%。
         val extractionStartMs = System.currentTimeMillis()
+        // 估算解压总字节：tar.bz2 ~66MB → 解压 ~120MB（约 1.8 倍），取 1.5 倍保守留余地
+        val estimatedTotalBytes = (modelInfo.sizeBytes * 3L) / 2L
+        var totalExtractedBytes = 0L
+        var lastExtractionEntry: String? = null
         var lastProgressPushMs = 0L
-        Log.i(TAG, "extraction: pre-counted $preCountedEntries tar entries")
-        // 预扫完成，用真实分母替换；UI 从"统计文件数…"切到"x/y"
-        _downloadProgress.value = Progress.Extracting(0, totalEntries, null)
+        _downloadProgress.value = Progress.Extracting(bytesDone = 0, bytesTotal = 1, currentEntryName = null, elapsedMs = 0)
         onProgress(0f)
-        // 解压进度按时间节流：espeak-ng-data 有几百个小文件，逐条目推进度会让
-        // StateFlow 每次都发射新值（data class entriesDone 递增）→ 几百次 Compose 重组。
-        // 改为每 100ms 至多推一次；isFinal=true 时强制推一次保证末态精确。
+        // 解压进度按字节节流：每 100ms 至多推一次；isFinal=true 强制推末态保证收敛。
         fun pushExtractionProgress(isFinal: Boolean = false) {
-            // 预扫失败时动态补正分母：进行中恒为 done+1（进度单调但 <100%），
-            // 末态强制分子分母对齐——否则最后一帧停在 N/(N+1)，进度永不收敛
-            if (preCountedEntries <= 0) {
-                totalEntries = if (isFinal) maxOf(extractedEntries, 1) else extractedEntries + 1
-            }
+            val doneBytes = totalExtractedBytes.coerceAtLeast(0L)
+            // 进行中分母恒比进度略大（estimated、至少 done+1），末态强制分子分母对齐，
+            // 否则估算偏差会让最后一帧停在 99.x% 永不收敛
+            val totalBytes = if (isFinal) maxOf(doneBytes, 1L) else maxOf(estimatedTotalBytes, doneBytes + 1)
             val now = System.currentTimeMillis()
             if (!isFinal && now - lastProgressPushMs < 100) return
             lastProgressPushMs = now
             _downloadProgress.value = Progress.Extracting(
-                extractedEntries,
-                totalEntries,
-                lastExtractionEntry,
+                bytesDone = doneBytes,
+                bytesTotal = totalBytes,
+                currentEntryName = lastExtractionEntry,
+                elapsedMs = now - extractionStartMs,
             )
             onProgress(_downloadProgress.value.fractionOrZero())
         }
@@ -1004,9 +993,7 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
             Log.d(TAG, "extraction: opening BZip2+Tar streams on $tarballCanonical")
             val canonicalRoot = modelsDir.canonicalPath + File.separator
             var copiedSinceCheck = 0L
-            // 解压总量上限：正常归档 ~120MB。bzip2 解压炸弹（恶意/损坏归档）
-            // 不设顶会写满整盘。对齐 EPUB 导入的 200MB 上限思路，给 4 倍余量
-            var totalExtractedBytes = 0L
+            // 解压总量上限：正常归档解压后 ~120MB，256MB 上限防 bzip2 解压炸弹（1.3）
             java.io.FileInputStream(tarballFile).use { fis ->
                 BZip2CompressorInputStream(fis).use { bzis ->
                     TarArchiveInputStream(bzis).use { tis ->
@@ -1062,9 +1049,8 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
                                     Log.d(TAG, "extraction: wrote ${outFile.name} ${fileBytes} bytes")
                                 }
                             }
-                            // 每个条目都推进进度（无论是否在 manifest 中）：
-                            // 之前只看 manifest 3 项 → espeak-ng-data 几百个文件不计数 → 卡 1/3
-                            extractedEntries++
+                            // 解压进度按字节推进（已解压字节在上层累计），每个条目推一次，
+                            // pushExtractionProgress 按 100ms 节流
                             pushExtractionProgress(isFinal = false)
                             entry = tis.nextEntry
                         }

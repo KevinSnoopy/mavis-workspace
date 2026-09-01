@@ -77,6 +77,10 @@ fun AppNavigation(
     val showBottomBar = currentDestination?.route?.startsWith("reader") != true
 
     Scaffold(
+        // issue 3.9：不要在这里额外预留系统栏 Insets（enableEdgeToEdge 后系统栏
+        // 由各页面自己的 TopAppBar 处理 statusBars 单一叠加）。根层再叠加会把
+        // 状态栏高度算两遍（88-94dp）。
+        contentWindowInsets = WindowInsets(0),
         bottomBar = {
             if (showBottomBar) {
                 // 标准 M3 NavigationBarItem：图标药丸指示器 + 主题色令牌。

@@ -110,8 +110,34 @@ fun ReaderScreen(
         ReadingTheme.SEPIA -> SepiaText
     }
 
+    // issue 3.8：阅读沉浸态。默认收起顶部/底部操作栏（chrome），
+    // 点正文空白切换显隐；滚动/弹窗/选词/朗读等需要操作时自动亮出。
+    var chromeVisible by rememberSaveable { mutableStateOf(false) }
+
+    // issue 3.8（保全诉求 #5）：弹窗 / 选词 / TTS 播放 / 自动朗读 / 速读等需要操作时强制显示 chrome，
+    // 避免用户切到某个弹窗或语音控制时找不到返回/暂停入口。
+    LaunchedEffect(
+        uiState.showWordDialog, uiState.showModeSelector,
+        uiState.showSettings, uiState.showChapterNav,
+        uiState.isTtsPlaying, uiState.isAutoReading, uiState.isPlaying,
+    ) {
+        if (uiState.showWordDialog || uiState.showModeSelector || uiState.showSettings ||
+            uiState.showChapterNav || uiState.isTtsPlaying || uiState.isAutoReading || uiState.isPlaying
+        ) {
+            chromeVisible = true
+        }
+    }
+
     Scaffold(
+        // issue 3.8（地基）：正文占满物理边缘，不再被根 Scaffold 额外预留系统栏。
+        contentWindowInsets = WindowInsets(0),
         topBar = {
+            // issue 3.8：chrome 显隐用 AnimatedVisibility（200ms 滑动+淡入，不瞬切）
+            AnimatedVisibility(
+                visible = chromeVisible,
+                enter = slideInVertically(initialOffsetY = { -it }) + fadeIn(),
+                exit = slideOutVertically(targetOffsetY = { -it }) + fadeOut(),
+            ) {
             TopAppBar(
                 title = {
                     Text(
@@ -250,8 +276,15 @@ fun ReaderScreen(
                     }
                 },
             )
+            } // 关闭 AnimatedVisibility(topBar)
         },
         bottomBar = {
+            // issue 3.8：底部 chrome 同款显隐
+            AnimatedVisibility(
+                visible = chromeVisible,
+                enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
+                exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
+            ) {
             ReadingBottomBar(
                 uiState = uiState,
                 onPrev = viewModel::prevParagraph,
@@ -259,12 +292,18 @@ fun ReaderScreen(
                 onSeek = viewModel::goToParagraph,
                 textColor = textColor,
             )
+            }
         },
     ) { padding ->
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .background(backgroundColor)
+                // issue 3.8：轻击正文空白切换 chrome 显隐（段落文字上的点选/挖空事件由
+                // 各渲染态的内层手势先消费，这里只收到未被消费的"空白处点击"，符合方案 C）
+                .pointerInput(Unit) {
+                    detectTapGestures { chromeVisible = !chromeVisible }
+                }
                 .padding(padding)
                 .padding(horizontal = 20.dp),
         ) {

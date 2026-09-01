@@ -44,7 +44,11 @@ fun LibraryScreen(
     // isLoading 为 true 的转圈分支里渲染，加载结束后设置的成功/失败消息
     // 用户永远看不到（URL 抓取失败完全静默）
     val snackbarHostState = remember { SnackbarHostState() }
-    LaunchedEffect(uiState.isLoading, uiState.loadingMessage) {
+    // issue 11.16：Snackbar 同字符串去重——连续两次相同文案（如"导入成功"）若以
+    // loadingMessage 值作为 LaunchedEffect 的 key，第二次不会重新触发、第二条不显示。
+    // 改为以 isLoading + messageEventId（每条消息自增）为 key：文案相同但 eventId 不同
+    // 也能重新触发，且结果消息在 endImportOp 后才 `!isLoading` 通过、正常展示。
+    LaunchedEffect(uiState.isLoading, uiState.messageEventId) {
         if (!uiState.isLoading && uiState.loadingMessage.isNotBlank()) {
             snackbarHostState.showSnackbar(uiState.loadingMessage)
             viewModel.dismissLoadingMessage()

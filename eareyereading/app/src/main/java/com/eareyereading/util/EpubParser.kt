@@ -2,6 +2,8 @@
 
 package com.eareyereading.util
 
+import android.content.ContentResolver
+import android.net.Uri
 import java.io.File
 import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
@@ -114,6 +116,79 @@ class EpubParser @Inject constructor() {
             }
             android.util.Log.e("EpubParser", "Error reading EPUB file: ${filePath}", e)
             throw EpubParseException.Corrupted()
+        }
+    }
+
+    /**
+     * 统一读取代理（issue 9.9）：文件优先、content:// URI 兜底。
+     * 存量书在换设备/清数据后本地拷贝可能失效（filePath 指向的文件不存在），
+     * 此时回退用 sourceUri 经 ContentResolver 重新打开流读取，避免"书源丢失打不开"。
+     * 文件存在时等价于 [parseBook] 的既有行为，不破坏存量书解析。
+     * 解析失败抛 [EpubParseException]（IOException 子类），调用方可按类型区分。
+     */
+    fun parseBook(
+        filePath: String,
+        sourceUri: String?,
+        resolver: ContentResolver,
+    ): ParsedBook {
+        val file = File(filePath)
+        if (file.exists() && file.length() > 0L) {
+            return parseBook(filePath)
+        }
+        if (!sourceUri.isNullOrBlank()) {
+            val input = try {
+                resolver.openInputStream(Uri.parse(sourceUri))
+            } catch (e: java.io.IOException) {
+                android.util.Log.w("EpubParser", "openInputStream failed for $sourceUri", e)
+                throw EpubParseException.Empty()
+            } catch (e: SecurityException) {
+                android.util.Log.w("EpubParser", "No read permission for $sourceUri", e)
+                throw EpubParseException.Empty()
+            }
+            if (input == null) {
+                android.util.Log.w("EpubParser", "openInputStream returned null for $sourceUri")
+                throw EpubParseException.Empty()
+            }
+            return parseFromInputStream(input, sourceUri)
+        }
+        throw EpubParseException.Empty()
+    }
+
+    /**
+     * 从任意 InputStream 解析 EPUB（issue 9.9 URI 兜底用）。
+     * ZipFile 需要随机访问，content:// 流不能直接喂给 ZipFile：
+     * 先按字节上限拷到临时文件，再复用既有 [parseEpub] 逻辑，解析完即删。
+     */
+    private fun parseFromInputStream(input: java.io.InputStream, label: String): ParsedBook {
+        val tempFile = try {
+            File.createTempFile("epub_resolve_", ".epub")
+        } catch (e: java.io.IOException) {
+            throw EpubParseException.Corrupted()
+        }
+        try {
+            var total = 0L
+            tempFile.outputStream().use { output ->
+                val buffer = ByteArray(8192)
+                while (true) {
+                    val n = input.read(buffer)
+                    if (n < 0) break
+                    total += n
+                    // 字节级防护（issue 10.4）：流来源同样受全局体积上限约束
+                    if (total > MAX_EPUB_BYTES) {
+                        android.util.Log.w(
+                            "EpubParser",
+                            "EPUB exceeds ${MAX_EPUB_BYTES / (1024 * 1024)}MB from $label",
+                        )
+                        throw EpubParseException.Corrupted()
+                    }
+                    output.write(buffer, 0, n)
+                }
+            }
+            input.close()
+            if (total == 0L) throw EpubParseException.Empty()
+            return parseEpub(tempFile)
+        } finally {
+            tempFile.delete()
         }
     }
 
