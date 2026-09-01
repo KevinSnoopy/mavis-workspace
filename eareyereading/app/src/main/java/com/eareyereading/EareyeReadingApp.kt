@@ -1,6 +1,11 @@
 package com.eareyereading
 
 import android.app.Application
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import androidx.core.content.ContextCompat
 import com.eareyereading.domain.repository.SettingsRepository
 import com.eareyereading.util.NotificationHelper
 import com.eareyereading.util.ReminderPrefs
@@ -36,6 +41,33 @@ class EareyeReadingApp : Application() {
         // DataStore 首读是磁盘 IO：此前 runBlocking 卡在主线程，
         // 冷启动触发 StrictMode DiskReadViolation、白屏可感知（issue 6.1）
         appScope.launch { syncReminderPrefsMirror() }
+        // issue 6.2：ACTION_TIME_SET / ACTION_TIMEZONE_CHANGED 是系统受保护广播，
+        // Android 5+ 不再投递给 manifest 静态注册的接收器，只有动态注册能收到。
+        // 改在 Application.onCreate 动态注册，跨时区/手动改系统时间后提醒闹钟重新调度。
+        registerTimeSyncReceiver()
+    }
+
+    /**
+     * 动态注册时间/时区变化接收器（复用 BootReceiver 的重排逻辑）。
+     * 仅接收系统广播，需 RECEIVER_EXPORTED；ContextCompat 会按
+     * API 版本自动选择正确标志，避免 13+ 的 RECEIVER_NOT_EXPORTED/EXPORTED 强制要求。
+     */
+    private fun registerTimeSyncReceiver() {
+        try {
+            val filter = IntentFilter().apply {
+                addAction(Intent.ACTION_TIME_CHANGED)
+                addAction(Intent.ACTION_TIMEZONE_CHANGED)
+            }
+            val receiver: BroadcastReceiver = com.eareyereading.receiver.BootReceiver()
+            ContextCompat.registerReceiver(
+                this,
+                receiver,
+                filter,
+                ContextCompat.RECEIVER_EXPORTED,
+            )
+        } catch (e: Exception) {
+            android.util.Log.w("EareyeReadingApp", "register time receiver failed", e)
+        }
     }
 
     /**

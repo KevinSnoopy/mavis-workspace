@@ -12,6 +12,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
+import java.io.FilterInputStream
+import java.io.InputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import javax.inject.Inject
@@ -67,6 +69,11 @@ class DictionaryManager @Inject constructor(
         private const val MANIFEST_FILE_NAME = "manifest.json"
         private const val ACTIVE_DICT_PREFS = "dict_prefs"
         private const val ACTIVE_DICT_KEY = "active_dict_id"
+
+        // issue 10.1：响应体字节上限，防恶意/畸形成员把内存打爆或磁盘写满。
+        // 文本类（manifest）上限 1MB；词典文件上限 500MB（分级词表实际只有几十 MB）。
+        private const val MAX_TEXT_BYTES = 1L * 1024 * 1024
+        private const val MAX_FILE_BYTES = 500L * 1024 * 1024
     }
 
     private val gson = Gson()
@@ -322,15 +329,26 @@ class DictionaryManager @Inject constructor(
         val file = safeDictFile(info.fileName) ?: return@withContext null
         if (!file.exists()) return@withContext null
 
-        val map = linkedMapOf<String, String>()
-        file.bufferedReader().useLines { lines ->
-            for (line in lines) {
-                val trimmed = line.trim()
-                if (trimmed.isEmpty() || trimmed.startsWith("#")) continue
-                val sep = trimmed.indexOf('|')
-                if (sep <= 0) continue
-                map[trimmed.substring(0, sep).trim()] = trimmed.substring(sep + 1).trim()
+        // issue 12.6：delete() 删除当前选中词典时，此处与删除协程存在竞态——
+        // exists() 通过后文件可能在读盘途中被删 -> FileNotFoundException 裸抛。
+        // 捕获后返回 null（回退内置词典），并把已失效的内存态清掉避免状态错位。
+        val map = try {
+            linkedMapOf<String, String>().also { m ->
+                file.bufferedReader().useLines { lines ->
+                    for (line in lines) {
+                        val trimmed = line.trim()
+                        if (trimmed.isEmpty() || trimmed.startsWith("#")) continue
+                        val sep = trimmed.indexOf('|')
+                        if (sep <= 0) continue
+                        m[trimmed.substring(0, sep).trim()] = trimmed.substring(sep + 1).trim()
+                    }
+                }
             }
+        } catch (e: java.io.FileNotFoundException) {
+            loadedDict = null
+            loadedDictId = null
+            android.util.Log.w("DictionaryManager", "active dict file disappeared for ${info.name}: ${e.message}")
+            return@withContext null
         }
         loadedDict = map
         loadedDictId = activeId
@@ -376,7 +394,10 @@ class DictionaryManager @Inject constructor(
             if (conn.responseCode != HttpURLConnection.HTTP_OK) {
                 throw java.io.IOException("HTTP ${conn.responseCode} for $urlStr")
             }
-            return conn.inputStream.bufferedReader().use { it.readText() }
+            // issue 10.1：text 也设上限——manifest 被 CDN 换成畸形大文件时
+            // 不再把整个读进内存。超限抛 IOException，refreshManifest catch 后降级。
+            val limited = LimitInputStream(conn.inputStream, MAX_TEXT_BYTES)
+            return limited.bufferedReader().use { it.readText() }
         } finally {
             conn.disconnect()
         }
@@ -398,14 +419,21 @@ class DictionaryManager @Inject constructor(
             }
             val total = conn.contentLengthLong
             var done = 0L
+            // issue 10.1：服务器声明的长度即已超限则直接终止，不再起流
+            if (total > MAX_FILE_BYTES) {
+                throw java.io.IOException("File too large ($total bytes, limit $MAX_FILE_BYTES)")
+            }
             conn.inputStream.use { input ->
                 FileOutputStream(tmp).use { output ->
                     val buf = ByteArray(262144)
                     while (true) {
                         val n = input.read(buf)
                         if (n <= 0) break
-                        output.write(buf, 0, n)
                         done += n
+                        if (done > MAX_FILE_BYTES) {
+                            throw java.io.IOException("File too large ($done bytes, limit $MAX_FILE_BYTES)")
+                        }
+                        output.write(buf, 0, n)
                         if (total > 0) {
                             // 限幅：响应体大于声明长度时不得显示 >100%
                             onProgress((done.toFloat() / total).coerceIn(0f, 1f))
@@ -426,6 +454,28 @@ class DictionaryManager @Inject constructor(
             throw e
         } finally {
             conn.disconnect()
+        }
+    }
+
+    /**
+     * 限制读取的输入流装饰器：读到 maxBytes 仍不足即抛 IOException，
+     * 让下载/解析统一走各自的失败路径，不把超大响应体读进内存。
+     */
+    private class LimitInputStream(delegate: InputStream, private val maxBytes: Long)
+        : FilterInputStream(delegate) {
+        private var read = 0L
+        override fun read(): Int {
+            val b = super.read()
+            if (b < 0) return b
+            if (++read > maxBytes) throw java.io.IOException("Stream exceeded $maxBytes bytes")
+            return b
+        }
+        override fun read(b: ByteArray, off: Int, len: Int): Int {
+            val n = super.read(b, off, len)
+            if (n < 0) return n
+            read += n
+            if (read > maxBytes) throw java.io.IOException("Stream exceeded $maxBytes bytes")
+            return n
         }
     }
 }

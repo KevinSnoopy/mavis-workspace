@@ -10,7 +10,11 @@ import com.google.mlkit.nl.translate.Translation
 import com.google.mlkit.nl.translate.TranslatorOptions
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
@@ -192,17 +196,26 @@ class TranslationHelper @Inject constructor(
     }
 
     suspend fun translateParagraphs(paragraphs: List<String>): Map<Int, String> {
-        val result = mutableMapOf<Int, String>()
-        paragraphs.forEachIndexed { index, para ->
-            when {
-                para.isBlank() -> result[index] = ""
+        // issue 8.4：全文翻译 200 段顺序 await 无并发、无分段、无进度反馈。
+        // 改为并发翻译（每段独立 async），ML Kit translate 是异步 Task，CPU 不占满，
+        // 但网络/模型推理可并行，明显缩短整本书翻译时长。
+        val blank = paragraphs.indices.filter { paragraphs[it].isBlank() }.toSet()
+        return coroutineScope {
+            paragraphs.indices.map { index ->
+                async(Dispatchers.IO) {
+                    if (index in blank) {
+                        // 空段保留占位（下述 filter 会按"翻译结果为空"剔除，二者无冲突）
+                        index to ""
+                    } else {
+                        index to (translateEnToZh(paragraphs[index].take(TRANSLATION_CHAR_LIMIT)) ?: "")
+                    }
+                }
+            }.awaitAll().filter { (_, value) ->
                 // issue 8.3：失败段不写入（而不是写 ""）——全 "" 的非空 Map
                 // 会把调用方的 isEmpty() 失败判定顶掉，"重试"按钮永远不出现
-                else -> translateEnToZh(para.take(TRANSLATION_CHAR_LIMIT))
-                    ?.let { result[index] = it }
-            }
+                value.isNotEmpty()
+            }.toMap()
         }
-        return result
     }
 
     suspend fun translateWord(word: String): String? = translateEnToZh(word)

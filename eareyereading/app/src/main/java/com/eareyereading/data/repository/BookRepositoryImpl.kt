@@ -208,13 +208,23 @@ class BookRepositoryImpl @Inject constructor(
             withContext(Dispatchers.IO) {
                 try {
                     val file = File(filePath)
-                    val booksDir = File(context.filesDir, "books")
-                    // 只清理本应用导入目录内的文件，绝不碰用户目录
-                    if (file.canonicalPath.startsWith(booksDir.canonicalPath + File.separator)) {
-                        file.delete()
+                    // issue 11.19：先确保 books 目录存在，否则 canonicalPath 解析
+                    // 会因目录缺失抛 IOException，下面的清理被整个吞掉且无回退。
+                    val booksDir = File(context.filesDir, "books").apply { mkdirs() }
+                    // 只清理本应用导入目录内的文件，绝不碰用户目录。
+                    // canonical 解析失败时回退到 absolutePath 字符串前缀比较，
+                    // 保证"清不清理成功"不会被一次解析异常悄悄吞掉（issue 10.7）。
+                    val safe = try {
+                        file.canonicalPath.startsWith(booksDir.canonicalPath + File.separator)
+                    } catch (_: java.io.IOException) {
+                        file.absolutePath.startsWith(booksDir.absolutePath + File.separator)
                     }
-                    Unit
-                } catch (e: java.io.IOException) {
+                    if (safe) {
+                        file.delete()
+                    } else {
+                        android.util.Log.w("BookRepository", "Refuse to delete outside books dir: $filePath")
+                    }
+                } catch (e: Exception) {
                     android.util.Log.w("BookRepository", "Failed to delete book file", e)
                 }
             }

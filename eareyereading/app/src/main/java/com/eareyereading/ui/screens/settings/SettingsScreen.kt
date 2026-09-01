@@ -1023,7 +1023,7 @@ fun SettingsScreen(
                         iconColor = Primary,
                         title = "导入数据",
                         subtitle = if (uiState.isImporting) "导入中..." else "从备份文件导入词汇",
-                        onClick = { importFilePicker.launch(arrayOf("application/json", "text/plain", "*/*")) },
+                        onClick = { importFilePicker.launch(arrayOf("application/json", "text/plain")) },
                     )
                     Divider(modifier = Modifier.padding(horizontal = 20.dp))
                     SettingRowClickable(

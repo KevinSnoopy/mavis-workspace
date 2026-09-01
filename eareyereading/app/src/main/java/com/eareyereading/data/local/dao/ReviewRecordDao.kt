@@ -20,6 +20,10 @@ interface ReviewRecordDao {
     @Query("DELETE FROM review_records WHERE vocabularyId = :vocabularyId")
     suspend fun deleteByVocabularyId(vocabularyId: Long)
 
+    // issue 11.7：批量清理孤儿复习记录（词汇已删/书已删导致 exampro 引用的词汇不存在）
+    @Query("DELETE FROM review_records WHERE vocabularyId IN (:vocabularyIds)")
+    suspend fun deleteByVocabularyIds(vocabularyIds: List<Long>)
+
     /** 删书级联清理：review_records 无 bookId 列，按词汇表子查询定位。
      * 必须在 vocabulary 行删除之前调用，否则子查询匹配不到任何行。 */
     @Query("DELETE FROM review_records WHERE vocabularyId IN (SELECT id FROM vocabulary WHERE bookId = :bookId)")

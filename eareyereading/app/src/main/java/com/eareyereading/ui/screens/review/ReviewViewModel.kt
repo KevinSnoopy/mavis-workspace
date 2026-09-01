@@ -66,7 +66,16 @@ class ReviewViewModel @Inject constructor(
                 // 按 vocabularyId 一次批量取词：旧实现逐词 LOWER(word) 匹配，
                 // 同名多行时取到任意一行（可能无上下文），且 50 次全表扫描
                 val vocabById = vocabularyRepository.getWordsByIds(records.map { it.vocabularyId })
-                val cards = records.map { record ->
+                // issue 11.7：清理孤儿复习记录——词汇已被删/换书删除，但 SM-2 进度行
+                // 永远躺在表里，每次加载都捕获一个 vocabulary=null 的假卡片，且永不消失。
+                // 全部清理放在一个事务内，保证要么清干净要么不动。
+                val orphans = records.filter { it.vocabularyId !in vocabById.keys }
+                if (orphans.isNotEmpty()) {
+                    database.withTransaction {
+                        reviewRecordDao.deleteByVocabularyIds(orphans.map { it.vocabularyId })
+                    }
+                }
+                val cards = records.filter { it.vocabularyId in vocabById.keys }.map { record ->
                     ReviewCard(record = record, vocabulary = vocabById[record.vocabularyId])
                 }
                 _uiState.update {
@@ -112,6 +121,23 @@ class ReviewViewModel @Inject constructor(
 
         val card = state.dueCards[state.currentIndex]
         val record = card.record
+
+        // issue 11.5：孤儿记录不挡答题——词汇在本会话期间被外部删掉时，
+        // vocabulary 为 null，无法评分；直接删除该记录并推进，不评分不卡死。
+        // 正常路径下孤儿已在 loadDueReviews 清理，这里是防御兜底。
+        if (card.vocabulary == null) {
+            viewModelScope.launch {
+                try {
+                    database.withTransaction { reviewRecordDao.deleteReview(record) }
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    android.util.Log.w("ReviewViewModel", "delete orphan review failed", e)
+                }
+                _uiState.update { it.copy(currentIndex = (state.currentIndex + 1).coerceAtMost(state.dueCards.size - 1), isSubmitting = false) }
+            }
+            return
+        }
 
         // SM-2 算法计算
         val q = quality.coerceIn(0, 5)

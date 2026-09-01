@@ -1841,8 +1841,12 @@ class ReaderViewModel @Inject constructor(
         // 用户看到的是句子 B 配译文 A
         sentenceTranslateJob?.cancel()
         sentenceTranslateJob = viewModelScope.launch {
-            _selectedSentence.value = sentence
+            // issue 8.8：必须先清旧译文再换标题。两个 StateFlow 分开发射，
+            // 若先写 sentence 再写 null，Compose 可能在中间帧读到
+            // "新句子 + 旧译文"（标题已换译文还是旧的）。先清译文，
+            // 中间帧只会是"旧句子 + 空译文"，不会张冠李戴。
             _sentenceTranslation.value = null
+            _selectedSentence.value = sentence
             // 抛异常与返回 null 同样按失败处理：不拦会崩 app，
             // 且弹窗以 == null 判定"加载中"，异常后不写值会永远转圈
             val result = try {

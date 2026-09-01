@@ -2219,7 +2219,10 @@ private fun TappableParagraphText(
     modifier: Modifier = Modifier,
     style: TextStyle = TextStyle(),
 ) {
-    val textLayoutResult = remember { mutableStateOf<TextLayoutResult?>(null) }
+    // issue 3.7：remember(paragraph) 而非 remember{}——LazyColumn 会对滚出又滚回的
+    // 可见 item 复用同一组合实例，不带 key 时会在换段后残留上一段的 TextLayoutResult，
+    // 点击仍用旧布局反查坐标 → 段滚出再回来点击失效。
+    val textLayoutResult = remember(paragraph) { mutableStateOf<TextLayoutResult?>(null) }
     Text(
         text = text,
         modifier = modifier

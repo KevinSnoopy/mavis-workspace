@@ -62,15 +62,14 @@
             android:name=".receiver.NotificationReceiver"
             android:exported="false" />
 
-        <!-- 开机自启 / 时区或系统时间变化：重新调度闹钟 -->
+        <!-- 开机自启：重新调度闹钟（issue 6.2：TIME_SET/TIMEZONE_CHANGED
+             已改为 EareyeReadingApp 动态注册，manifest 静态注册收不到） -->
         <receiver
             android:name=".receiver.BootReceiver"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
                 <action android:name="android.intent.action.QUICKBOOT_POWERON" />
-                <action android:name="android.intent.action.TIMEZONE_CHANGED" />
-                <action android:name="android.intent.action.TIME_SET" />
             </intent-filter>
         </receiver>
 
