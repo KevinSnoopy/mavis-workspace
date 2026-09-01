@@ -1061,7 +1061,11 @@ fun ClozeReadingView(
                             text = "____",
                             color = textColor.copy(alpha = 0.5f),
                             fontSize = fontSize.sp,
-                            modifier = Modifier.padding(end = 4.dp),
+                            modifier = Modifier
+                                .padding(horizontal = 4.dp, vertical = 2.dp)
+                                // 挖空词本身可点击揭示，扩大可点区并补上此前缺的
+                                // 点击入口（issue 3.5）
+                                .clickable { onReveal() },
                         )
                     } else {
                         Text(
@@ -1069,7 +1073,7 @@ fun ClozeReadingView(
                             color = textColor,
                             fontSize = fontSize.sp,
                             modifier = Modifier
-                                .padding(end = 4.dp)
+                                .padding(horizontal = 4.dp, vertical = 2.dp)
                                 .clickable { onWordClick(clozeWord.text) },
                         )
                     }

@@ -7,6 +7,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.io.File
+import java.io.RandomAccessFile
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
@@ -176,5 +177,27 @@ class EpubParserTest {
         )
         val result = parser.parseBook(f.absolutePath)
         assertEquals(listOf("Encoded filename chapter content."), result)
+    }
+
+    // ── 防御性上限（issue 10.3 / 10.4）──────────────────────
+
+    @Test
+    fun `oversized file beyond byte cap throws Corrupted`() {
+        val f = tmp.newFile("huge.epub")
+        // 稀疏文件扩展到上限+1 字节，无需真实写入 200MB 内容
+        RandomAccessFile(f, "rw").use { raf -> raf.setLength(200L * 1024 * 1024 + 1) }
+        val e = runCatching { parser.parseBook(f.absolutePath) }.exceptionOrNull()
+        assertTrue("expected EpubParseException.Corrupted but got $e", e is EpubParseException.Corrupted)
+    }
+
+    @Test
+    fun `zip with too many entries throws Corrupted`() {
+        val f = tmp.newFile("bomb.epub")
+        // 5001 个条目 > MAX_ZIP_ENTRIES(5000)，触发算法炸弹防护
+        val entries = HashMap<String, String>()
+        for (i in 0 until 5001) entries["entry$i.dat"] = "x"
+        writeEpub(f, entries)
+        val e = runCatching { parser.parseBook(f.absolutePath) }.exceptionOrNull()
+        assertTrue("expected EpubParseException.Corrupted but got $e", e is EpubParseException.Corrupted)
     }
 }

@@ -46,6 +46,16 @@ class EpubParser @Inject constructor() {
 
         /** spine 条目数上限，与字符上限双重保险。 */
         private const val MAX_SPINE_ITEMS = 20_000
+
+        /** EPUB 文件总字节上限（issue 10.4）：防超大连载/恶意文件占满存储或撑爆内存。 */
+        private const val MAX_EPUB_BYTES = 200L * 1024 * 1024
+
+        /** zip 条目总数上限（issue 10.3）：恶意 EPUB 可在 OPF 塞海量条目把
+         * resolveEntry 兜底分支打成 O(spine × entries) 算法炸弹。 */
+        private const val MAX_ZIP_ENTRIES = 5_000
+
+        /** resolveEntry 无精确命中时的兜底后缀匹配次数上限（issue 10.3）。 */
+        private const val MAX_SUFFIX_PROBES = 200
     }
 
     /** 非正文页面黑名单：版权页/封面/目录/扉页/出版信息（issue 9.4）。 */
@@ -62,6 +72,11 @@ class EpubParser @Inject constructor() {
     fun parseBook(filePath: String): List<String> {
         val file = File(filePath)
         if (!file.exists() || file.length() == 0L) throw EpubParseException.Empty()
+        // 字节级防护（issue 10.4）：文件本身超限直接拒绝，避免进一步解压 OOM/占盘
+        if (file.length() > MAX_EPUB_BYTES) {
+            android.util.Log.w("EpubParser", "EPUB exceeds ${MAX_EPUB_BYTES / (1024 * 1024)}MB: ${file.length()}")
+            throw EpubParseException.Corrupted()
+        }
         return try {
             parseEpub(file)
         } catch (e: EpubParseException) {
@@ -83,8 +98,16 @@ class EpubParser @Inject constructor() {
     private fun parseEpub(file: File): List<String> {
         val paragraphs = mutableListOf<String>()
         ZipFile(file).use { zip ->
+            // 一次性构建条目索引：防恶意 EPUB 在 OPF 里塞海量 itemref，让
+            // resolveEntry 兜底分支退化成 O(spine × entries) 算法炸弹（issue 10.3）
+            val entryNames = zip.entries().toList()
+            if (entryNames.size > MAX_ZIP_ENTRIES) {
+                android.util.Log.w("EpubParser", "EPUB has ${entryNames.size} entries, exceeding $MAX_ZIP_ENTRIES")
+                throw EpubParseException.Corrupted()
+            }
+
             // 找到 OPF 文件
-            val opfEntry = zip.entries().asSequence()
+            val opfEntry = entryNames.asSequence()
                 .filter { it.name.endsWith(".opf") }
                 .firstOrNull() ?: throw EpubParseException.NoOpf()
 
@@ -109,8 +132,8 @@ class EpubParser @Inject constructor() {
                 // 部分 OPF 的 href 是 URL 编码的（空格等），解码后再查条目；
                 // 解码失败或无匹配时回退原始字符串
                 val decoded = decodeHref(href)
-                val entry = resolveEntry(zip, opfDir, decoded)
-                    ?: if (decoded != href) resolveEntry(zip, opfDir, href) else null
+                val entry = resolveEntry(zip, opfDir, decoded, entryNames)
+                    ?: if (decoded != href) resolveEntry(zip, opfDir, href, entryNames) else null
                     ?: continue
 
                 val html = readTextCapped(zip.getInputStream(entry).bufferedReader(), MAX_DOC_CHARS)
@@ -131,13 +154,20 @@ class EpubParser @Inject constructor() {
      * 按 OPF 目录解析 spine href 对应的 zip 条目。
      * 精确路径优先，避免 `endsWith("1.xhtml")` 误匹配 `ch11.xhtml` 这类后缀重叠。
      */
-    private fun resolveEntry(zip: ZipFile, opfDir: String, href: String): ZipEntry? {
+    private fun resolveEntry(zip: ZipFile, opfDir: String, href: String, entryNames: List<ZipEntry>): ZipEntry? {
         if (opfDir.isNotEmpty()) {
             zip.getEntry("$opfDir/$href")?.let { return it }
         }
         zip.getEntry(href)?.let { return it }
-        // 兜底：仅按完整路径段后缀匹配（要求前置 '/'，杜绝子串误配）
-        return zip.entries().asSequence().firstOrNull { it.name.endsWith("/$href") }
+        // 兜底：仅按完整路径段后缀匹配（要求前置 '/'，杜绝子串误配）。
+        // 命中条目数有限（≤MAX_ZIP_ENTRIES），每轮扫描至多探测 MAX_SUFFIX_PROBES
+        // 次，防止恶意 href 让兜底分支反复整表扫描（issue 10.3）。
+        var probes = 0
+        for (it in entryNames) {
+            if (it.name.endsWith("/$href")) return it
+            if (++probes >= MAX_SUFFIX_PROBES) break
+        }
+        return null
     }
 
     /** 有上限地读取文本，超限截断。 */
@@ -232,6 +262,6 @@ class EpubParser @Inject constructor() {
                 // 压缩空白并 trim
                 cleaned.replace(Regex("\\s+"), " ").trim()
             }
-            .filter { it.length > 10 }
+            .filter { it.length > 3 }   // 阈值从 10 降到 3：章标题"Chapter 1"等短段不再被吞（issue 10.8）
     }
 }

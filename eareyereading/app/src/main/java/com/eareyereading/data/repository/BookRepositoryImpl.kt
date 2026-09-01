@@ -194,7 +194,12 @@ class BookRepositoryImpl @Inject constructor(
     }
 
     override fun searchBooks(query: String): Flow<List<Book>> =
-        bookDao.searchBooks(query).map { entities -> entities.map { it.toDomain() } }
+        // issue 10.6：把查询里的 LIKE 通配符转义为字面量（与 DAO 的 ESCAPE '\' 配套），
+        // 避免用户输入 %/_ 时语义被破坏；同时截断超长搜索词防全表跑来兜底
+        bookDao.searchBooks(escapeForLike(query).take(64)).map { entities -> entities.map { it.toDomain() } }
+
+    private fun escapeForLike(raw: String): String =
+        raw.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
     private fun BookEntity.toDomain() = Book(
         id = id, title = title, author = author, coverPath = coverPath,

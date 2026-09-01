@@ -55,6 +55,21 @@ class ArticleParser @Inject constructor() {
 
         /** 页面正文读取上限（字符数），防止超大页面撑爆内存；超出部分直接截断。 */
         private const val MAX_HTML_CHARS = 5_000_000
+
+        /** 可接受的响应 Content-Type（issue 10.5）：缺失时为 null 放行（部分源不返回该头），
+         * 命中非 HTML/文本类型时拒收，避免把图片/JSON 等二进制流当正文解析。 */
+        private val ALLOWED_CONTENT_TYPES = listOf(
+            "text/html", "text/plain",
+            "application/xhtml", "application/xml",
+        )
+
+        @JvmStatic
+        fun isHtmlContentType(contentType: String?): Boolean {
+            val ct = contentType?.substringBefore(';')?.trim()?.lowercase() ?: return true
+            // 头缺失/为空：部分源不返回 Content-Type，放行做尽力解析
+            if (ct.isBlank()) return true
+            return ALLOWED_CONTENT_TYPES.any { ct.startsWith(it) }
+        }
     }
 
     /**
@@ -82,6 +97,12 @@ class ArticleParser @Inject constructor() {
 
             try {
                 val charset = detectCharset(conn) ?: DEFAULT_CHARSET
+                // issue 10.5：非 HTML/文本 Content-Type 直接拒收，避免把图片/
+                // JSON/任意二进制流当正文解析；缺失时不拦截（部分源不返回该头）
+                if (!isHtmlContentType(conn.contentType)) {
+                    android.util.Log.w("ArticleParser", "Unsupported Content-Type for URL: $urlStr -> ${conn.contentType}")
+                    return@withContext null
+                }
                 val html = readHtmlCapped(BufferedReader(InputStreamReader(conn.inputStream, charset)))
                 extractArticle(html)
             } finally {
@@ -124,6 +145,11 @@ class ArticleParser @Inject constructor() {
             }
             try {
                 val charset = detectCharset(conn) ?: DEFAULT_CHARSET
+                // issue 10.5：非 HTML/文本响应拒收，会把 Feeds API 返回的 JSON 等当正文解析
+                if (!isHtmlContentType(conn.contentType)) {
+                    android.util.Log.w("ArticleParser", "Unsupported Content-Type for URL: $urlStr -> ${conn.contentType}")
+                    return@withContext null
+                }
                 val html = readHtmlCapped(BufferedReader(InputStreamReader(conn.inputStream, charset)))
                 extractLinksFromHtml(html, urlStr)
             } finally {

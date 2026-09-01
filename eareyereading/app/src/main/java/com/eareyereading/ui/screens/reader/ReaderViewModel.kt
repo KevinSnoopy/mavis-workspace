@@ -1417,7 +1417,7 @@ class ReaderViewModel @Inject constructor(
                     it.copy(
                         selectedVocab = existing ?: Vocabulary(
                             word = clean,
-                            level = level.ordinal + 1,
+                            level = level.level,
                             dateAdded = System.currentTimeMillis(),
                         ),
                         wordDefinition = definition,
@@ -1529,12 +1529,19 @@ class ReaderViewModel @Inject constructor(
 
     fun toggleTranslation() {
         val show = !_uiState.value.showTranslation
+        // 关闭翻译：取消正在进行的全书翻译 Job 并清空译文，避免偷跑流量后台继续
+        // 翻译全部段落（issue 8.10）
+        if (!show) {
+            translationJob?.cancel()
+            _uiState.update { it.copy(showTranslation = false, isTranslating = false, paragraphTranslations = emptyMap()) }
+            return
+        }
         // isTranslating 必须同步置位：标志原来在 launch 内部才设置，
         // 快速开-关-开会在两次 launch 都未执行前连过两次守卫 → 并发双份全书翻译
-        _uiState.update { it.copy(showTranslation = show, isTranslating = show && _uiState.value.paragraphTranslations.isEmpty()) }
+        _uiState.update { it.copy(isTranslating = _uiState.value.paragraphTranslations.isEmpty()) }
 
         // 如果是打开翻译，且还没翻译过，则触发翻译
-        if (show && _uiState.value.paragraphTranslations.isEmpty()) {
+        if (_uiState.value.paragraphTranslations.isEmpty()) {
             translateAllParagraphs()
         }
     }

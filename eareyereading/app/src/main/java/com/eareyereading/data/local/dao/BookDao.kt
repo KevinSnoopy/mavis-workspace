@@ -33,7 +33,8 @@ interface BookDao {
     @Delete
     suspend fun delete(book: BookEntity)
 
-    @Query("SELECT * FROM books WHERE (title LIKE '%' || :query || '%' OR author LIKE '%' || :query || '%') AND isArchived = 0 ORDER BY lastReadTime DESC")
+    // issue 10.6：先用 ESCAPE 转义查询里的 %/_/\\，LIKE 通配符不再被当元字符注入搜索词
+    @Query("SELECT * FROM books WHERE (title LIKE '%' || :query || '%' ESCAPE '\\' OR author LIKE '%' || :query || '%' ESCAPE '\\') AND isArchived = 0 ORDER BY lastReadTime DESC")
     fun searchBooks(query: String): Flow<List<BookEntity>>
 
     @Query("SELECT COUNT(*) FROM books")

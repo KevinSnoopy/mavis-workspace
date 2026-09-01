@@ -182,6 +182,11 @@ class TranslationHelper @Inject constructor(
     // ── 主入口 ───────────────────────────────────
     suspend fun translateEnToZh(text: String): String? {
         if (text.isBlank()) return null
+        // issue 8.7：单词级输入（≤20 字符且无空格）先查本地词典，命中即返回，
+        // 不消耗 ML Kit 配额/不联网；只有本地未命中才走 ML Kit 翻译
+        if (text.length <= 20 && !text.contains(' ')) {
+            lookupLocalDict(text)?.let { return it }
+        }
         ensureInitialized()  // 首次触发懒加载
         return translateViaMlKit(text)
     }
