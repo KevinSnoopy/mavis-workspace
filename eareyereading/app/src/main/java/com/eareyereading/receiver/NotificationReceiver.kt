@@ -1,16 +1,12 @@
 package com.eareyereading.receiver
 
-import android.app.NotificationManager
-import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.util.Log
-import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
-import com.eareyereading.MainActivity
-import com.eareyereading.R
 import com.eareyereading.util.NotificationHelper
+import com.eareyereading.util.NotificationService
 import com.eareyereading.util.ReminderPrefs
 
 /**
@@ -30,30 +26,9 @@ class NotificationReceiver : BroadcastReceiver() {
         // 提醒链永久死掉，重新授权也救不回来，只能去拨设置开关
         val canShow = NotificationManagerCompat.from(context).areNotificationsEnabled()
         if (canShow) {
-            val pendingIntent = PendingIntent.getActivity(
-                context,
-                0,
-                Intent(context, MainActivity::class.java).apply {
-                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-                },
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-            )
-
-            val notification = NotificationCompat.Builder(context, NotificationHelper.CHANNEL_ID)
-                .setSmallIcon(R.drawable.ic_notification)
-                .setContentTitle("📚 复习提醒")
-                .setContentText("今天还有待复习的单词，点击查看 →")
-                .setPriority(NotificationCompat.PRIORITY_DEFAULT)
-                .setAutoCancel(true)
-                .setContentIntent(pendingIntent)
-                .build()
-
-            // 权限撤销竞态防护：上面的 areNotificationsEnabled 检查通过后
-            // 权限仍可能被撤销（13+），裸 notify 会抛 SecurityException 崩掉
-            // Receiver。走 NotificationManagerCompat + catch 兜底
+            // 统一走 NotificationService 发送（内部完成 Channel 保证与 SecurityException 兜底）
             try {
-                NotificationManagerCompat.from(context)
-                    .notify(NotificationHelper.NOTIFICATION_ID, notification)
+                NotificationService(context).showReviewReminder()
             } catch (e: SecurityException) {
                 Log.w(TAG, "Notification permission revoked, skip showing", e)
             }

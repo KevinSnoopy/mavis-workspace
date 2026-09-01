@@ -28,6 +28,7 @@ import com.eareyereading.domain.repository.SettingsRepository
 import com.eareyereading.domain.repository.VocabularyRepository
 import com.eareyereading.ui.theme.*
 import com.eareyereading.util.NotificationHelper
+import com.eareyereading.util.NotificationService
 import com.eareyereading.util.TtsHelper
 import com.eareyereading.tts.EmbeddedTtsEngine
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -53,6 +54,8 @@ data class SettingsUiState(
     val totalWords: Int = 0,
     val darkMode: Boolean = false,
     val notifications: Boolean = true,
+    val notificationDownloadProgress: Boolean = true,
+    val notificationDownloadComplete: Boolean = true,
     val collinsHighlight: Boolean = true,
     val isExporting: Boolean = false,
     val isImporting: Boolean = false,
@@ -83,6 +86,7 @@ class SettingsViewModel @Inject constructor(
     private val database: com.eareyereading.data.local.database.AppDatabase,
     private val embeddedTts: EmbeddedTtsEngine,
     private val ttsHelper: TtsHelper,
+    private val notificationService: NotificationService,
     @ApplicationContext private val context: Context,
 ) : ViewModel() {
 
@@ -182,6 +186,30 @@ class SettingsViewModel @Inject constructor(
                 throw e
             } catch (e: Exception) {
                 android.util.Log.e("SettingsViewModel", "collins collect failed", e)
+            }
+        }
+
+        viewModelScope.launch {
+            try {
+                settingsRepository.getNotificationDownloadProgress().collect { enabled ->
+                    _uiState.update { it.copy(notificationDownloadProgress = enabled) }
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                android.util.Log.e("SettingsViewModel", "download progress pref collect failed", e)
+            }
+        }
+
+        viewModelScope.launch {
+            try {
+                settingsRepository.getNotificationDownloadComplete().collect { enabled ->
+                    _uiState.update { it.copy(notificationDownloadComplete = enabled) }
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                android.util.Log.e("SettingsViewModel", "download complete pref collect failed", e)
             }
         }
 
@@ -431,11 +459,27 @@ class SettingsViewModel @Inject constructor(
     fun setNotifications(enabled: Boolean) {
         viewModelScope.launch {
             settingsRepository.setNotifications(enabled)
+            // channel 重要性随开关重建（关闭→静默）
+            notificationService.rebuildReviewReminderChannel(enabled)
             if (enabled) {
                 notificationHelper.scheduleReviewReminder()
             } else {
                 notificationHelper.cancelReminder()
             }
+        }
+    }
+
+    fun setNotificationDownloadProgress(enabled: Boolean) {
+        viewModelScope.launch {
+            settingsRepository.setNotificationDownloadProgress(enabled)
+            notificationService.rebuildTtsDownloadChannel(enabled)
+        }
+    }
+
+    fun setNotificationDownloadComplete(enabled: Boolean) {
+        viewModelScope.launch {
+            settingsRepository.setNotificationDownloadComplete(enabled)
+            notificationService.rebuildTtsCompleteChannel(enabled)
         }
     }
 
@@ -997,9 +1041,9 @@ fun SettingsScreen(
                 Spacer(modifier = Modifier.height(20.dp))
             }
 
-            // ── 学习 ──────────────────────────────────
+            // ── 通知偏好 ────────────────────────────────
             item {
-                SettingsSectionTitle("学习")
+                SettingsSectionTitle("通知偏好")
             }
             item {
                 SettingsListCard {
@@ -1007,7 +1051,7 @@ fun SettingsScreen(
                         icon = Icons.Default.Notifications,
                         iconBg = SuccessBg,
                         iconColor = Accent,
-                        title = "复习间隔提醒",
+                        title = "复习提醒",
                         checked = uiState.notifications,
                         onCheckedChange = { enabled ->
                             if (enabled) {
@@ -1039,8 +1083,33 @@ fun SettingsScreen(
                             viewModel.setNotifications(enabled)
                         },
                     )
-                    // 原有的第二个"连胜提醒"开关与上面绑定同一个 notifications 布尔，
-                    // 拨一个会静默翻转另一个，且绕过了 Android 13+ 通知权限检查，已移除
+                    Divider(modifier = Modifier.padding(horizontal = 20.dp))
+                    SettingRowToggle(
+                        icon = Icons.Default.Download,
+                        iconBg = PrimaryLight,
+                        iconColor = Primary,
+                        title = "下载进度提醒",
+                        checked = uiState.notificationDownloadProgress,
+                        onCheckedChange = viewModel::setNotificationDownloadProgress,
+                    )
+                    Divider(modifier = Modifier.padding(horizontal = 20.dp))
+                    SettingRowToggle(
+                        icon = Icons.Default.CheckCircle,
+                        iconBg = SuccessBg,
+                        iconColor = Accent,
+                        title = "下载完成提醒",
+                        checked = uiState.notificationDownloadComplete,
+                        onCheckedChange = viewModel::setNotificationDownloadComplete,
+                    )
+                    Divider(modifier = Modifier.padding(horizontal = 20.dp))
+                    SettingRowClickable(
+                        icon = Icons.Default.Settings,
+                        iconBg = SurfaceSecondary,
+                        iconColor = OnSurfaceTertiary,
+                        title = "去系统通知设置",
+                        subtitle = "管理应用的通知权限与分类",
+                        onClick = { openAppNotificationSettings(context) },
+                    )
                 }
                 Spacer(modifier = Modifier.height(20.dp))
             }

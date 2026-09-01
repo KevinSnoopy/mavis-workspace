@@ -1,22 +1,16 @@
 package com.eareyereading.tts
 
 import android.content.Context
-import android.app.NotificationChannel
-import android.app.NotificationManager
-import android.app.PendingIntent
-import android.content.Intent
 import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioTrack
-import android.os.Build
 import android.util.Log
-import androidx.core.app.NotificationCompat
-import com.eareyereading.MainActivity
 import com.k2fsa.sherpa.onnx.OfflineTts
 import com.k2fsa.sherpa.onnx.OfflineTtsConfig
 import com.k2fsa.sherpa.onnx.OfflineTtsModelConfig
 import com.k2fsa.sherpa.onnx.OfflineTtsVitsModelConfig
+import com.eareyereading.util.NotificationService
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -61,6 +55,7 @@ import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
 @Singleton
 class EmbeddedTtsEngine @Inject constructor(
     @ApplicationContext private val context: Context,
+    private val notificationService: NotificationService,
 ) {
     @Volatile
     private var tts: OfflineTts? = null
@@ -264,8 +259,6 @@ class EmbeddedTtsEngine @Inject constructor(
          * 防 bzip2 解压炸弹（恶意/损坏归档写满整盘）。
          */
         private const val MAX_EXTRACT_BYTES = 512L * 1_000_000L
-        private const val DL_CHANNEL_ID = "eareye_tts_download"
-        private const val DL_NOTIFICATION_ID = 2001
 
         /**
          * 内置可用模型列表。
@@ -1864,97 +1857,20 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
      */
     fun isPlaying(): Boolean = isPlaying.get()
 
-    // ── 下载通知（保活 + 进度可见）──────────────────────
-    // P1 修复: getSystemService 在系统服务被禁用/移除时返回 null,改 `as?` 防御
-    private val notificationManager: NotificationManager? by lazy {
-        context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
-    }
-
-    private fun ensureDownloadChannel() {
-        // P1 修复: 同上,服务不可用时跳过 channel 创建(不阻塞 TTS 下载逻辑)
-        val nm = notificationManager ?: return
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val ch = nm.getNotificationChannel(DL_CHANNEL_ID)
-            if (ch == null) {
-                nm.createNotificationChannel(
-                    NotificationChannel(
-                        DL_CHANNEL_ID,
-                        "语音模型下载",
-                        NotificationManager.IMPORTANCE_LOW,
-                    ).apply { setShowBadge(false) },
-                )
-            }
-        }
-    }
-
-    /**
-     * 通知权限是否可用。Android 13+（targetSdk 34）下 POST_NOTIFICATIONS
-     * 是运行时权限，app 只在设置页提醒开关处申请——用户直接从阅读页
-     * 弹窗下载时大概率没授权，notify() 会被系统静默丢弃（部分 ROM 还会
-     * 抛 SecurityException）。下载本身不依赖通知，无权限就跳过通知。
-     */
-    private fun notificationsEnabled(): Boolean =
-        androidx.core.app.NotificationManagerCompat.from(context).areNotificationsEnabled()
+    // ── 下载通知（委托 NotificationService 集中管理：进度 ongoing、完成可划掉）──
 
     /** 显示/更新下载进度通知。progress 0..1，null 表示不确定。 */
     fun showDownloadNotification(progress: Float?, contentText: String) {
-        if (!notificationsEnabled()) return
-        ensureDownloadChannel()
-        // P1 修复: notificationManager 可能为 null,跳过通知发送(下载本身仍正常)
-        val nm = notificationManager ?: return
-        val builder = NotificationCompat.Builder(context, DL_CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.stat_sys_download)
-            .setContentTitle("下载内置语音模型")
-            .setContentText(contentText)
-            .setOngoing(true)
-            .setOnlyAlertOnce(true)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
-        if (progress != null) {
-            builder.setProgress(100, (progress * 100).toInt(), false)
-        } else {
-            builder.setProgress(0, 0, true)
-        }
-        // 点击跳转 MainActivity（设置页）
-        val pi = PendingIntent.getActivity(
-            context, 0,
-            Intent(context, MainActivity::class.java),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-        )
-        builder.setContentIntent(pi)
-        nm.notify(DL_NOTIFICATION_ID, builder.build())
+        notificationService.showTtsDownloadProgress(progress, contentText)
     }
 
-    /**
-     * 下载成功后的收尾通知：替换掉 ongoing 的进度通知。
-     * 原实现成功后只重发 setOngoing(true) 的通知，永远不可划掉；
-     * 这里改为普通通知 + autoCancel，同时结束进度通知的常驻状态。
-     */
+    /** 下载成功后的收尾通知：替换掉 ongoing 的进度通知，保证可划掉并结束常驻状态。 */
     private fun showDownloadCompleteNotification(contentText: String) {
-        if (!notificationsEnabled()) {
-            // 无权限：收尾通知发不出，但至少把 ongoing 进度通知残留清掉
-            cancelDownloadNotification()
-            return
-        }
-        ensureDownloadChannel()
-        val nm = notificationManager ?: run {
-            // 服务不可用时至少要把 ongoing 进度通知撤掉
-            cancelDownloadNotification()
-            return
-        }
-        val builder = NotificationCompat.Builder(context, DL_CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.stat_sys_download_done)
-            .setContentTitle("内置语音模型")
-            .setContentText(contentText)
-            .setOngoing(false)
-            .setAutoCancel(true)
-            .setOnlyAlertOnce(true)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
-        nm.notify(DL_NOTIFICATION_ID, builder.build())
+        notificationService.showTtsDownloadComplete(contentText)
     }
 
     /** 取消下载通知。 */
     fun cancelDownloadNotification() {
-        // P1 修复: 同上
-        notificationManager?.cancel(DL_NOTIFICATION_ID)
+        notificationService.cancelTtsDownloadNotification()
     }
 }

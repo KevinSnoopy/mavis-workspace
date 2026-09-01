@@ -29,6 +29,8 @@ class SettingsRepositoryImpl @Inject constructor(
         // 语义无产品定义。旧版本写入的 rsvp_interval 键留在文件里不被读取，无害
         val DARK_MODE = booleanPreferencesKey("dark_mode")
         val NOTIFICATIONS = booleanPreferencesKey("notifications_enabled")
+        val NOTIFICATION_DOWNLOAD_PROGRESS = booleanPreferencesKey("notification_download_progress")
+        val NOTIFICATION_DOWNLOAD_COMPLETE = booleanPreferencesKey("notification_download_complete")
         val COLLINS_HIGHLIGHT = booleanPreferencesKey("collins_highlight")
         val TTS_SPEED = floatPreferencesKey("tts_speed")
     }
@@ -80,6 +82,12 @@ class SettingsRepositoryImpl @Inject constructor(
     override fun getNotifications(): Flow<Boolean> =
         dataStore.data.map { it[NOTIFICATIONS] ?: true }
 
+    override fun getNotificationDownloadProgress(): Flow<Boolean> =
+        dataStore.data.map { it[NOTIFICATION_DOWNLOAD_PROGRESS] ?: true }
+
+    override fun getNotificationDownloadComplete(): Flow<Boolean> =
+        dataStore.data.map { it[NOTIFICATION_DOWNLOAD_COMPLETE] ?: true }
+
     override fun getCollinsHighlight(): Flow<Boolean> =
         dataStore.data.map { it[COLLINS_HIGHLIGHT] ?: true }
 
@@ -94,6 +102,14 @@ class SettingsRepositoryImpl @Inject constructor(
         dataStore.edit { it[NOTIFICATIONS] = enabled }
         // 同步镜像：开机/时区广播里的 Receiver 无法挂起读 DataStore
         ReminderPrefs.setEnabled(context, enabled)
+    }
+
+    override suspend fun setNotificationDownloadProgress(enabled: Boolean) {
+        dataStore.edit { it[NOTIFICATION_DOWNLOAD_PROGRESS] = enabled }
+    }
+
+    override suspend fun setNotificationDownloadComplete(enabled: Boolean) {
+        dataStore.edit { it[NOTIFICATION_DOWNLOAD_COMPLETE] = enabled }
     }
 
     override suspend fun setCollinsHighlight(enabled: Boolean) {

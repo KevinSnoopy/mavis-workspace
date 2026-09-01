@@ -1,15 +1,11 @@
 package com.eareyereading.util
 
 import android.app.AlarmManager
-import android.app.NotificationChannel
-import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import com.eareyereading.receiver.NotificationReceiver
 import android.content.Intent
 import android.os.Build
-import androidx.core.app.NotificationCompat
-import com.eareyereading.MainActivity
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -23,10 +19,16 @@ class NotificationHelper @Inject constructor(
     @ApplicationContext private val context: Context,
 ) {
     companion object {
-        const val CHANNEL_ID = "eareye_review_reminder"
+        // Channel/NOTIFICATION_ID 复用 NotificationService 常量，避免一字多定义
+        const val CHANNEL_ID = NotificationService.CHANNEL_REVIEW_REMINDER
         const val CHANNEL_NAME = "复习提醒"
-        const val NOTIFICATION_ID = 1001
+        const val NOTIFICATION_ID = NotificationService.NOTIFICATION_ID_REVIEW_REMINDER
         const val REQUEST_CODE = 1001
+    }
+
+    // Channel 创建统一委派给 NotificationService，不在散落处重复建 channel
+    private val notificationService: NotificationService by lazy {
+        NotificationService(context)
     }
 
     // P1 修复: getSystemService 在系统服务被禁用/移除时返回 null(罕见但会发生,
@@ -36,25 +38,10 @@ class NotificationHelper @Inject constructor(
     }
 
     /**
-     * 创建通知渠道（Android 8.0+）
+     * 创建通知渠道（Android 8.0+），委派给 NotificationService 统一管理
      */
     fun createNotificationChannel() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                CHANNEL_ID,
-                CHANNEL_NAME,
-                NotificationManager.IMPORTANCE_DEFAULT,
-            ).apply {
-                description = "每日复习提醒，帮助你保持学习连胜"
-                enableVibration(true)
-            }
-            val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
-                ?: run {
-                    android.util.Log.w("NotificationHelper", "NotificationManager not available, skip channel create")
-                    return
-                }
-            notificationManager.createNotificationChannel(channel)
-        }
+        notificationService.ensureReviewReminderChannel()
     }
 
     /**
