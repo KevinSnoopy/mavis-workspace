@@ -26,6 +26,15 @@ android {
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a")
         }
+
+        // issue 12.3：词典 manifest 地址通过 BuildConfig 注入，
+        // 不再硬编码作者私有仓库路径（jsDelivr 对私有仓返回 404，刷新必败）。
+        // 锁 tag@eareyereading 而非 branch，避免弱指针型漂移。
+        buildConfigField(
+            "String",
+            "DICTIONARY_MANIFEST_URL",
+            "\"https://cdn.jsdelivr.net/gh/KevinSnoopy/mavis-workspace@eareyereading/eareyereading/scripts/out/dictionaries/manifest.json\"",
+        )
     }
 
     // 按 ABI 拆分 APK：每个架构独立 APK，减少用户下载体积
@@ -59,6 +68,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     composeOptions {

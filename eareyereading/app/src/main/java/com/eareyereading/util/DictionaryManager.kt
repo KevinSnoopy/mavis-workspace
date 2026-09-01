@@ -1,6 +1,7 @@
 package com.eareyereading.util
 
 import android.content.Context
+import com.eareyereading.BuildConfig
 import com.google.gson.Gson
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
@@ -62,8 +63,10 @@ class DictionaryManager @Inject constructor(
     @ApplicationContext private val context: Context,
 ) {
     companion object {
-        // manifest.json 的下载地址（托管在 jsDelivr CDN，从 GitHub 仓库拉取）
-        const val MANIFEST_URL = "https://cdn.jsdelivr.net/gh/KevinSnoopy/mavis-workspace@eareyereading/eareyereading/scripts/out/dictionaries/manifest.json"
+        // manifest.json 的下载地址（托管在 jsDelivr CDN，从 GitHub 仓库拉取）。
+        // issue 12.3：不再硬编码 const，改由 BuildConfig 注入（app/build.gradle.kts
+        // 的 buildConfigField DICTIONARY_MANIFEST_URL），便于替换源/锁版本。
+        val MANIFEST_URL: String = BuildConfig.DICTIONARY_MANIFEST_URL
 
         private const val DICT_DIR_NAME = "dictionaries"
         private const val MANIFEST_FILE_NAME = "manifest.json"

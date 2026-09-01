@@ -909,10 +909,12 @@ class ReaderViewModel @Inject constructor(
                 val para = paragraphs[paraIdx]
                 if (para.isBlank()) {
                     _uiState.update { it.copy(autoReadingParaIndex = paraIdx, currentParagraphIndex = paraIdx) }
+                    recordParagraphVisit(paraIdx)  // issue 3.6
                     continue
                 }
 
                 _uiState.update { it.copy(autoReadingParaIndex = paraIdx, currentParagraphIndex = paraIdx) }
+                recordParagraphVisit(paraIdx)  // issue 3.6：自动朗读逐段累计
 
                 // 按句子分割（与速读/引擎侧共用同一套切分，保证行为一致；含中文标点）
                 val sentences = splitSentencesCompat(para)
@@ -1178,6 +1180,7 @@ class ReaderViewModel @Inject constructor(
             for (i in _uiState.value.currentParagraphIndex until paragraphs.size) {
                 if (!_uiState.value.isPlaying) break
                 _uiState.update { it.copy(currentParagraphIndex = i) }
+                recordParagraphVisit(i)  // issue 3.6：速读逐段累计
 
                 // 按句切分（跟自动朗读/引擎侧用同一套切分，保证句边界一致；含中文标点）
                 val sentences = splitSentencesCompat(paragraphs[i])
@@ -1328,6 +1331,7 @@ class ReaderViewModel @Inject constructor(
         stopAllPlayback()
         val nextIdx = (_uiState.value.currentParagraphIndex + 1).coerceAtMost(paragraphs.size - 1)
         _uiState.update { it.copy(currentParagraphIndex = nextIdx, currentWordIndex = 0) }
+        recordParagraphVisit(nextIdx)  // issue 3.6：原子累计，不等防抖保存
         saveProgress()
         if (_uiState.value.readingMode == ReadingMode.CLOZE) generateCloze()
         if (_uiState.value.readingMode == ReadingMode.FUZZY) generateFuzzy()
@@ -1350,6 +1354,7 @@ class ReaderViewModel @Inject constructor(
         stopAllPlayback()
         val idx = index.coerceIn(0, paragraphs.size - 1)
         _uiState.update { it.copy(currentParagraphIndex = idx, currentWordIndex = 0) }
+        recordParagraphVisit(idx)  // issue 3.6
         saveProgress()
         if (_uiState.value.readingMode == ReadingMode.CLOZE) generateCloze()
         if (_uiState.value.readingMode == ReadingMode.FUZZY) generateFuzzy()
@@ -1365,6 +1370,7 @@ class ReaderViewModel @Inject constructor(
         if (index < 0 || index >= s.paragraphs.size) return
         if (index == s.currentParagraphIndex) return
         _uiState.update { it.copy(currentParagraphIndex = index, currentWordIndex = 0) }
+        recordParagraphVisit(index)  // issue 3.6：视口滚动前进按段累计
         saveProgress()
         if (s.readingMode == ReadingMode.CLOZE) generateCloze()
         if (s.readingMode == ReadingMode.FUZZY) generateFuzzy()
@@ -1409,9 +1415,12 @@ class ReaderViewModel @Inject constructor(
             try {
                 // 检查是否已收录
                 val existing = vocabularyRepository.getWord(clean)
+                // issue 8.1：源语言随书取（不再写死 en→zh），书是法/日/中文时
+                // ML Kit 也用对应语言模型做源，避免中文串被当英文翻译致空/乱码
+                val sourceLang = _uiState.value.book?.language?.takeIf { it.isNotBlank() } ?: "en"
                 // 如果没有释义，用 ML Kit 翻译
                 val definition = existing?.definition
-                    ?: translationHelper.translateWord(clean)
+                    ?: translationHelper.translateWord(clean, sourceLang)
                     ?: "未找到释义"
                 _uiState.update {
                     it.copy(
@@ -1556,7 +1565,9 @@ class ReaderViewModel @Inject constructor(
             _uiState.update { it.copy(isTranslating = true) }
             try {
                 val paragraphs = _uiState.value.paragraphs
-                val translations = translationHelper.translateParagraphs(paragraphs)
+                // issue 8.1：全书翻译随书语言进行，不再写死 en→zh
+                val sourceLang = _uiState.value.book?.language?.takeIf { it.isNotBlank() } ?: "en"
+                val translations = translationHelper.translateParagraphs(paragraphs, sourceLang)
                 // 全空视为失败：translateParagraphs 对失败段落填 ""（ML Kit 模型
                 // 在无 GMS ROM 上下载失败是主失败路径），非空 Map 会把
                 // hasTranslation 顶成 true——回译视图变永久空白栏，
@@ -1665,22 +1676,11 @@ class ReaderViewModel @Inject constructor(
             )
         )
 
-        // 记录阅读统计（仅新增段落计入字符数）
-        val newParaIndex = state.currentParagraphIndex
-        if (newParaIndex > lastRecordedParagraphIndex) {
-            val jumped = newParaIndex - lastRecordedParagraphIndex
-            val charsAdded = if (jumped <= 2) {
-                // 顺序阅读：累计经过的段落
-                (lastRecordedParagraphIndex + 1..newParaIndex).sumOf { idx ->
-                    state.paragraphs.getOrNull(idx)?.length ?: 0
-                }
-            } else {
-                // 滑杆/章节大跳转：只计目标段，防止拖一次进度条刷掉整本书的字数
-                state.paragraphs.getOrNull(newParaIndex)?.length ?: 0
-            }
-            sessionCharsRead += charsAdded
-            lastRecordedParagraphIndex = newParaIndex
-        }
+        // 记录阅读统计（仅新增段落计入字符数）。
+        // issue 3.6：段落计数改为在"进入/推进段落"时原子记录（recordParagraphVisit），
+        // 不再等 300ms 防抖的 doSaveProgress 才推进 lastRecordedParagraphIndex。
+        // 否则快速连跳/朗读循环里，防抖窗口内的状态与高水位错位，累计字数会虚增。
+        // 这里只负责按需把会话统计落库（增量/兜底）。
 
         // 增量落库：距上次落库满 1 分钟就写一次，进程被杀不再丢整段会话。
         // 1 分钟门槛同时避免每次保存都记 1 分钟（收尾的零星部分由 cleanup 兜底）
@@ -1688,6 +1688,28 @@ class ReaderViewModel @Inject constructor(
         if (now - lastFlushTime >= 60_000) {
             flushSessionStats(bookId)
         }
+    }
+
+    /**
+     * issue 3.6：原子记录"读到某段"的字符累计。
+     * 只在严格前进（高水位上升）时累加，并把高水位 lastRecordedParagraphIndex
+     * 同步推进到 newIndex——由此段落计数不再依赖 300ms 防抖的保存时机，
+     * 朗读/速读循环里连过数段也按实际经过段落准确累计，不会虚增或漏记。
+     * 大跳转（>2 段）只计目标段，防止拖进度条刷满整本书字数。
+     */
+    private fun recordParagraphVisit(newIndex: Int) {
+        if (newIndex <= lastRecordedParagraphIndex) return
+        val paragraphs = _uiState.value.paragraphs
+        val jumped = newIndex - lastRecordedParagraphIndex
+        val charsAdded = if (jumped <= 2) {
+            (lastRecordedParagraphIndex + 1..newIndex).sumOf { idx ->
+                paragraphs.getOrNull(idx)?.length ?: 0
+            }
+        } else {
+            paragraphs.getOrNull(newIndex)?.length ?: 0
+        }
+        sessionCharsRead += charsAdded
+        lastRecordedParagraphIndex = newIndex
     }
 
     /**
@@ -1847,10 +1869,12 @@ class ReaderViewModel @Inject constructor(
             // 中间帧只会是"旧句子 + 空译文"，不会张冠李戴。
             _sentenceTranslation.value = null
             _selectedSentence.value = sentence
+            // issue 8.1：随书语言翻译句子，不再写死 en→zh
+            val sourceLang = _uiState.value.book?.language?.takeIf { it.isNotBlank() } ?: "en"
             // 抛异常与返回 null 同样按失败处理：不拦会崩 app，
             // 且弹窗以 == null 判定"加载中"，异常后不写值会永远转圈
             val result = try {
-                translationHelper.translateSentence(sentence)
+                translationHelper.translateSentence(sentence, sourceLang)
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
