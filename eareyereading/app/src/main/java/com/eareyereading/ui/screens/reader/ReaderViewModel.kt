@@ -165,6 +165,7 @@ private data class ReadingSettings(
     val theme: ReadingTheme,
     val alpha: Float,
     val strength: Int = 3,
+    val collinsHighlight: Boolean = false,
 )
 
 @HiltViewModel
@@ -524,6 +525,7 @@ class ReaderViewModel @Inject constructor(
                     settingsRepository.getFontSize(),
                     settingsRepository.getTheme(),
                     settingsRepository.getTranslationAlpha(),
+                    settingsRepository.getCollinsHighlight(),
                 ) { values ->
                     // P1 修复: 用 as? 安全转换 + 默认值,避免 DataStore 旧版本数据 schema
                     // 不匹配时 ClassCastException 直接死掉 init block(整个 Reader 屏开不起来)。
@@ -538,7 +540,9 @@ class ReaderViewModel @Inject constructor(
                     val theme = values[3] as? ReadingTheme ?: ReadingTheme.LIGHT
                     @Suppress("UNCHECKED_CAST")
                     val alpha = values[4] as? Float ?: 0.85f
-                    ReadingSettings(speed, fontSize, theme, alpha, strength)
+                    @Suppress("UNCHECKED_CAST")
+                    val collinsHighlight = values[5] as? Boolean ?: false
+                    ReadingSettings(speed, fontSize, theme, alpha, strength, collinsHighlight)
                 }.collect { s ->
                     _uiState.update {
                         it.copy(
@@ -549,6 +553,7 @@ class ReaderViewModel @Inject constructor(
                             fontSize = s.fontSize,
                             theme = s.theme,
                             translationAlpha = s.alpha,
+                            showWordLevelColors = s.collinsHighlight,
                         )
                     }
                 }
@@ -1897,7 +1902,11 @@ class ReaderViewModel @Inject constructor(
     }
 
     fun toggleWordLevelColors() {
-        _uiState.update { it.copy(showWordLevelColors = !it.showWordLevelColors) }
+        // 持久化到 DataStore（复用 COLLINS_HIGHLIGHT），再次进入阅读详情页时由 init 的
+        // settings combine 恢复，不再每次默认退回关闭
+        val newValue = !_uiState.value.showWordLevelColors
+        _uiState.update { it.copy(showWordLevelColors = newValue) }
+        viewModelScope.launch { settingsRepository.setCollinsHighlight(newValue) }
     }
 
     fun toggleKnownWordsHighlight() {
