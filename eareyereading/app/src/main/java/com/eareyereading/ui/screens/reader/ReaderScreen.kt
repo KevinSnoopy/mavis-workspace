@@ -932,8 +932,16 @@ private fun NormalParagraphBlock(
     val isBookmarked = index in rendering.bookmarkedParagraphs
     val paraHighlights = rendering.highlights[index] ?: emptyList()
     val alpha = if (isCurrent) 1f else if (index < currentIndex) 0.4f else 0.7f
-    // 插图段落：整段由 [[IMG:url]] 标记组成时，渲染远程图片而不是文本
-    val imageUrls = imageParagraphUrls(para)
+
+    // 段落里可能内联一张或多张 [[IMG:url]] 插图（订阅源常在段首插头图）。
+    // 抽出来单独渲染图片，正文只保留纯文字——否则巨长的图片 URL 会以原文混进正文。
+    val inlineImages = ImageMarkerRegex.findAll(para)
+        .map { it.groupValues[1].trim() }
+        .filter { it.isNotEmpty() && (it.startsWith("http://") || it.startsWith("https://")) }
+        .toList()
+    val renderPara = if (inlineImages.isNotEmpty()) {
+        ImageMarkerRegex.replace(para, " ").replace(Regex("\\s+"), " ").trim()
+    } else para
 
     // 朗读中的当前段落：背景直接加在内容容器上。
     // 原实现额外放了一个包 Text("") 的 Surface —— 零高度，背景永远不可见
@@ -975,13 +983,15 @@ private fun NormalParagraphBlock(
         }
     }
 
-    // 插图段落：渲染远程图片后整段结束（不渲染文本，标记不出现在正文里）
-    if (imageUrls != null) {
-        imageUrls.forEach { url ->
+    // 插图段落：先把段落里的插图渲染为远程图片；若此后纯图无正文则整段结束
+    if (inlineImages.isNotEmpty()) {
+        inlineImages.forEach { url ->
             ArticleImageView(url = url, textColor = textColor)
             Spacer(modifier = Modifier.height(10.dp))
         }
-        return@Column
+        if (renderPara.isEmpty()) {
+            return@Column
+        }
     }
 
     // 句子级声文同步高亮（朗读中）
@@ -1048,9 +1058,9 @@ private fun NormalParagraphBlock(
         // Collins 词频色彩（非朗读中）
         if (showWordLevelColors) {
             // 排版结果按真正影响产物的键缓存：播放句级状态变化不再重切全部可见段落
-            val annotatedText = remember(para, alpha, textColor, showKnownWordsHighlight, knownWords, paraHighlights) {
+            val annotatedText = remember(renderPara, alpha, textColor, showKnownWordsHighlight, knownWords, paraHighlights) {
                 buildAnnotatedString {
-                    val words = Regex("([a-zA-Z]+)|([^a-zA-Z]+)").findAll(para)
+                    val words = Regex("([a-zA-Z]+)|([^a-zA-Z]+)").findAll(renderPara)
                     words.forEach { match ->
                         val word = match.value
                         if (Regex("^[a-zA-Z]+$").matches(word)) {
@@ -1074,12 +1084,12 @@ private fun NormalParagraphBlock(
                         }
                     }
                     // 词色之上叠加用户高亮背景（原实现此分支完全不画高亮）
-                    overlayParagraphHighlights(para, paraHighlights)
+                    overlayParagraphHighlights(renderPara, paraHighlights)
                 }
             }
             TappableParagraphText(
                 text = annotatedText,
-                paragraph = para,
+                paragraph = renderPara,
                 onWordClick = onWordClick,
                 onSentenceDoubleTap = onSentenceDoubleTap,
                 modifier = Modifier.padding(vertical = 6.dp),
@@ -1090,9 +1100,9 @@ private fun NormalParagraphBlock(
             )
         } else if (showKnownWordsHighlight && knownWords.isNotEmpty()) {
             // 生词本高亮模式（Collins 关）
-            val annotatedText = remember(para, alpha, textColor, knownWords, learnedWords, paraHighlights) {
+            val annotatedText = remember(renderPara, alpha, textColor, knownWords, learnedWords, paraHighlights) {
                 buildAnnotatedString {
-                    val words = Regex("([a-zA-Z]+)|([^a-zA-Z]+)").findAll(para)
+                    val words = Regex("([a-zA-Z]+)|([^a-zA-Z]+)").findAll(renderPara)
                     words.forEach { match ->
                         val word = match.value
                         if (Regex("^[a-zA-Z]+$").matches(word)) {
@@ -1109,12 +1119,12 @@ private fun NormalParagraphBlock(
                     }
                     // 词色之上叠加用户高亮背景（默认配置就走本分支，
                     // 原实现高亮在这里完全不画）
-                    overlayParagraphHighlights(para, paraHighlights)
+                    overlayParagraphHighlights(renderPara, paraHighlights)
                 }
             }
             TappableParagraphText(
                 text = annotatedText,
-                paragraph = para,
+                paragraph = renderPara,
                 onWordClick = onWordClick,
                 onSentenceDoubleTap = onSentenceDoubleTap,
                 modifier = Modifier.padding(vertical = 6.dp),
@@ -1125,7 +1135,7 @@ private fun NormalParagraphBlock(
             )
         } else {
             // 普通模式 + 高亮渲染
-            val annotatedText = remember(para, alpha, textColor, paraHighlights) {
+            val annotatedText = remember(renderPara, alpha, textColor, paraHighlights) {
                 buildAnnotatedString {
                     var cursor = 0
                     // 按 offset 顺序处理高亮区域；对每条高亮按当前 cursor 收敛：
@@ -1135,12 +1145,12 @@ private fun NormalParagraphBlock(
                     val sortedHighlights = paraHighlights.sortedBy { it.startOffset }
                     for (highlight in sortedHighlights) {
                         val start = highlight.startOffset.coerceAtLeast(cursor)
-                        val end = highlight.endOffset.coerceIn(start, para.length)
+                        val end = highlight.endOffset.coerceIn(start, renderPara.length)
                         if (end <= start) continue
                         // 插入高亮前的文本
                         if (cursor < start) {
                             withStyle(SpanStyle(color = textColor.copy(alpha = alpha * 0.8f))) {
-                                append(para.substring(cursor, start))
+                                append(renderPara.substring(cursor, start))
                             }
                         }
                         // 高亮文本
@@ -1148,21 +1158,21 @@ private fun NormalParagraphBlock(
                             background = highlight.color.copy(alpha = 0.25f),
                             color = highlight.color,
                         )) {
-                            append(para.substring(start, end))
+                            append(renderPara.substring(start, end))
                         }
                         cursor = end
                     }
                     // 剩余文本
-                    if (cursor < para.length) {
+                    if (cursor < renderPara.length) {
                         withStyle(SpanStyle(color = textColor.copy(alpha = alpha * 0.8f))) {
-                            append(para.substring(cursor))
+                            append(renderPara.substring(cursor))
                         }
                     }
                 }
             }
             TappableParagraphText(
                 text = annotatedText,
-                paragraph = para,
+                paragraph = renderPara,
                 onWordClick = onWordClick,
                 onSentenceDoubleTap = onSentenceDoubleTap,
                 modifier = Modifier.padding(vertical = 6.dp),
@@ -2604,24 +2614,8 @@ private fun TappableParagraphText(
 
 // ── 文章插图 ──────────────────────────────────
 // 正文里的插图以标记形式嵌入段落流（解析器把 <img src> 转成该标记），
-// 阅读视图识别标记段落并渲染远程图片。
+// 阅读视图识别标记并渲染远程图片。
 private val ImageMarkerRegex = Regex("""\[\[IMG:([^\]]+)\]\]""")
-
-/**
- * 若整段由一条或多条 [[IMG:url]] 标记组成，返回其中的图片 URL 列表；否则返回 null。
- * 解析器通常把插图放在自成一行的标记（<img> 介于段落之间），因此整段标记即插图段。
- */
-private fun imageParagraphUrls(para: String): List<String>? {
-    val trimmed = para.trim()
-    if (!trimmed.startsWith("[[IMG:")) return null
-    val urls = ImageMarkerRegex.findAll(trimmed)
-        .map { it.groupValues[1].trim() }
-        .filter { it.isNotEmpty() }
-        .toList()
-    // 只有标记之间没有残留正文文本，才算纯插图段
-    val residue = ImageMarkerRegex.replace(trimmed, "").replace(Regex("\\s+"), "")
-    return if (urls.isNotEmpty() && residue.isBlank()) urls else null
-}
 
 /**
  * 远程图片的内存缓存（按 URL 缓存解码后的 Bitmap）。
