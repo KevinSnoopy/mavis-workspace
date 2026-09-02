@@ -363,7 +363,7 @@ class DictionaryManager @Inject constructor(
 
         // issue 12.6：delete() 删除当前选中词典时，此处与删除协程存在竞态——
         // exists() 通过后文件可能在读盘途中被删 -> FileNotFoundException 裸抛。
-        // 捕获后返回 null（回退内置词典），并把已失效的内存态清掉避免状态错位。
+        // 捕获后返回 null（查词按未命中处理），并把已失效的内存态清掉避免状态错位。
         val map = try {
             linkedMapOf<String, String>().also { m ->
                 file.bufferedReader().useLines { lines ->
@@ -389,7 +389,7 @@ class DictionaryManager @Inject constructor(
     }
 
     /**
-     * 查询当前选中词典。未命中返回 null（调用方可继续查内置词典）。
+     * 查询当前选中词典。未命中返回 null（无内置词典兜底）。
      *
      * issue 12.5：小词典（文件 <10MB）仍整份载内存查 Map（最快）；
      * 大词典（>=10MB）首次查询时把文件写入 Room 的 `dictionary_entries` 表，

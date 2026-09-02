@@ -125,7 +125,7 @@ class DictionaryViewModel @Inject constructor(
 
     fun setActive(dictId: String?) {
         dictionaryManager.setActiveDict(dictId)
-        _uiState.update { it.copy(snackbarMessage = if (dictId == null) "已切换为内置词典" else "已切换词典") }
+        _uiState.update { it.copy(snackbarMessage = if (dictId == null) "已取消选中词典" else "已切换词典") }
     }
 
     fun dismissSnackbar() {
@@ -205,51 +205,6 @@ fun DictionaryManagerScreen(
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
-                    }
-                }
-            }
-
-            // 内置词典选项
-            item {
-                val active = uiState.activeDictId == null
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { viewModel.setActive(null) },
-                    shape = RoundedCornerShape(14.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = if (active) Primary.copy(alpha = 0.08f) else MaterialTheme.colorScheme.surface,
-                    ),
-                ) {
-                    Row(
-                        modifier = Modifier.padding(16.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Surface(
-                            modifier = Modifier.size(40.dp),
-                            shape = RoundedCornerShape(10.dp),
-                            color = PrimaryLight,
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(Icons.Default.MenuBook, null, tint = Primary, modifier = Modifier.size(20.dp))
-                            }
-                        }
-                        Spacer(modifier = Modifier.width(12.dp))
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                "内置词典",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Medium,
-                            )
-                            Text(
-                                "约 1200 高频词，已随 App 安装",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        if (active) {
-                            Icon(Icons.Default.CheckCircle, null, tint = Primary, modifier = Modifier.size(24.dp))
-                        }
                     }
                 }
             }
