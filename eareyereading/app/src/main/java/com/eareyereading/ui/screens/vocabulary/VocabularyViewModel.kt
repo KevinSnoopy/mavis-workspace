@@ -4,6 +4,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.eareyereading.domain.model.Vocabulary
 import com.eareyereading.domain.repository.VocabularyRepository
+import com.eareyereading.util.TranslationHelper
+import com.eareyereading.util.TtsHelper
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -21,12 +23,17 @@ data class VocabularyUiState(
 @HiltViewModel
 class VocabularyViewModel @Inject constructor(
     private val vocabularyRepository: VocabularyRepository,
+    private val translationHelper: TranslationHelper,
+    private val ttsHelper: TtsHelper,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(VocabularyUiState())
     val uiState: StateFlow<VocabularyUiState> = _uiState.asStateFlow()
 
     private val searchQuery = MutableStateFlow("")
+
+    // 历史生词的释义补齐只跑一次（补齐后落库，后续不再重复翻译）
+    private var backfillStarted = false
 
     init {
         viewModelScope.launch {
@@ -67,6 +74,9 @@ class VocabularyViewModel @Inject constructor(
                 android.util.Log.e("VocabularyViewModel", "vocabulary combine failed", e)
             }
         }
+
+        // 为历史生词补齐释义（入库时没带 definition 的）
+        backfillMissingDefinitions()
     }
 
     fun setTab(index: Int) {
@@ -119,6 +129,61 @@ class VocabularyViewModel @Inject constructor(
                 vocabularyRepository.deleteWord(vocabulary)
             } catch (e: Exception) {
                 android.util.Log.e("VocabularyViewModel", "Failed to delete word", e)
+            }
+        }
+    }
+
+    /**
+     * 播放单词发音。词汇本就是英语单词，TTS 用 en。
+     */
+    fun speakWord(vocabulary: Vocabulary) {
+        val text = vocabulary.word.trim()
+        if (text.isBlank()) return
+        viewModelScope.launch {
+            try {
+                try {
+                    ttsHelper.initialize("en")
+                } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                    android.util.Log.w("VocabularyViewModel", "TTS init timed out", e)
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    android.util.Log.w("VocabularyViewModel", "TTS init failed", e)
+                }
+                ttsHelper.speak(text)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                android.util.Log.e("VocabularyViewModel", "speak failed", e)
+            }
+        }
+    }
+
+    /**
+     * 为入库时缺少释义的历史生词补齐中译并落库（只跑一次，之后由列表直接显示）。
+     * 网络/模型不可用时跳过，不阻塞词汇本使用。
+     */
+    private fun backfillMissingDefinitions() {
+        if (backfillStarted) return
+        backfillStarted = true
+        viewModelScope.launch {
+            try {
+                val missing = vocabularyRepository.getAllVocabulary().first()
+                    .filter { it.word.isNotBlank() && it.definition.isNullOrBlank() }
+                for (w in missing) {
+                    try {
+                        val def = translationHelper.translateWord(w.word, "en") ?: continue
+                        vocabularyRepository.updateWord(w.copy(definition = def))
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        // 单条失败跳过，继续处理其它词
+                    }
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                android.util.Log.e("VocabularyViewModel", "backfill definitions failed", e)
             }
         }
     }

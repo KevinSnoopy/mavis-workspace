@@ -535,6 +535,7 @@ fun ReaderScreen(
                 definition = uiState.wordDefinition,
                 wordLevel = uiState.selectedWordLevel,
                 onAddToVocabulary = { viewModel.addToVocabulary(vocab.word, null) },
+                onSpeak = { viewModel.speakOnDemand(vocab.word) },
                 onDismiss = viewModel::dismissWordDialog,
             )
         }
@@ -549,6 +550,7 @@ fun ReaderScreen(
             sentence = sentence,
             translation = sentenceTranslation,
             isLoading = sentenceTranslation == null,
+            onSpeak = { viewModel.speakOnDemand(sentence) },
             onDismiss = viewModel::dismissSentenceTranslation,
         )
     }
@@ -2107,6 +2109,7 @@ fun WordDetailDialog(
     definition: String?,
     wordLevel: WordLevel = WordLevel.UNKNOWN,
     onAddToVocabulary: () -> Unit,
+    onSpeak: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     AlertDialog(
@@ -2118,6 +2121,10 @@ fun WordDetailDialog(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     Text(word, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                    Spacer(modifier = Modifier.width(2.dp))
+                    IconButton(onClick = onSpeak) {
+                        Icon(Icons.Default.PlayCircleFilled, "播放发音", tint = Primary)
+                    }
                     if (wordLevel != WordLevel.UNKNOWN) {
                         val badgeColor = when (wordLevel) {
                             WordLevel.CORE -> WordLevelCore
@@ -2242,11 +2249,20 @@ fun SentenceTranslationDialog(
     sentence: String,
     translation: String?,
     isLoading: Boolean,
+    onSpeak: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("句子翻译") },
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("句子翻译", style = MaterialTheme.typography.titleLarge)
+                Spacer(modifier = Modifier.weight(1f))
+                IconButton(onClick = onSpeak) {
+                    Icon(Icons.Default.PlayCircleFilled, "播放朗读", tint = Primary)
+                }
+            }
+        },
         text = {
             Column {
                 Text(

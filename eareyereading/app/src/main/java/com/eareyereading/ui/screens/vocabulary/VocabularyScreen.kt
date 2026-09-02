@@ -214,6 +214,7 @@ fun VocabularyScreen(
                         WordCard(
                             vocabulary = word,
                             onMarkLearned = { viewModel.markAsLearned(word) },
+                            onSpeak = { viewModel.speakWord(word) },
                             onDelete = { viewModel.deleteWord(word) },
                             onAddToReview = { viewModel.addToReview(word) },
                             onEditNote = { note, example -> viewModel.updateNote(word, note, example) },
@@ -289,6 +290,7 @@ private fun LevelChip(level: Int, count: Int) {
 fun WordCard(
     vocabulary: Vocabulary,
     onMarkLearned: () -> Unit,
+    onSpeak: () -> Unit,
     onDelete: () -> Unit,
     onAddToReview: () -> Unit,
     onEditNote: (String?, String?) -> Unit,
@@ -378,11 +380,22 @@ fun WordCard(
                     }
                     Spacer(modifier = Modifier.width(14.dp))
                     Column {
-                        Text(
-                            text = vocabulary.word,
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.SemiBold,
-                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = vocabulary.word,
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            IconButton(onClick = onSpeak, modifier = Modifier.size(30.dp)) {
+                                Icon(
+                                    Icons.Default.PlayCircleFilled,
+                                    "播放发音",
+                                    tint = Primary,
+                                    modifier = Modifier.size(22.dp),
+                                )
+                            }
+                        }
                         if (!vocabulary.phonetic.isNullOrBlank()) {
                             Text(
                                 text = vocabulary.phonetic,

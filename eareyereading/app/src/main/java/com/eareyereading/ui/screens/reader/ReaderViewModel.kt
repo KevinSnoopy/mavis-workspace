@@ -1472,11 +1472,16 @@ class ReaderViewModel @Inject constructor(
         // 此时 currentBookId 已是 B 书——不对照快照，A 书生词会记到 B 书的 bookId/title 下
         val myBookId = currentBookId
         viewModelScope.launch {
-            val vocabToSave = _uiState.value.selectedVocab?.copy(
+            val currentVocab = _uiState.value.selectedVocab ?: return@launch
+            // issue: 生词入库时把查好的释义一起持久化，否则"词汇本"里每词无翻译
+            val wordDef = _uiState.value.wordDefinition
+                ?.takeIf { it.isNotBlank() && it != "未找到释义" }
+            val vocabToSave = currentVocab.copy(
                 bookId = myBookId,
                 bookTitle = _uiState.value.book?.takeIf { it.id == myBookId }?.title,
                 context = context,
-            ) ?: return@launch
+                definition = wordDef ?: currentVocab.definition,
+            )
 
             // 去重查询也纳入 try：它是 Room 调用，原实现留在 try 外，
             // 数据库异常会在"加入生词本"时直接崩 app
@@ -1899,6 +1904,32 @@ class ReaderViewModel @Inject constructor(
 
     fun dismissWordDialog() {
         _uiState.update { it.copy(showWordDialog = false, selectedVocab = null) }
+    }
+
+    /**
+     * 单词/句子弹窗里的"播放发音"按钮：对给定文本执行一次朗读。
+     * TTS 未初始化则先初始化（用当前书语言），失败静默告警不打断弹窗。
+     */
+    fun speakOnDemand(text: String) {
+        if (text.isBlank()) return
+        viewModelScope.launch {
+            try {
+                if (!_uiState.value.ttsInitialized) {
+                    try {
+                        ttsHelper.initialize(_uiState.value.book?.language ?: "en")
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        android.util.Log.w("ReaderViewModel", "TTS init for on-demand speak failed", e)
+                    }
+                }
+                ttsHelper.speak(text)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                android.util.Log.e("ReaderViewModel", "on-demand speak failed", e)
+            }
+        }
     }
 
     fun toggleWordLevelColors() {
