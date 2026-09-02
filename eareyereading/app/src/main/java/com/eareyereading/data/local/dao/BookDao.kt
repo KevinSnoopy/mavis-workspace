@@ -23,6 +23,11 @@ interface BookDao {
     @Query("SELECT * FROM books WHERE filePath = :filePath LIMIT 1")
     suspend fun findByFilePath(filePath: String): BookEntity?
 
+    // issue 9.7：按 OPF dc:identifier 去重（SAF 重复导入同一本 EPUB 时，
+    // 本地拷贝路径每次不同，filePath 去重挡不住，靠 identifier 唯一索引兜底）
+    @Query("SELECT * FROM books WHERE identifier = :identifier LIMIT 1")
+    suspend fun findByIdentifier(identifier: String): BookEntity?
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(book: BookEntity): Long
 

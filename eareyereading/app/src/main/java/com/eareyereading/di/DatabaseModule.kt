@@ -285,6 +285,23 @@ object DatabaseModule {
                         )
                     }
                 },
+                object : Migration(10, 11) {
+                    // issue 9.7 + 9.2：books 表新增 identifier（OPF dc:identifier，唯一索引做跨导入去重）、
+                    // isTruncated / originalCharCount（截断标记与原文规模，书库卡片提示）。
+                    // 加列顺序与 BookEntity 的 schema 严格对齐；identifier 用可空 TEXT（不加 DEFAULT，
+                    // 与 Migration(3,4)/(8,9) 同款写法，避免 Room 把存储的 NULL 识别成字符串导致校验失败）。
+                    override fun migrate(db: SupportSQLiteDatabase) {
+                        db.execSQL("ALTER TABLE books ADD COLUMN `identifier` TEXT")
+                        db.execSQL("ALTER TABLE books ADD COLUMN `isTruncated` INTEGER NOT NULL DEFAULT 0")
+                        db.execSQL("ALTER TABLE books ADD COLUMN `originalCharCount` INTEGER NOT NULL DEFAULT 0")
+                        // 存量行 identifier 全为 NULL，SQLite 唯一索引允许多个 NULL，不会因存量冲突失败。
+                        // 索引名与 BookEntity `Index(["identifier"], unique=true)` 的自动命名一致。
+                        db.execSQL(
+                            "CREATE UNIQUE INDEX IF NOT EXISTS `index_books_identifier` " +
+                                "ON `books` (`identifier`)"
+                        )
+                    }
+                },
             )
             .build()
     }

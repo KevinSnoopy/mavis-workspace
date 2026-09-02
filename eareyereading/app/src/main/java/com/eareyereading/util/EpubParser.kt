@@ -47,12 +47,24 @@ data class ParsedBook(
     val author: String = "",
     /** OPF `<dc:language>`（小写，截断到 8 字符）；缺失时为空串。 */
     val language: String = "",
+    /** OPF `<dc:identifier>`（书籍唯一标识，跨导入去重用，issue 9.7）；缺失时为空串。 */
+    val identifier: String = "",
     /** 按 spine 顺序提取的正文段落。 */
     val paragraphs: List<String> = emptyList(),
     /** 是否因 [EpubParser.MAX_TOTAL_CHARS] 上限被截断（issue 9.2）。 */
     val wasTruncated: Boolean = false,
+    /** 截断前扫描到的原文累计字符数（仅截断时>0，issue 9.2）。 */
+    val originalCharCount: Int = 0,
     /** 解析过程中见到的 `<img>` 数量（图册检测用，issue 9.8）。 */
     val images: Int = 0,
+)
+
+/** OPF 元数据载体（issue 9.1/9.7）。 */
+private data class OpfMetadata(
+    val title: String,
+    val author: String,
+    val language: String,
+    val identifier: String,
 )
 
 /**
@@ -198,10 +210,11 @@ class EpubParser @Inject constructor() {
     private fun parseEpub(file: File): ParsedBook {
         val paragraphs = mutableListOf<String>()
         var totalChars = 0
+        var originalTotalChars = 0
         var truncated = false
         var imageCount = 0
         // OPF 元数据在 zip 块内解析，ParsedBook 在块外组装，须提升作用域
-        var metadata = Triple("", "", "")
+        var metadata = OpfMetadata("", "", "", "")
         ZipFile(file).use { zip ->
             // 一次性构建条目索引：防恶意 EPUB 在 OPF 里塞海量 itemref，让
             // resolveEntry 兜底分支退化成 O(spine × entries) 算法炸弹（issue 10.3）
@@ -247,6 +260,8 @@ class EpubParser @Inject constructor() {
                 imageCount += Regex("<img\\b", RegexOption.IGNORE_CASE).findAll(html).count()
                 val (entryParagraphs, _) = extractParagraphsFromHtml(html)
                 for (para in entryParagraphs) {
+                    // 原文累计：含被截断的段落，表示扫描到的原文规模（issue 9.2 提示用）
+                    originalTotalChars += para.length
                     if (totalChars + para.length > MAX_TOTAL_CHARS) {
                         truncated = true
                         break@outer
@@ -262,11 +277,13 @@ class EpubParser @Inject constructor() {
         if (result.isEmpty() && imageCount > 0) throw EpubParseException.ImageOnly()
         if (result.isEmpty()) throw EpubParseException.NoContent()
         return ParsedBook(
-            title = metadata.first,
-            author = metadata.second,
-            language = metadata.third,
+            title = metadata.title,
+            author = metadata.author,
+            language = metadata.language,
+            identifier = metadata.identifier,
             paragraphs = result,
             wasTruncated = truncated,
+            originalCharCount = if (truncated) originalTotalChars else 0,
             images = imageCount,
         )
     }
@@ -316,7 +333,7 @@ class EpubParser @Inject constructor() {
      * 提取 OPF 元数据（issue 9.1）：`<dc:title>` / `<dc:creator>` / `<dc:language>`。
      * 部分 OPF 用 dcterms: 前缀或 dc:title 内嵌 span 标签，一并容错。
      */
-    private fun extractMetadata(opfContent: String): Triple<String, String, String> {
+    private fun extractMetadata(opfContent: String): OpfMetadata {
         fun dcValue(tag: String): String {
             val regex = Regex(
                 "<(?:dc|dcterms):$tag\\b[^>]*>([\\s\\S]*?)</(?:dc|dcterms):$tag>",
@@ -331,7 +348,10 @@ class EpubParser @Inject constructor() {
         val title = dcValue("title")
         val author = dcValue("creator")
         val language = dcValue("language").lowercase(java.util.Locale.ROOT).take(8)
-        return Triple(title, author, language)
+        // issue 9.7：OPF 的 <dc:identifier> 是书籍唯一标识（如 urn:uuid:... / ISBN）。
+        // 多个 OPF 可能声明多个 identifier，取第一个非空即可
+        val identifier = dcValue("identifier")
+        return OpfMetadata(title, author, language, identifier)
     }
 
     /**

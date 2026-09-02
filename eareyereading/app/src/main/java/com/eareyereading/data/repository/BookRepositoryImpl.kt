@@ -103,6 +103,21 @@ class BookRepositoryImpl @Inject constructor(
             throw java.io.IOException("Failed to parse book file: ${book.filePath}")
         }
 
+        // issue 9.7：按 OPF dc:identifier 去重。SAF 每次导入的本地拷贝路径都带时间戳前缀，
+        // filePath 去重挡不住；同一本 EPUB 的 dc:identifier 稳定，命中即复用旧 id。
+        // 同时清理本次导入刚拷出的临时副本，避免磁盘上重复文件堆积。
+        val identifier = parsedMetadata?.identifier?.trim().orEmpty()
+        if (identifier.isNotEmpty()) {
+            bookDao.findByIdentifier(identifier)?.let { existing ->
+                android.util.Log.i(
+                    "BookRepository",
+                    "Book already imported (identifier=$identifier), reusing id=${existing.id}",
+                )
+                deleteOrphanCopy(book.filePath)
+                return@withContext existing.id
+            }
+        }
+
         val joined = paragraphs.joinToString(" ")
         val tokens = joined.split("\\s+".toRegex()).filter { it.isNotBlank() }
         // 中文等无空白语言按空白切分只得 1 个"词"：此时按 CJK 字符数计词，
@@ -122,6 +137,11 @@ class BookRepositoryImpl @Inject constructor(
                 .ifBlank { "Unknown" },
             language = if (!book.language.equals("en", ignoreCase = true)) book.language
                 else parsedMetadata?.language?.ifBlank { "en" } ?: "en",
+            // issue 9.7：持久化 OPF dc:identifier（唯一索引 + 去重）
+            identifier = identifier.ifBlank { null },
+            // issue 9.2：截断标记与原文规模入库，书库卡片据此提示"正文被截断"
+            isTruncated = parsedMetadata?.wasTruncated ?: false,
+            originalCharCount = parsedMetadata?.originalCharCount ?: 0,
             totalWords = totalWords,
             content = contentToSave,
             addedAt = book.addedAt,
@@ -241,7 +261,9 @@ class BookRepositoryImpl @Inject constructor(
 
     private fun BookEntity.toDomain() = Book(
         id = id, title = title, author = author, coverPath = coverPath,
-        filePath = filePath, sourceUri = sourceUri, totalWords = totalWords, readProgress = readProgress,
+        filePath = filePath, sourceUri = sourceUri, identifier = identifier,
+        isTruncated = isTruncated, originalCharCount = originalCharCount,
+        totalWords = totalWords, readProgress = readProgress,
         lastReadPosition = lastReadPosition, lastReadTime = lastReadTime,
         dateAdded = dateAdded, language = language, isArchived = isArchived,
         content = content, addedAt = addedAt,
@@ -249,9 +271,37 @@ class BookRepositoryImpl @Inject constructor(
 
     private fun Book.toEntity() = BookEntity(
         id = id, title = title, author = author, coverPath = coverPath,
-        filePath = filePath, sourceUri = sourceUri, totalWords = totalWords, readProgress = readProgress,
+        filePath = filePath, sourceUri = sourceUri, identifier = identifier,
+        isTruncated = isTruncated, originalCharCount = originalCharCount,
+        totalWords = totalWords, readProgress = readProgress,
         lastReadPosition = lastReadPosition, lastReadTime = lastReadTime,
         dateAdded = dateAdded, language = language, isArchived = isArchived,
         content = content, addedAt = addedAt,
     )
+
+    /**
+     * issue 9.7：identifier 去重命中时，清理本次导入刚拷出的临时副本（仅限应用
+     * books 目录内的文件，绝不碰用户目录）。失败仅告警，不阻塞返回旧 id。
+     */
+    private fun deleteOrphanCopy(filePath: String) {
+        if (filePath.isBlank()) return
+        withContext(Dispatchers.IO) {
+            try {
+                val file = File(filePath)
+                val booksDir = File(context.filesDir, "books").apply { mkdirs() }
+                val safe = try {
+                    file.canonicalPath.startsWith(booksDir.canonicalPath + File.separator)
+                } catch (_: java.io.IOException) {
+                    file.absolutePath.startsWith(booksDir.absolutePath + File.separator)
+                }
+                if (safe && file.exists()) {
+                    file.delete()
+                } else {
+                    android.util.Log.w("BookRepository", "Skip deleting non-books-dir copy on dedup: $filePath")
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("BookRepository", "Failed to delete orphan copy on dedup", e)
+            }
+        }
+    }
 }

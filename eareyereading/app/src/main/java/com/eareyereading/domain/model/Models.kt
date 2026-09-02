@@ -8,6 +8,11 @@ data class Book(
     val filePath: String,
     // issue 9.9：外部 content:// URI（SAF/ACTION_VIEW 导入），本地拷贝失效时回退读取
     val sourceUri: String? = null,
+    // issue 9.7：EPUB OPF dc:identifier（书籍唯一标识，跨导入去重）
+    val identifier: String? = null,
+    // issue 9.2：是否截断 + 截断前原文累计字符数（书库卡片提示）
+    val isTruncated: Boolean = false,
+    val originalCharCount: Int = 0,
     val totalWords: Int = 0,
     val readProgress: Float = 0f,
     val lastReadPosition: Int = 0,

@@ -367,6 +367,20 @@ fun BookCard(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
+
+                // issue 9.2：EPUB 因 MAX_TOTAL_CHARS 被截断时，卡片给明确提示，不再静默丢正文
+                if (book.isTruncated) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = if (book.originalCharCount > 0) {
+                            "正文超上限，已截断（保留约 ${book.originalCharCount / 1000}k 字）"
+                        } else {
+                            "正文超上限，已截断"
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Error,
+                    )
+                }
             }
 
             Box {
