@@ -283,7 +283,7 @@ class BookRepositoryImpl @Inject constructor(
      * issue 9.7：identifier 去重命中时，清理本次导入刚拷出的临时副本（仅限应用
      * books 目录内的文件，绝不碰用户目录）。失败仅告警，不阻塞返回旧 id。
      */
-    private fun deleteOrphanCopy(filePath: String) {
+    private suspend fun deleteOrphanCopy(filePath: String) {
         if (filePath.isBlank()) return
         withContext(Dispatchers.IO) {
             try {
