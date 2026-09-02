@@ -25,6 +25,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.eareyereading.domain.model.ArticleSource
 import com.eareyereading.domain.model.Book
+import com.eareyereading.domain.model.ClassicBook
 import com.eareyereading.util.RssParser
 import com.eareyereading.ui.theme.*
 
@@ -153,69 +154,101 @@ fun LibraryScreen(
             Spacer(modifier = Modifier.height(16.dp))
 
             if (uiState.selectedTab == 0) {
-                // 今日阅读统计面板
                 val stats = uiState.readingStats
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
                 ) {
-                    StatCard(
-                        icon = Icons.Default.Timer,
-                        value = "${stats.todayMinutes}",
-                        label = "今日阅读(min)",
-                        color = Primary,
-                        modifier = Modifier.weight(1f),
-                    )
-                    StatCard(
-                        icon = Icons.Default.LocalFireDepartment,
-                        value = "${stats.streakDays}",
-                        label = "连续打卡(天)",
-                        color = Warning,
-                        modifier = Modifier.weight(1f),
-                    )
-                    StatCard(
-                        icon = Icons.Default.MenuBook,
-                        value = "${stats.totalBooks}",
-                        label = "累计书籍",
-                        color = Primary,
-                        modifier = Modifier.weight(1f),
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(24.dp))
-
-                // Section header
-                Text(
-                    "我的书籍",
-                    style = SectionTitle,
-                    modifier = Modifier.padding(horizontal = 16.dp),
-                )
-
-                Spacer(modifier = Modifier.height(14.dp))
-
-                if (uiState.isLoading) {
-                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            CircularProgressIndicator(color = Primary)
-                            if (uiState.loadingMessage.isNotBlank()) {
-                                Spacer(modifier = Modifier.height(12.dp))
-                                Text(uiState.loadingMessage, style = MaterialTheme.typography.bodyMedium)
-                            }
+                    // 今日阅读统计面板
+                    item {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            StatCard(
+                                icon = Icons.Default.Timer,
+                                value = "${stats.todayMinutes}",
+                                label = "今日阅读(min)",
+                                color = Primary,
+                                modifier = Modifier.weight(1f),
+                            )
+                            StatCard(
+                                icon = Icons.Default.LocalFireDepartment,
+                                value = "${stats.streakDays}",
+                                label = "连续打卡(天)",
+                                color = Warning,
+                                modifier = Modifier.weight(1f),
+                            )
+                            StatCard(
+                                icon = Icons.Default.MenuBook,
+                                value = "${stats.totalBooks}",
+                                label = "累计书籍",
+                                color = Primary,
+                                modifier = Modifier.weight(1f),
+                            )
                         }
                     }
-                } else if (uiState.books.isEmpty()) {
-                    EmptyLibrary(
-                        onImport = { filePicker.launch(arrayOf("application/epub+zip", "text/plain", "*/*")) },
-                        onUrlImport = viewModel::showUrlDialog,
-                    )
-                } else {
-                    LazyColumn(
-                        modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-                        verticalArrangement = Arrangement.spacedBy(14.dp),
-                    ) {
+
+                    item {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text("我的书籍", style = SectionTitle)
+                    }
+
+                    if (uiState.isLoading) {
+                        item {
+                            Box(
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    CircularProgressIndicator(color = Primary)
+                                    if (uiState.loadingMessage.isNotBlank()) {
+                                        Spacer(modifier = Modifier.height(12.dp))
+                                        Text(uiState.loadingMessage, style = MaterialTheme.typography.bodyMedium)
+                                    }
+                                }
+                            }
+                        }
+                    } else if (uiState.books.isEmpty()) {
+                        item {
+                            Column(
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 20.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                            ) {
+                                Text("📚", style = MaterialTheme.typography.displaySmall)
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(
+                                    "书架为空",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    "导入 EPUB/TXT，或从下方一键下载英文经典名著",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                Spacer(modifier = Modifier.height(16.dp))
+                                Button(
+                                    onClick = { filePicker.launch(arrayOf("application/epub+zip", "text/plain", "*/*")) },
+                                    colors = ButtonDefaults.buttonColors(containerColor = Primary),
+                                    shape = RoundedCornerShape(12.dp),
+                                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+                                ) {
+                                    Icon(Icons.Default.Add, null, modifier = Modifier.size(18.dp))
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("导入书籍", fontWeight = FontWeight.SemiBold)
+                                }
+                                Spacer(modifier = Modifier.height(6.dp))
+                                TextButton(onClick = viewModel::showUrlDialog) {
+                                    Icon(Icons.Default.Link, null, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("从网址导入")
+                                }
+                            }
+                        }
+                    } else {
                         items(uiState.books, key = { it.id }) { book ->
                             BookCard(
                                 book = book,
@@ -224,8 +257,29 @@ fun LibraryScreen(
                                 onArchive = { viewModel.archiveBook(book.id) },
                             )
                         }
-                        item { Spacer(modifier = Modifier.height(80.dp)) }
                     }
+
+                    // 英文经典名著：一键下载整本离线阅读
+                    item {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text("英文经典名著 · Project Gutenberg", style = SectionTitle)
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            "免费公版英文长篇小说，下载后可离线阅读",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    items(uiState.classics, key = { it.id }) { classic ->
+                        ClassicBookRow(
+                            classic = classic,
+                            downloading = classic.id in uiState.downloadingClassicIds,
+                            owned = classic.id in uiState.ownedClassicIds,
+                            onDownload = { viewModel.downloadClassic(classic) },
+                        )
+                    }
+
+                    item { Spacer(modifier = Modifier.height(80.dp)) }
                 }
             } else {
                 ArticleSquareScreen(
@@ -428,46 +482,77 @@ fun BookCard(
 }
 
 @Composable
-fun EmptyLibrary(
-    onImport: () -> Unit,
-    onUrlImport: () -> Unit,
+fun ClassicBookRow(
+    classic: ClassicBook,
+    downloading: Boolean,
+    owned: Boolean,
+    onDownload: () -> Unit,
 ) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(40.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = if (owned) Primary.copy(alpha = 0.08f) else MaterialTheme.colorScheme.surface,
+        ),
     ) {
-        Text("📚", style = MaterialTheme.typography.displayLarge)
-        Spacer(modifier = Modifier.height(20.dp))
-        Text(
-            "书架为空",
-            style = MaterialTheme.typography.titleLarge,
-            fontWeight = FontWeight.Bold,
-        )
-        Spacer(modifier = Modifier.height(8.dp))
-        Text(
-            "导入一本 EPUB 或 TXT 格式的英文书籍，开始阅读之旅",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Spacer(modifier = Modifier.height(28.dp))
-        Button(
-            onClick = onImport,
-            colors = ButtonDefaults.buttonColors(containerColor = Primary),
-            shape = RoundedCornerShape(12.dp),
-            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
+        Row(
+            modifier = Modifier.padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Icon(Icons.Default.Add, null, modifier = Modifier.size(18.dp))
+            Surface(
+                modifier = Modifier.size(44.dp),
+                shape = RoundedCornerShape(10.dp),
+                color = PrimaryLight,
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Text("📖", style = MaterialTheme.typography.titleLarge)
+                }
+            }
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    classic.title,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Medium,
+                )
+                Text(
+                    classic.author,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (!classic.description.isNullOrBlank()) {
+                    Text(
+                        classic.description,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
             Spacer(modifier = Modifier.width(8.dp))
-            Text("导入书籍", fontWeight = FontWeight.SemiBold)
-        }
-        Spacer(modifier = Modifier.height(12.dp))
-        TextButton(onClick = onUrlImport) {
-            Icon(Icons.Default.Link, null, modifier = Modifier.size(16.dp))
-            Spacer(modifier = Modifier.width(4.dp))
-            Text("从网址导入")
+            when {
+                downloading -> CircularProgressIndicator(
+                    modifier = Modifier.size(22.dp),
+                    strokeWidth = 2.dp,
+                    color = Primary,
+                )
+                owned -> Text(
+                    "已下载",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = Primary,
+                )
+                else -> Button(
+                    onClick = onDownload,
+                    colors = ButtonDefaults.buttonColors(containerColor = Primary),
+                    shape = RoundedCornerShape(10.dp),
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
+                ) {
+                    Icon(Icons.Default.Download, null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("下载", style = MaterialTheme.typography.labelLarge)
+                }
+            }
         }
     }
 }

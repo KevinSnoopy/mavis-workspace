@@ -156,13 +156,13 @@ object ArticleSources {
 
         // ── 文化类 ──
         ArticleSource(
-            id = "chinadaily_culture",
-            name = "China Daily Culture",
-            url = "https://www.chinadaily.com.cn/rss/culture_rss.xml",
+            id = "smithsonian",
+            name = "Smithsonian Magazine",
+            url = "https://www.smithsonianmag.com/rss/latest_articles/",
             category = SourceCategory.CULTURE,
             difficulty = 3,
-            icon = "🎭",
-            description = "中国日报文化版，中西方文化报道",
+            icon = "🏛️",
+            description = "史密森尼杂志，历史/科学/文化深度报道",
             isRss = true,
         ),
         ArticleSource(

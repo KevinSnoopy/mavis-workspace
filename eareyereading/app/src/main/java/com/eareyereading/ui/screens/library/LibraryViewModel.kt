@@ -11,6 +11,8 @@ import com.eareyereading.data.local.dao.ReadingStatsDao
 import com.eareyereading.domain.model.ArticleSource
 import com.eareyereading.domain.model.ArticleSources
 import com.eareyereading.domain.model.Book
+import com.eareyereading.domain.model.ClassicBook
+import com.eareyereading.domain.model.ClassicBooks
 import com.eareyereading.domain.repository.BookRepository
 import com.eareyereading.util.EpubParseException
 import com.eareyereading.domain.repository.VocabularyRepository
@@ -61,6 +63,10 @@ data class LibraryUiState(
     val articlesLoading: Boolean = false,
     val articlesError: String? = null,
     val showSourceSheet: Boolean = false,
+    // 英文经典名著（Project Gutenberg）：一键下载整本长篇
+    val classics: List<ClassicBook> = ClassicBooks.list,
+    val downloadingClassicIds: Set<String> = emptySet(),
+    val ownedClassicIds: Set<String> = emptySet(),
 )
 
 @HiltViewModel
@@ -134,11 +140,17 @@ class LibraryViewModel @Inject constructor(
                     vocabularyRepository.getTotalCount(),
                     vocabularyRepository.getLearnedCount(),
                 ) { query, books, total, learned ->
+                    val classicDir = File(context.filesDir, "books/classics").absolutePath
+                    val ownedClassics = ClassicBooks.list
+                        .filter { c -> books.any { it.filePath.startsWith("$classicDir/${c.id}.") } }
+                        .map { it.id }
+                        .toSet()
                     _uiState.value.copy(
                         books = filterBooks(query, books),
                         searchQuery = query,
                         totalWordCount = total,
                         learnedWordCount = learned,
+                        ownedClassicIds = ownedClassics,
                     )
                 }.collect { state ->
                     _uiState.update { it.copy(
@@ -146,6 +158,7 @@ class LibraryViewModel @Inject constructor(
                         searchQuery = state.searchQuery,
                         totalWordCount = state.totalWordCount,
                         learnedWordCount = state.learnedWordCount,
+                        ownedClassicIds = state.ownedClassicIds,
                     ) }
                 }
             } catch (e: kotlinx.coroutines.CancellationException) {
@@ -375,6 +388,81 @@ class LibraryViewModel @Inject constructor(
             } finally {
                 // 失败/取消时删除已拷贝的孤儿文件，防存储泄漏
                 destFile?.delete()
+                endImportOp()
+            }
+        }
+    }
+
+    /**
+     * 一键下载英文经典名著（Project Gutenberg 纯文本）并加入书库。
+     * 确定性路径名（books/classics/{id}.txt）让重复下载走 addBook 的 filePath 去重。
+     */
+    fun downloadClassic(classic: ClassicBook) {
+        if (classic.id in _uiState.value.downloadingClassicIds) return
+        if (classic.id in _uiState.value.ownedClassicIds) return
+        viewModelScope.launch {
+            var destFile: File? = null
+            try {
+                _uiState.update { it.copy(downloadingClassicIds = it.downloadingClassicIds + classic.id) }
+                beginImportOp("正在下载《${classic.title}》...")
+                val dir = File(context.filesDir, "books/classics").apply { mkdirs() }
+                val dest = File(dir, "${classic.id}.txt")
+                destFile = dest
+                if (!dest.exists()) {
+                    withContext(Dispatchers.IO) {
+                        val conn = (java.net.URL(classic.url).openConnection() as java.net.HttpURLConnection).apply {
+                            connectTimeout = 20_000
+                            readTimeout = 120_000
+                            setRequestProperty("User-Agent", "Mozilla/5.0")
+                            setRequestProperty("Accept", "text/plain,*/*")
+                            instanceFollowRedirects = true
+                        }
+                        try {
+                            if (conn.responseCode != java.net.HttpURLConnection.HTTP_OK) {
+                                throw java.io.IOException("HTTP ${conn.responseCode}")
+                            }
+                            // 30MB 上限：整本长篇绰绰有余，同时防异常来源撑爆磁盘
+                            val max = 30L * 1024 * 1024
+                            conn.inputStream.use { input ->
+                                dest.outputStream().use { output ->
+                                    val buffer = ByteArray(262144)
+                                    var done = 0L
+                                    while (true) {
+                                        val n = input.read(buffer)
+                                        if (n < 0) break
+                                        done += n
+                                        if (done > max) throw java.io.IOException("File too large")
+                                        output.write(buffer, 0, n)
+                                    }
+                                }
+                            }
+                        } finally {
+                            conn.disconnect()
+                        }
+                    }
+                }
+                bookRepository.addBook(
+                    Book(
+                        title = classic.title,
+                        author = classic.author,
+                        filePath = dest.absolutePath,
+                        language = "en",
+                    ),
+                )
+                destFile = null // 成功入库后文件交 deleteBook 生命周期接管
+                refreshDueTimestamp()
+                setResultMessage("已加入书库：${classic.title}")
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: java.io.IOException) {
+                android.util.Log.e("LibraryViewModel", "download classic ${classic.id} failed", e)
+                setResultMessage("下载失败：${e.message ?: "网络错误"}")
+            } catch (e: Exception) {
+                android.util.Log.e("LibraryViewModel", "download classic ${classic.id} failed", e)
+                setResultMessage("下载失败：${e.javaClass.simpleName}")
+            } finally {
+                destFile?.delete()
+                _uiState.update { it.copy(downloadingClassicIds = it.downloadingClassicIds - classic.id) }
                 endImportOp()
             }
         }
