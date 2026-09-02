@@ -107,6 +107,12 @@ class RssParser @Inject constructor() {
             "description", "summary", "content", "encoded",
             "pubdate", "date", "published", "updated",
         )
+
+        /** `<img ... src="URL" ...>`，用于把正文插图转成阅读标记 [[IMG:url]]。 */
+        private val IMG_SRC_REGEX = Regex(
+            """<img\b[^>]*src\s*=\s*["']([^"']+)["'][^>]*>""",
+            RegexOption.IGNORE_CASE,
+        )
     }
 
     data class RssFeed(
@@ -468,9 +474,17 @@ class RssParser @Inject constructor() {
     /**
      * 清 HTML 但保留段落结构：块级标签边界换行成空行，行内空白折叠。
      * [stripHtml] 会把全文压成一行，正文导入书库后没法按段阅读（issue 7.1/7.3）。
+     *
+     * 正文中的插图（issue）：把 `<img src>` 的绝对地址转成内联标记 `[[IMG:url]]`，
+     * 使插图能在"清标签→按段切分"后仍留在段落流里，阅读页据此渲染远程图片。
      */
     internal fun stripHtmlKeepParagraphs(html: String): String {
-        val withBreaks = html
+        val withImages = IMG_SRC_REGEX.replace(html) { m ->
+            val src = m.groupValues[1].trim()
+            // 只保留 http(s) 绝对地址；data:/相对地址/占位图一律丢弃
+            if (src.startsWith("http://") || src.startsWith("https://")) " [[IMG:$src]] " else ""
+        }
+        val withBreaks = withImages
             .replace(Regex("(?i)</(p|div|li|h[1-6]|blockquote|tr|section|article)>|<br\\s*/?>"), "\n\n")
             .replace(Regex("<[^>]+>"), " ")
         val decoded = decodeEntities(withBreaks)

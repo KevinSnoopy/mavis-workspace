@@ -1,5 +1,7 @@
 package com.eareyereading.ui.screens.reader
 
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.widget.Toast
 import androidx.compose.animation.*
 import androidx.compose.foundation.*
@@ -21,9 +23,11 @@ import androidx.compose.material.icons.outlined.Translate
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import com.eareyereading.util.notificationPermissionGranted
 import com.eareyereading.util.rememberNotificationPermissionRequester
 import androidx.compose.ui.Alignment
@@ -31,6 +35,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
@@ -925,6 +930,8 @@ private fun NormalParagraphBlock(
     val isBookmarked = index in rendering.bookmarkedParagraphs
     val paraHighlights = rendering.highlights[index] ?: emptyList()
     val alpha = if (isCurrent) 1f else if (index < currentIndex) 0.4f else 0.7f
+    // 插图段落：整段由 [[IMG:url]] 标记组成时，渲染远程图片而不是文本
+    val imageUrls = imageParagraphUrls(para)
 
     // 朗读中的当前段落：背景直接加在内容容器上。
     // 原实现额外放了一个包 Text("") 的 Surface —— 零高度，背景永远不可见
@@ -964,6 +971,15 @@ private fun NormalParagraphBlock(
                 color = Secondary.copy(alpha = 0.3f),
             )
         }
+    }
+
+    // 插图段落：渲染远程图片后整段结束（不渲染文本，标记不出现在正文里）
+    if (imageUrls != null) {
+        imageUrls.forEach { url ->
+            ArticleImageView(url = url, textColor = textColor)
+            Spacer(modifier = Modifier.height(10.dp))
+        }
+        return@Column
     }
 
     // 句子级声文同步高亮（朗读中）
@@ -2582,4 +2598,127 @@ private fun TappableParagraphText(
         style = style,
         onTextLayout = { textLayoutResult.value = it },
     )
+}
+
+// ── 文章插图 ──────────────────────────────────
+// 正文里的插图以标记形式嵌入段落流（解析器把 <img src> 转成该标记），
+// 阅读视图识别标记段落并渲染远程图片。
+private val ImageMarkerRegex = Regex("""\[\[IMG:([^\]]+)\]\]""")
+
+/**
+ * 若整段由一条或多条 [[IMG:url]] 标记组成，返回其中的图片 URL 列表；否则返回 null。
+ * 解析器通常把插图放在自成一行的标记（<img> 介于段落之间），因此整段标记即插图段。
+ */
+private fun imageParagraphUrls(para: String): List<String>? {
+    val trimmed = para.trim()
+    if (!trimmed.startsWith("[[IMG:")) return null
+    val urls = ImageMarkerRegex.findAll(trimmed)
+        .map { it.groupValues[1].trim() }
+        .filter { it.isNotEmpty() }
+        .toList()
+    // 只有标记之间没有残留正文文本，才算纯插图段
+    val residue = ImageMarkerRegex.replace(trimmed, "").replace(Regex("\\s+"), "")
+    return if (urls.isNotEmpty() && residue.isBlank()) urls else null
+}
+
+/**
+ * 远程图片的内存缓存（按 URL 缓存解码后的 Bitmap）。
+ * 仅供阅读页插图使用：64MB 足够覆盖一篇文章的插图，超限自动淘汰最久未用项。
+ */
+private val articleBitmapCache = object : android.util.LruCache<String, Bitmap>(64 * 1024 * 1024) {
+    override fun sizeOf(key: String, value: Bitmap): Int = value.byteCount
+}
+
+/**
+ * 在 IO 线程下载并解码远程图片，带内存缓存。失败返回 null（UI 兜底显示加载失败）。
+ */
+private fun loadArticleImage(url: String): Bitmap? {
+    articleBitmapCache.get(url)?.let { return it }
+    return try {
+        val conn = (java.net.URL(url).openConnection() as java.net.HttpURLConnection).apply {
+            connectTimeout = 15_000
+            readTimeout = 20_000
+            instanceFollowRedirects = true
+            setRequestProperty("User-Agent", "Mozilla/5.0 (compatible; EareyeReader/1.0)")
+        }
+        try {
+            if (conn.responseCode == java.net.HttpURLConnection.HTTP_OK) {
+                val bitmap = conn.inputStream.use { BitmapFactory.decodeStream(it) }
+                if (bitmap != null) articleBitmapCache.put(url, bitmap)
+                bitmap
+            } else {
+                android.util.Log.w("ReaderScreen", "Image HTTP ${conn.responseCode}: $url")
+                null
+            }
+        } finally {
+            conn.disconnect()
+        }
+    } catch (e: Exception) {
+        android.util.Log.w("ReaderScreen", "Image load failed: $url", e)
+        null
+    }
+}
+
+/**
+ * 渲染一张远程插图：加载前显示占位，加载中转圈，失败显示占位文案。
+ * 图片按屏宽自适应（FillWidth 保持原比例），不强制裁剪。
+ */
+@Composable
+fun ArticleImageView(
+    url: String,
+    textColor: Color = Color(0xFF666666),
+    modifier: Modifier = Modifier,
+) {
+    var bitmap by remember(url) { mutableStateOf<Bitmap?>(null) }
+    var failed by remember(url) { mutableStateOf(false) }
+    LaunchedEffect(url) {
+        if (bitmap == null && !failed) {
+            val loaded = withContext(Dispatchers.IO) { loadArticleImage(url) }
+            if (loaded != null) bitmap = loaded else failed = true
+        }
+    }
+    val loaded = bitmap
+    if (loaded != null) {
+        Image(
+            bitmap = loaded.asImageBitmap(),
+            contentDescription = null,
+            contentScale = ContentScale.FillWidth,
+            modifier = modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(8.dp)),
+        )
+    } else {
+        Surface(
+            modifier = modifier
+                .fillMaxWidth()
+                .height(150.dp)
+                .clip(RoundedCornerShape(8.dp)),
+            color = textColor.copy(alpha = 0.07f),
+        ) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                if (failed) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(
+                            Icons.Default.ImageNotSupported,
+                            "图片加载失败",
+                            tint = textColor.copy(alpha = 0.45f),
+                            modifier = Modifier.size(32.dp),
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            "图片加载失败",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = textColor.copy(alpha = 0.45f),
+                        )
+                    }
+                } else {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(24.dp),
+                        strokeWidth = 2.dp,
+                        color = Primary,
+                    )
+                }
+            }
+        }
+    }
 }

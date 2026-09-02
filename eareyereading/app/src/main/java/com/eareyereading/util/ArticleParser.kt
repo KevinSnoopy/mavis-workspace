@@ -50,6 +50,11 @@ class ArticleParser @Inject constructor() {
             "<\\s*(div|section)\\b[^>]*class\\s*=\\s*[\"'][^\"']*\\b(share|social|newsletter|subscribe|ad-|advert|promo|related|recommend|sidebar|breadcrumb|byline|author-bio|comments)\\b[^\"']*[\"'][^>]*>[\\s\\S]*?</\\1>",
             RegexOption.IGNORE_CASE,
         )
+        // 插图：<img ... src="URL" ...>，转成阅读标记 [[IMG:url]] 使插图保留进正文
+        private val IMG_SRC_REGEX = Regex(
+            """<img\b[^>]*src\s*=\s*["']([^"']+)["'][^>]*>""",
+            RegexOption.IGNORE_CASE,
+        )
 
         // 网络请求参数
         private const val CONNECT_TIMEOUT_MS = 15000
@@ -368,9 +373,14 @@ class ArticleParser @Inject constructor() {
      * 块级标签闭合 → 空行，再按空行自然分段；纯文本页才回退到"每 4 句合并"。
      */
     private fun cleanText(html: String): List<String> {
+        // 插图：<img src> 转成阅读标记（只保留 http(s) 绝对地址，其余丢弃）
+        val withImages = html.replace(IMG_SRC_REGEX) { m ->
+            val src = m.groupValues[1].trim()
+            if (src.startsWith("http://") || src.startsWith("https://")) " [[IMG:$src]] " else ""
+        }
         // 块级标签边界 → 空行（先于通用标签替换，否则 </p> 会被替换成空格）
         val text = HtmlEntities.decode(
-            html.replace(BLOCK_END_TAG, "\n\n").replace(HTML_TAG, " ")
+            withImages.replace(BLOCK_END_TAG, "\n\n").replace(HTML_TAG, " ")
         )
         val paragraphs = text.split(Regex("\n{2,}"))
             .map { it.replace(Regex("\\s+"), " ").trim() }
