@@ -27,6 +27,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import com.eareyereading.util.notificationPermissionGranted
 import com.eareyereading.util.rememberNotificationPermissionRequester
@@ -2630,66 +2632,78 @@ private val articleBitmapCache = object : android.util.LruCache<String, Bitmap>(
 }
 
 /** 插图体积上限：超过则丢弃（防源站异常图/超清大图把 App 内存打爆）。 */
-private const val MAX_IMAGE_BYTES = 20 * 1024 * 1024
+private const val MAX_IMAGE_BYTES = 8 * 1024 * 1024
 
 /** 插图解码后长边上限：长边超过则按 2 的幂降采样，避免整张原图常驻内存导致 OOM。 */
-private const val MAX_IMAGE_DIMENSION = 2048
+private const val MAX_IMAGE_DIMENSION = 1600
+
+/**
+ * 并发插图加载信号量：限制同时进行的"下载+解码"数量。
+ * 订阅源常在正文里对同一张头图重复引用，批量渲染时若每个段落都并发解码
+ * 同一 URL，会同时命中缓存 miss、各解码一份，瞬间打满内存 OOM 闪退。
+ * 限制并发 + 在锁内复查缓存，既防重复解码又控峰值内存。
+ */
+private val imageLoadSemaphore = Semaphore(3)
 
 /**
  * 在 IO 线程下载并解码远程图片，带内存缓存。失败返回 null（UI 兜底显示加载失败）。
- * 会：限制响应体积上限、按尺寸降采样解码、捕获 OOM——高分辨率插图不再撑爆内存闪退。
+ * 会：限制响应体积上限、按尺寸降采样解码、捕获一切异常（含 OOM）——
+ * 任何单张坏图/超高清图都不会让阅读页闪退。
  */
-private fun loadArticleImage(url: String): Bitmap? {
-    articleBitmapCache.get(url)?.let { return it }
-    val bytes = try {
-        val conn = (java.net.URL(url).openConnection() as java.net.HttpURLConnection).apply {
-            connectTimeout = 15_000
-            readTimeout = 20_000
-            instanceFollowRedirects = true
-            setRequestProperty("User-Agent", "Mozilla/5.0 (compatible; EareyeReader/1.0)")
-        }
+private suspend fun loadArticleImage(url: String): Bitmap? = withContext(Dispatchers.IO) {
+    imageLoadSemaphore.withPermit {
+        // 锁内复查缓存：并发触发的同 URL 加载只有一个在真正解码，其余直接命中
+        articleBitmapCache.get(url)?.let { return@withPermit it }
         try {
-            if (conn.responseCode == java.net.HttpURLConnection.HTTP_OK) {
-                conn.inputStream.use { it.readBytesCapped(MAX_IMAGE_BYTES) }
-            } else {
-                android.util.Log.w("ReaderScreen", "Image HTTP ${conn.responseCode}: $url")
-                null
+            val conn = (java.net.URL(url).openConnection() as java.net.HttpURLConnection).apply {
+                connectTimeout = 12_000
+                readTimeout = 15_000
+                instanceFollowRedirects = true
+                setRequestProperty("User-Agent", "Mozilla/5.0 (compatible; EareyeReader/1.0)")
             }
-        } finally {
-            conn.disconnect()
-        }
-    } catch (e: Exception) {
-        android.util.Log.w("ReaderScreen", "Image fetch failed: $url", e)
-        null
-    }
-    if (bytes == null) return null
+            val bytes = try {
+                if (conn.responseCode == java.net.HttpURLConnection.HTTP_OK) {
+                    conn.inputStream.use { it.readBytesCapped(MAX_IMAGE_BYTES) }
+                } else {
+                    android.util.Log.w("ReaderScreen", "Image HTTP ${conn.responseCode}: $url")
+                    null
+                }
+            } finally {
+                conn.disconnect()
+            }
+            if (bytes == null) return@withPermit null
 
-    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
-    if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return@withPermit null
 
-    val decodeOptions = BitmapFactory.Options().apply {
-        inJustDecodeBounds = false
-        inSampleSize = computeInSampleSize(bounds.outWidth, bounds.outHeight, MAX_IMAGE_DIMENSION)
-    }
-    val bitmap = try {
-        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, decodeOptions)
-    } catch (e: OutOfMemoryError) {
-        android.util.Log.w("ReaderScreen", "Image decode OOM, downsample more: $url")
-        // 再降一档（最多降两档），仍失败则放弃该图
-        val retry = BitmapFactory.Options().apply {
-            inJustDecodeBounds = false
-            inSampleSize = (decodeOptions.inSampleSize * 2).coerceAtLeast(2)
-        }
-        try {
-            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, retry)
-        } catch (e2: OutOfMemoryError) {
-            android.util.Log.e("ReaderScreen", "Image decode OOM (retry) failed: $url", e2)
+            val decodeOptions = BitmapFactory.Options().apply {
+                inJustDecodeBounds = false
+                inSampleSize = computeInSampleSize(bounds.outWidth, bounds.outHeight, MAX_IMAGE_DIMENSION)
+            }
+            val bitmap = try {
+                BitmapFactory.decodeByteArray(bytes, 0, bytes.size, decodeOptions)
+            } catch (e: OutOfMemoryError) {
+                android.util.Log.w("ReaderScreen", "Image decode OOM, downsample more: $url")
+                val retry = BitmapFactory.Options().apply {
+                    inJustDecodeBounds = false
+                    inSampleSize = (decodeOptions.inSampleSize * 2).coerceAtLeast(2)
+                }
+                try {
+                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, retry)
+                } catch (e2: OutOfMemoryError) {
+                    android.util.Log.e("ReaderScreen", "Image decode OOM (retry) failed: $url", e2)
+                    null
+                }
+            }
+            if (bitmap != null) articleBitmapCache.put(url, bitmap)
+            bitmap
+        } catch (e: Throwable) {
+            // 任何异常/错误都不让阅读页崩溃：坏链、解码失败、内存不足统一按"加载失败"处理
+            android.util.Log.w("ReaderScreen", "Image load failed (safe): $url", e)
             null
         }
     }
-    if (bitmap != null) articleBitmapCache.put(url, bitmap)
-    return bitmap
 }
 
 /** 按 2 的幂降采样，使解码后任意长边都不超过 [maxDimension]。 */
@@ -2735,7 +2749,8 @@ fun ArticleImageView(
     var failed by remember(url) { mutableStateOf(false) }
     LaunchedEffect(url) {
         if (bitmap == null && !failed) {
-            val loaded = withContext(Dispatchers.IO) { loadArticleImage(url) }
+            // loadArticleImage 内部已切 IO 并限流，这里直接调用即可
+            val loaded = loadArticleImage(url)
             if (loaded != null) bitmap = loaded else failed = true
         }
     }
