@@ -387,6 +387,21 @@ class RssParserTest {
     }
 
     @Test
+    fun `stripHtmlKeepParagraphs keeps http evening pictures as img markers and drops non-http ones`() {
+        val html = "<p>Intro</p><img src=\"https://cdn.example.com/a.jpg\" width=\"400\"><p>Body text</p>" +
+            "<img src=\"/relative.png\" alt=\"x\"><img src=\"data:image/png;base64,xxx\">"
+        val cleaned = parser.stripHtmlKeepParagraphs(html)
+        // 绝对 http(s) 地址被转成 [[IMG:url]] 保留在段落流
+        assertTrue(cleaned.contains("[[IMG:https://cdn.example.com/a.jpg]]"))
+        // 相对地址与 data: 占位图不保留
+        assertFalse(cleaned.contains("relative.png"))
+        assertFalse(cleaned.contains("data:image"))
+        // 块级结构仍保留：Intro / [[IMG:...]] / Body text 各自成段
+        assertTrue(cleaned.contains("Intro"))
+        assertTrue(cleaned.contains("Body text"))
+    }
+
+    @Test
     fun `decodeEntities handles numeric entities and preserves unknown ones`() {
         assertEquals("A & B < c > d \"q\" 'p'", parser.decodeEntities("A &amp; B &lt; c &gt; d &quot;q&quot; &apos;p&apos;"))
         assertEquals("中 \uD83D\uDE00 é", parser.decodeEntities("&#20013; &#x1F600; &#xE9;"))

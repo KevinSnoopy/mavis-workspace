@@ -2629,12 +2629,19 @@ private val articleBitmapCache = object : android.util.LruCache<String, Bitmap>(
     override fun sizeOf(key: String, value: Bitmap): Int = value.byteCount
 }
 
+/** 插图体积上限：超过则丢弃（防源站异常图/超清大图把 App 内存打爆）。 */
+private const val MAX_IMAGE_BYTES = 20 * 1024 * 1024
+
+/** 插图解码后长边上限：长边超过则按 2 的幂降采样，避免整张原图常驻内存导致 OOM。 */
+private const val MAX_IMAGE_DIMENSION = 2048
+
 /**
  * 在 IO 线程下载并解码远程图片，带内存缓存。失败返回 null（UI 兜底显示加载失败）。
+ * 会：限制响应体积上限、按尺寸降采样解码、捕获 OOM——高分辨率插图不再撑爆内存闪退。
  */
 private fun loadArticleImage(url: String): Bitmap? {
     articleBitmapCache.get(url)?.let { return it }
-    return try {
+    val bytes = try {
         val conn = (java.net.URL(url).openConnection() as java.net.HttpURLConnection).apply {
             connectTimeout = 15_000
             readTimeout = 20_000
@@ -2643,9 +2650,7 @@ private fun loadArticleImage(url: String): Bitmap? {
         }
         try {
             if (conn.responseCode == java.net.HttpURLConnection.HTTP_OK) {
-                val bitmap = conn.inputStream.use { BitmapFactory.decodeStream(it) }
-                if (bitmap != null) articleBitmapCache.put(url, bitmap)
-                bitmap
+                conn.inputStream.use { it.readBytesCapped(MAX_IMAGE_BYTES) }
             } else {
                 android.util.Log.w("ReaderScreen", "Image HTTP ${conn.responseCode}: $url")
                 null
@@ -2654,9 +2659,66 @@ private fun loadArticleImage(url: String): Bitmap? {
             conn.disconnect()
         }
     } catch (e: Exception) {
-        android.util.Log.w("ReaderScreen", "Image load failed: $url", e)
+        android.util.Log.w("ReaderScreen", "Image fetch failed: $url", e)
         null
     }
+    if (bytes == null) return null
+
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+    if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+
+    val decodeOptions = BitmapFactory.Options().apply {
+        inJustDecodeBounds = false
+        inSampleSize = computeInSampleSize(bounds.outWidth, bounds.outHeight, MAX_IMAGE_DIMENSION)
+    }
+    val bitmap = try {
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, decodeOptions)
+    } catch (e: OutOfMemoryError) {
+        android.util.Log.w("ReaderScreen", "Image decode OOM, downsample more: $url")
+        // 再降一档（最多降两档），仍失败则放弃该图
+        val retry = BitmapFactory.Options().apply {
+            inJustDecodeBounds = false
+            inSampleSize = (decodeOptions.inSampleSize * 2).coerceAtLeast(2)
+        }
+        try {
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, retry)
+        } catch (e2: OutOfMemoryError) {
+            android.util.Log.e("ReaderScreen", "Image decode OOM (retry) failed: $url", e2)
+            null
+        }
+    }
+    if (bitmap != null) articleBitmapCache.put(url, bitmap)
+    return bitmap
+}
+
+/** 按 2 的幂降采样，使解码后任意长边都不超过 [maxDimension]。 */
+private fun computeInSampleSize(width: Int, height: Int, maxDimension: Int): Int {
+    var sample = 1
+    var w = width
+    var h = height
+    while ((w > maxDimension || h > maxDimension) && sample < 32) {
+        w /= 2
+        h /= 2
+        sample *= 2
+    }
+    return sample
+}
+
+/** 带字节上限的读流：防止异常源返回超大响应时把整份字节读进内存。 */
+private fun java.io.InputStream.readBytesCapped(maxBytes: Int): ByteArray? {
+    val out = java.io.ByteArrayOutputStream()
+    val buf = ByteArray(8192)
+    while (true) {
+        val n = read(buf)
+        if (n < 0) break
+        if (out.size() + n > maxBytes) {
+            android.util.Log.w("ReaderScreen", "Image exceeds ${maxBytes / 1024 / 1024}MB, skipped")
+            return null
+        }
+        out.write(buf, 0, n)
+    }
+    return if (out.size() == 0) null else out.toByteArray()
 }
 
 /**

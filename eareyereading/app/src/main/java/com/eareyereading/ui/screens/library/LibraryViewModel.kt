@@ -24,6 +24,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.text.SimpleDateFormat
@@ -115,6 +116,14 @@ class LibraryViewModel @Inject constructor(
 
     /** 文章源抓取任务：切换源时取消旧抓取，防陈旧结果覆盖新选择 */
     private var articlesFetchJob: kotlinx.coroutines.Job? = null
+
+    /**
+     * 名著入库串行化：addBook 要把整本公版书读入内存 + 分词统计 + 落库，
+     * 多本同时下载完成时并发触发这些重 IO 会瞬间拉升内存并加剧数据库争用，
+     * 低内存设备上极易 OOM 闪退。这里把"解析+统计+入库"这个重阶段串行执行，
+     * 网络下载仍保持并行（先各自落盘），只在落库阶段排队。
+     */
+    private val classicIngestMutex = kotlinx.coroutines.sync.Mutex()
 
     private fun beginImportOp(message: String) {
         activeImportOps.incrementAndGet()
@@ -441,19 +450,26 @@ class LibraryViewModel @Inject constructor(
                         }
                     }
                 }
-                bookRepository.addBook(
-                    Book(
-                        title = classic.title,
-                        author = classic.author,
-                        filePath = dest.absolutePath,
-                        language = "en",
-                    ),
-                )
+                // 入库是"读全本+分词统计+落库"的重阶段：多本同时下载完成时
+                // 必须串行执行，避免并发重 IO 把内存/数据库瞬间打满导致 OOM 闪退
+                classicIngestMutex.withLock {
+                    bookRepository.addBook(
+                        Book(
+                            title = classic.title,
+                            author = classic.author,
+                            filePath = dest.absolutePath,
+                            language = "en",
+                        ),
+                    )
+                }
                 destFile = null // 成功入库后文件交 deleteBook 生命周期接管
                 refreshDueTimestamp()
                 setResultMessage("已加入书库：${classic.title}")
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
+            } catch (e: OutOfMemoryError) {
+                android.util.Log.e("LibraryViewModel", "download classic ${classic.id} OOM", e)
+                setResultMessage("已下载完毕，但入库时内存不足：${classic.title}")
             } catch (e: java.io.IOException) {
                 android.util.Log.e("LibraryViewModel", "download classic ${classic.id} failed", e)
                 setResultMessage("下载失败：${e.message ?: "网络错误"}")
