@@ -68,6 +68,8 @@ interface SettingsRepository {
     /** 通知偏好：TTS 下载完成提醒开关 */
     fun getNotificationDownloadComplete(): Flow<Boolean>
     fun getCollinsHighlight(): Flow<Boolean>
+    /** 普通阅读模式的翻页样式 */
+    fun getPageTurningStyle(): Flow<PageTurningStyle>
     /** TTS 语速倍率（0.5 - 2.0），用于内置/系统 TTS 的 speak 调用 */
     fun getTtsSpeed(): Flow<Float>
     suspend fun setRsvpSpeed(speed: Int)
@@ -80,6 +82,7 @@ interface SettingsRepository {
     suspend fun setNotificationDownloadProgress(enabled: Boolean)
     suspend fun setNotificationDownloadComplete(enabled: Boolean)
     suspend fun setCollinsHighlight(enabled: Boolean)
+    suspend fun setPageTurningStyle(style: PageTurningStyle)
     suspend fun setTtsSpeed(speed: Float)
     suspend fun clearAll()
 }

@@ -129,6 +129,11 @@ data class ReaderUiState(
     val showWordLevelColors: Boolean = false,
     // 生词本高亮
     val showKnownWordsHighlight: Boolean = true,
+    // 翻页样式（普通阅读模式：连续滚动 / 左右翻页 / 上下翻页）
+    val pageTurningStyle: PageTurningStyle = PageTurningStyle.SCROLL,
+    // 自动翻页
+    val isAutoPageTurning: Boolean = false,
+    val autoPageTurnIntervalMs: Long = 5000L,
     // 导航
     val showModeSelector: Boolean = false,
     val showSettings: Boolean = false,
@@ -166,6 +171,7 @@ private data class ReadingSettings(
     val alpha: Float,
     val strength: Int = 3,
     val collinsHighlight: Boolean = false,
+    val pageStyle: PageTurningStyle = PageTurningStyle.SCROLL,
 )
 
 @HiltViewModel
@@ -512,6 +518,8 @@ class ReaderViewModel @Inject constructor(
     private var translationJob: kotlinx.coroutines.Job? = null
     // 单段朗读的初始化尝试（防初始化窗口内连点产生重复朗读）
     private var ttsInitJob: kotlinx.coroutines.Job? = null
+    // 自动翻页驱动任务
+    private var autoPageTurnJob: kotlinx.coroutines.Job? = null
 
     // TTS 引导弹窗防抖：本会话内已经弹过则不再弹（避免用户每次点朗读都看到同一个弹窗）
     private var ttsPromptShownThisSession = false
@@ -526,6 +534,7 @@ class ReaderViewModel @Inject constructor(
                     settingsRepository.getTheme(),
                     settingsRepository.getTranslationAlpha(),
                     settingsRepository.getCollinsHighlight(),
+                    settingsRepository.getPageTurningStyle(),
                 ) { values ->
                     // P1 修复: 用 as? 安全转换 + 默认值,避免 DataStore 旧版本数据 schema
                     // 不匹配时 ClassCastException 直接死掉 init block(整个 Reader 屏开不起来)。
@@ -542,7 +551,9 @@ class ReaderViewModel @Inject constructor(
                     val alpha = values[4] as? Float ?: 0.85f
                     @Suppress("UNCHECKED_CAST")
                     val collinsHighlight = values[5] as? Boolean ?: false
-                    ReadingSettings(speed, fontSize, theme, alpha, strength, collinsHighlight)
+                    @Suppress("UNCHECKED_CAST")
+                    val pageStyle = values[6] as? PageTurningStyle ?: PageTurningStyle.SCROLL
+                    ReadingSettings(speed, fontSize, theme, alpha, strength, collinsHighlight, pageStyle)
                 }.collect { s ->
                     _uiState.update {
                         it.copy(
@@ -554,6 +565,7 @@ class ReaderViewModel @Inject constructor(
                             theme = s.theme,
                             translationAlpha = s.alpha,
                             showWordLevelColors = s.collinsHighlight,
+                            pageTurningStyle = s.pageStyle,
                         )
                     }
                 }
@@ -1018,6 +1030,9 @@ class ReaderViewModel @Inject constructor(
         rsvpJob?.cancel()
         speedJob?.cancel()
         autoReadJob?.cancel()
+        // 自动翻页与朗读播放互斥：启动任一播放形态的同时停掉自动翻页
+        autoPageTurnJob?.cancel()
+        autoPageTurnJob = null
         // ttsInitJob 也必须取消：初始化成功后会回调 doToggleTts() 启动播放，
         // 若不取消，用户在初始化窗口内切到别的播放形态后，
         // 迟到的初始化回调会在新生播放之上再叠一层单段朗读
@@ -1028,6 +1043,7 @@ class ReaderViewModel @Inject constructor(
                 isPlaying = false,
                 isTtsPlaying = false,
                 isAutoReading = false,
+                isAutoPageTurning = false,
                 currentSentences = emptyList(),
                 currentSentenceIndex = 0,
             )
@@ -1851,6 +1867,7 @@ class ReaderViewModel @Inject constructor(
         sentenceTranslateJob?.cancel()
         translationJob?.cancel()
         bookmarkToggleJob?.cancel()
+        autoPageTurnJob?.cancel()
         vocabJob?.cancel()
         bookmarksJob?.cancel()
         highlightsJob?.cancel()
@@ -1942,6 +1959,61 @@ class ReaderViewModel @Inject constructor(
 
     fun toggleKnownWordsHighlight() {
         _uiState.update { it.copy(showKnownWordsHighlight = !it.showKnownWordsHighlight) }
+    }
+
+    // ── 翻页样式 ─────────────────────────────
+    fun setPageTurningStyle(style: PageTurningStyle) {
+        _uiState.update { it.copy(pageTurningStyle = style) }
+        viewModelScope.launch { settingsRepository.setPageTurningStyle(style) }
+    }
+
+    fun setAutoPageTurnInterval(ms: Long) {
+        val clamped = ms.coerceIn(1500L, 60000L)
+        _uiState.update { it.copy(autoPageTurnIntervalMs = clamped) }
+    }
+
+    /** 自动翻页开关：开 = 每隔一段间隔自动翻到下一页。 */
+    fun toggleAutoPageTurn() {
+        if (_uiState.value.isAutoPageTurning) {
+            stopAutoPageTurning()
+        } else {
+            startAutoPageTurning()
+        }
+    }
+
+    private fun startAutoPageTurning() {
+        val paragraphs = _uiState.value.paragraphs
+        if (paragraphs.isEmpty()) return
+        _uiState.update { it.copy(isAutoPageTurning = true) }
+        autoPageTurnJob = viewModelScope.launch {
+            while (isActive) {
+                val interval = _uiState.value.autoPageTurnIntervalMs
+                if (interval > 0) delay(interval)
+                if (!_uiState.value.isAutoPageTurning) break
+                val next = _uiState.value.currentParagraphIndex + 1
+                if (next >= paragraphs.size) {
+                    // 读到书末自动停止，停在后一页看清结尾
+                    stopAutoPageTurning()
+                    break
+                }
+                advancePageTo(next)
+            }
+        }
+    }
+
+    private fun stopAutoPageTurning() {
+        autoPageTurnJob?.cancel()
+        autoPageTurnJob = null
+        _uiState.update { it.copy(isAutoPageTurning = false) }
+    }
+
+    /** 自动翻页用的轻量翻页：与 [nextParagraph] 同语义，但不走 stopAllPlayback（避免误杀自己的状态）。 */
+    private fun advancePageTo(next: Int) {
+        _uiState.update { it.copy(currentParagraphIndex = next, currentWordIndex = 0) }
+        recordParagraphVisit(next)
+        saveProgress()
+        if (_uiState.value.readingMode == ReadingMode.CLOZE) generateCloze()
+        if (_uiState.value.readingMode == ReadingMode.FUZZY) generateFuzzy()
     }
 
     fun toggleChapterNav() {

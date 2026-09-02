@@ -74,3 +74,17 @@ enum class ReadingTheme(val value: String, val displayName: String) {
     DARK("dark", "暗黑"),
     SEPIA("sepia", "护眼"),
 }
+
+/**
+ * 翻页样式（普通阅读模式的呈现方式）：
+ * - SCROLL：连续滚动（默认，一页看整段长文随手指滚动）
+ * - HORIZONTAL：像纸质书左右翻页，一页一段
+ * - VERTICAL：上下翻页，一页一段
+ *
+ * 留存 DataStore，重进阅读页仍保持上次选择。
+ */
+enum class PageTurningStyle(val value: String, val displayName: String) {
+    SCROLL("scroll", "连续滚动"),
+    HORIZONTAL("horizontal", "左右翻页"),
+    VERTICAL("vertical", "上下翻页"),
+}

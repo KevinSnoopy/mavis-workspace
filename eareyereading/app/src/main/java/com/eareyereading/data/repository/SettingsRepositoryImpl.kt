@@ -3,6 +3,7 @@ package com.eareyereading.data.repository
 import android.content.Context
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.*
+import com.eareyereading.domain.model.PageTurningStyle
 import com.eareyereading.domain.model.ReadingTheme
 import com.eareyereading.domain.repository.SettingsRepository
 import com.eareyereading.util.ReminderPrefs
@@ -32,6 +33,7 @@ class SettingsRepositoryImpl @Inject constructor(
         val NOTIFICATION_DOWNLOAD_PROGRESS = booleanPreferencesKey("notification_download_progress")
         val NOTIFICATION_DOWNLOAD_COMPLETE = booleanPreferencesKey("notification_download_complete")
         val COLLINS_HIGHLIGHT = booleanPreferencesKey("collins_highlight")
+        val PAGE_TURNING_STYLE = stringPreferencesKey("page_turning_style")
         val TTS_SPEED = floatPreferencesKey("tts_speed")
     }
 
@@ -114,6 +116,16 @@ class SettingsRepositoryImpl @Inject constructor(
 
     override suspend fun setCollinsHighlight(enabled: Boolean) {
         dataStore.edit { it[COLLINS_HIGHLIGHT] = enabled }
+    }
+
+    override fun getPageTurningStyle(): Flow<PageTurningStyle> =
+        dataStore.data.map {
+            val value = it[PAGE_TURNING_STYLE] ?: "scroll"
+            PageTurningStyle.entries.find { s -> s.value == value } ?: PageTurningStyle.SCROLL
+        }
+
+    override suspend fun setPageTurningStyle(style: PageTurningStyle) {
+        dataStore.edit { it[PAGE_TURNING_STYLE] = style.value }
     }
 
     override suspend fun setTtsSpeed(speed: Float) {
