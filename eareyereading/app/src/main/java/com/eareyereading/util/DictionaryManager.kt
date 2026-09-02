@@ -310,7 +310,7 @@ class DictionaryManager @Inject constructor(
     }
 
     /**
-     * 删除已下载的词典文件。如果删除的是当前选中词典，回退到内置词典。
+     * 删除已下载的词典文件。如果删除的是当前选中词典，清空选中状态。
      */
     suspend fun delete(dictId: String): Boolean = withContext(Dispatchers.IO) {
         val manifest = parseManifest()
@@ -330,7 +330,7 @@ class DictionaryManager @Inject constructor(
     }
 
     /**
-     * 设置当前选中的词典。传 null 表示使用内置词典。
+     * 设置当前选中的词典。传 null 表示不选中任何下载词典（查词返回未命中）。
      * 可从 Compose 点击回调直接调用：偏好写入是内存+异步落盘，
      * 磁盘侧的状态重建丢给后台调度器，不在 Main 线程解析 manifest。
      */
@@ -346,7 +346,7 @@ class DictionaryManager @Inject constructor(
 
     /**
      * 获取当前选中词典的已加载内存 Map。
-     * 如果没有选中任何下载的词典，返回 null（调用方回退到内置词典）。
+     * 如果没有选中任何下载的词典，返回 null（调用方查词按未命中处理）。
      * issue 12.5：对"大词典"（文件 >= 10MB）同样返回 null，不整份载内存，
      * 由 [lookup] 走 Room 表按需单条查询。
      */

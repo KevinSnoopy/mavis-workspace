@@ -2,13 +2,11 @@
 
 package com.eareyereading.util
 
-import android.content.Context
 import android.os.SystemClock
 import com.google.mlkit.common.model.DownloadConditions
 import com.google.mlkit.nl.translate.TranslateLanguage
 import com.google.mlkit.nl.translate.Translation
 import com.google.mlkit.nl.translate.TranslatorOptions
-import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.TimeoutCancellationException
@@ -32,7 +30,6 @@ import kotlin.coroutines.resume
  */
 @Singleton
 class TranslationHelper @Inject constructor(
-    @ApplicationContext private val context: Context,
     private val dictionaryManager: DictionaryManager,
 ) {
     @Volatile
@@ -58,35 +55,6 @@ class TranslationHelper @Inject constructor(
      */
     @Volatile
     private var initFailedAt = 0L
-
-    // 内置词典：从 assets/dictionary.txt 加载（word|translation 格式），作为兜底
-    private val builtinDict: Map<String, String> by lazy { loadBuiltinDict() }
-
-    private fun loadBuiltinDict(): Map<String, String> {
-        return try {
-            context.assets.open("dictionary.txt")
-                .bufferedReader()
-                .useLines { lines ->
-                    val map = linkedMapOf<String, String>()
-                    for (line in lines) {
-                        val trimmed = line.trim()
-                        if (trimmed.isEmpty() || trimmed.startsWith("#")) continue
-                        val sep = trimmed.indexOf('|')
-                        if (sep <= 0) continue
-                        map[trimmed.substring(0, sep).trim()] =
-                            trimmed.substring(sep + 1).trim()
-                    }
-                    android.util.Log.i(
-                        "TranslationHelper",
-                        "Loaded ${map.size} entries from builtin dictionary.txt"
-                    )
-                    map
-                }
-        } catch (e: Exception) {
-            android.util.Log.e("TranslationHelper", "Failed to load builtin dictionary.txt", e)
-            emptyMap()
-        }
-    }
 
     // ── 懒加载初始化（线程安全）─────────────────────
     private suspend fun ensureInitialized() {
@@ -373,7 +341,7 @@ class TranslationHelper @Inject constructor(
         else -> null
     }
 
-    // ── 本地词典（用户下载的分级词典 + 内置兜底）───────────
+    // ── 本地词典（用户下载的分级词典）────────────────
     private suspend fun lookupLocalDict(text: String): String? {
         // issue 8.9：词典只收单词；句子/多词输入查词典只会返回
         // 首词或子串的无意义结果（"the book is" 命中 "the"），直接放弃
@@ -381,10 +349,8 @@ class TranslationHelper @Inject constructor(
         // Locale.ROOT：避免土耳其语等 locale 下 lowercase 的 I→ı 变体破坏查词
         val clean = text.trim().lowercase(Locale.ROOT).replace(Regex("[^a-z]"), "")
         if (clean.length < 2) return null
-        // 优先查用户选中的下载词典
-        dictionaryManager.lookup(clean)?.let { return it }
-        // 回退到内置词典
-        return builtinDict[clean]
+        // 查用户选中的下载词典，未选中/未命中返回 null（不再有内置兜底）
+        return dictionaryManager.lookup(clean)
     }
 
     /**
