@@ -139,9 +139,13 @@ fun ReaderScreen(
         ReadingTheme.SEPIA -> SepiaText
     }
 
-    // issue 3.8：阅读沉浸态。默认收起顶部/底部操作栏（chrome），
-    // 点正文空白切换显隐；滚动短暂显示后自动收起；弹窗/选词/朗读等需要操作时强制常亮。
-    var chromeVisible by rememberSaveable { mutableStateOf(false) }
+    // issue 3.8：阅读沉浸态。点正文空白切换显隐；滚动短暂显示后自动收起；
+    // 弹窗/选词/朗读等需要操作时强制常亮。
+    // 进书默认显示：旧值 false 时用户打开书只看到纯正文，顶栏的翻译/阅读
+    // 模式入口与底栏快捷设置全部不可见，且"点空白唤出"无任何提示——
+    // 用户反馈"仿书页左右翻译等设置丢了"即此。改为进书先展示，
+    // 开始滚动阅读后自动收起进沉浸态，可发现性与沉浸感兼得。
+    var chromeVisible by rememberSaveable { mutableStateOf(true) }
     val autoHideScope = rememberCoroutineScope()
     // 自动隐藏延迟任务：滚动/临时操作后无动作，延时收起 chrome（回到沉浸态）
     var autoHideJob by remember { mutableStateOf<Job?>(null) }
