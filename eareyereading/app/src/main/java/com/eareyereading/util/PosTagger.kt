@@ -107,11 +107,16 @@ class PosTagger @Inject constructor() {
         Pair("ly", PosTag.ADVERB),
     )
 
+    private companion object {
+        /** 分词正则预编译：标注按句调用（阅读界面高频），避免每次 Pattern.compile。 */
+        private val WORD_REGEX = Regex("[a-zA-Z]+")
+    }
+
     /**
      * 标注句子中每个英文单词的词性
      */
     fun tagSentence(sentence: String): List<Pair<String, PosTag>> {
-        val words = Regex("([a-zA-Z]+)").findAll(sentence)
+        val words = WORD_REGEX.findAll(sentence)
         return words.map { match ->
             // Locale.ROOT：避免土耳其语等 locale 下 lowercase 的 I→ı 变体导致查表失配
             val word = match.value.lowercase(Locale.ROOT)

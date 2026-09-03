@@ -3,6 +3,7 @@ package com.eareyereading.data.repository
 import android.content.Context
 import androidx.room.withTransaction
 import com.eareyereading.data.local.dao.BookDao
+import com.eareyereading.data.local.dao.BookListItem
 import com.eareyereading.data.local.dao.BookmarkDao
 import com.eareyereading.data.local.dao.HighlightDao
 import com.eareyereading.data.local.dao.ReadingStateDao
@@ -20,6 +21,7 @@ import com.eareyereading.util.WordAnalyzer
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -53,10 +55,17 @@ class BookRepositoryImpl @Inject constructor(
     }
 
     override fun getAllBooks(): Flow<List<Book>> =
-        bookDao.getAllBooks().map { entities -> entities.map { it.toDomain() } }
+        bookDao.getAllBooks()
+            .map { entities -> entities.map { it.toDomain() } }
+            // 实体→领域对象的全量重建放 Default 调度器：
+            // Room Flow 在查询执行器发射，但下游 map 跑在收集者上下文（主线程），
+            // 大书库时每次失效重发射都在主线程做整列表拷贝
+            .flowOn(Dispatchers.Default)
 
     override fun getArchivedBooks(): Flow<List<Book>> =
-        bookDao.getArchivedBooks().map { entities -> entities.map { it.toDomain() } }
+        bookDao.getArchivedBooks()
+            .map { entities -> entities.map { it.toDomain() } }
+            .flowOn(Dispatchers.Default)
 
     override fun getBookById(id: Long): Flow<Book?> =
         bookDao.getBookByIdFlow(id).map { it?.toDomain() }
@@ -118,11 +127,30 @@ class BookRepositoryImpl @Inject constructor(
             }
         }
 
-        val joined = paragraphs.joinToString(" ")
-        val tokens = joined.split("\\s+".toRegex()).filter { it.isNotBlank() }
+        // 单趟统计：一次遍历段落同时完成分词与 CJK 计数。
+        // 旧实现 join 全文 → split（数十万 String）→ count 再扫一遍全文，
+        // 大书导入瞬时内存峰值约为正文的 3~4 倍
+        val tokens = ArrayList<String>(paragraphs.size * 64)
+        var cjkChars = 0
+        for (paragraph in paragraphs) {
+            var start = -1
+            for (i in paragraph.indices) {
+                val c = paragraph[i]
+                if (c in '\u4E00'..'\u9FFF') cjkChars++
+                val isWhitespace = c == ' ' || c == '\t' || c == '\n' || c == '\r'
+                if (isWhitespace) {
+                    if (start >= 0) {
+                        tokens.add(paragraph.substring(start, i))
+                        start = -1
+                    }
+                } else if (start < 0) {
+                    start = i
+                }
+            }
+            if (start >= 0) tokens.add(paragraph.substring(start))
+        }
         // 中文等无空白语言按空白切分只得 1 个"词"：此时按 CJK 字符数计词，
         // 避免"少数派"类中文文章整书报 1 词
-        val cjkChars = joined.count { it in '\u4E00'..'\u9FFF' }
         val totalWords = if (cjkChars > tokens.size) cjkChars else tokens.size
 
         val contentToSave = if (book.content.isNotBlank()) book.content
@@ -157,9 +185,9 @@ class BookRepositoryImpl @Inject constructor(
                     val coverDir = File(context.filesDir, "covers").apply { mkdirs() }
                     val coverFile = File(coverDir, "$bookId")
                     coverFile.writeBytes(coverBytes)
-                    bookDao.getBookById(bookId)?.let { saved ->
-                        bookDao.update(saved.copy(coverPath = coverFile.absolutePath))
-                    }
+                    // 定向 UPDATE：旧实现 SELECT * 回读整行（含刚写入的整书正文）
+                    // 只为 copy 出一个改了 coverPath 的实体再全字段 UPDATE
+                    bookDao.updateCoverPath(bookId, coverFile.absolutePath)
                 }
             } catch (e: Exception) {
                 android.util.Log.w("BookRepository", "extract cover failed for $bookId", e)
@@ -168,7 +196,7 @@ class BookRepositoryImpl @Inject constructor(
 
         // 词频统计此前只有删没有写：word_frequencies 永远是空表，
         // getTopFrequencies 永远不出数据（issue 12.2）
-        val frequencies = wordAnalyzer.calculateWordFrequencies(joined)
+        val frequencies = wordAnalyzer.calculateWordFrequencies(paragraphs)
             .entries
             .sortedByDescending { it.value }
             .take(TOP_FREQUENCY_WORDS)
@@ -228,7 +256,7 @@ class BookRepositoryImpl @Inject constructor(
     override suspend fun deleteBook(bookId: Long) {
         // 删除前记下文件路径：事务成功后清理导入时拷贝的书籍文件，
         // 防孤儿文件无限累积（仅限应用 books 目录内的文件）
-        val filePath = bookDao.getBookById(bookId)?.filePath.orEmpty()
+        val filePath = bookDao.getFilePath(bookId).orEmpty()
         // 在单个事务中级联删除，保证原子性：要么全部成功，要么全部回滚
         database.withTransaction {
             // 复习记录先删：它靠 vocabulary 行的 bookId 子查询定位，
@@ -240,7 +268,7 @@ class BookRepositoryImpl @Inject constructor(
             readingStateDao.deleteForBook(bookId)
             readingStatsDao.deleteForBook(bookId)
             wordFrequencyDao.deleteForBook(bookId)
-            bookDao.getBookById(bookId)?.let { bookDao.delete(it) }
+            bookDao.deleteById(bookId)
         }
         if (filePath.isNotBlank()) {
             withContext(Dispatchers.IO) {
@@ -279,10 +307,23 @@ class BookRepositoryImpl @Inject constructor(
     override fun searchBooks(query: String): Flow<List<Book>> =
         // issue 10.6：把查询里的 LIKE 通配符转义为字面量（与 DAO 的 ESCAPE '\' 配套），
         // 避免用户输入 %/_ 时语义被破坏；同时截断超长搜索词防全表跑来兜底
-        bookDao.searchBooks(escapeForLike(query).take(64)).map { entities -> entities.map { it.toDomain() } }
+        bookDao.searchBooks(escapeForLike(query).take(64))
+            .map { entities -> entities.map { it.toDomain() } }
+            .flowOn(Dispatchers.Default)
 
     private fun escapeForLike(raw: String): String =
         raw.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+    /** 列表投影 → 领域对象（content 不进列表：需要正文走 getBookById）。 */
+    private fun BookListItem.toDomain() = Book(
+        id = id, title = title, author = author, coverPath = coverPath,
+        filePath = filePath, sourceUri = sourceUri, identifier = identifier,
+        isTruncated = isTruncated, originalCharCount = originalCharCount,
+        totalWords = totalWords, readProgress = readProgress,
+        lastReadPosition = lastReadPosition, lastReadTime = lastReadTime,
+        dateAdded = dateAdded, language = language, isArchived = isArchived,
+        addedAt = addedAt,
+    )
 
     private fun BookEntity.toDomain() = Book(
         id = id, title = title, author = author, coverPath = coverPath,

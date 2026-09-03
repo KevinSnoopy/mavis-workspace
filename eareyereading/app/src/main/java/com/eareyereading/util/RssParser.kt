@@ -107,6 +107,19 @@ class RssParser @Inject constructor() {
             "description", "summary", "content", "encoded",
             "pubdate", "date", "published", "updated",
         )
+
+        // ── 正则预编译：stripHtml 系列被每个 item 的每个字段调用，
+        // 旧实现单次 feed 解析要编译几百次正则 ──
+        private val ANY_TAG = Regex("<[^>]+>")
+        private val WHITESPACE = Regex("\\s+")
+        private val BLOCK_END = Regex("(?i)</(p|div|li|h[1-6]|blockquote|tr|section|article)>|<br\\s*/?>")
+        private val LINE_WS = Regex("[ \\t\\x0B\\f]+")
+        private val EXCESS_NEWLINES = Regex("\n{3,}")
+        private val ENTITY = Regex("(&#[xX]?[0-9a-fA-F]+;|&[a-zA-Z][a-zA-Z0-9]*;)")
+        private val CONTENT_TYPE_CHARSET = Regex(";\\s*charset\\s*=\\s*[\"']?([^\"';\\s]+)", RegexOption.IGNORE_CASE)
+        private val XML_ENCODING_ATTR = Regex("""encoding\s*=\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
+        private val TZ_OFFSET = Regex("([+-]\\d{2}):(\\d{2})")
+        private val TZ_NAME = Regex("\\s+(GMT|UTC|UT)$")
     }
 
     data class RssFeed(
@@ -413,8 +426,7 @@ class RssParser @Inject constructor() {
     /** 从 `application/rss+xml; charset=UTF-8` 这类 Content-Type 里取 charset。 */
     internal fun charsetFromContentType(contentType: String?): String? {
         if (contentType == null) return null
-        return Regex(";\\s*charset\\s*=\\s*[\"']?([^\"';\\s]+)", RegexOption.IGNORE_CASE)
-            .find(contentType)?.groupValues?.get(1)
+        return CONTENT_TYPE_CHARSET.find(contentType)?.groupValues?.get(1)
     }
 
     /**
@@ -433,8 +445,7 @@ class RssParser @Inject constructor() {
             bytes.copyOfRange(0, minOf(bytes.size, 512)),
             Charset.forName("US-ASCII")
         )
-        val xmlEncoding = Regex("""encoding\s*=\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
-            .find(head)?.groupValues?.get(1)
+        val xmlEncoding = XML_ENCODING_ATTR.find(head)?.groupValues?.get(1)
         return listOfNotNull(headerCharset, xmlEncoding, "UTF-8").firstNotNullOfOrNull { name ->
             try {
                 Charset.forName(name.trim())
@@ -462,7 +473,7 @@ class RssParser @Inject constructor() {
     }
 
     internal fun stripHtml(html: String): String {
-        return Regex("\\s+").replace(decodeEntities(html.replace(Regex("<[^>]+>"), " ")), " ").trim()
+        return WHITESPACE.replace(decodeEntities(html.replace(ANY_TAG, " ")), " ").trim()
     }
 
     /**
@@ -471,12 +482,13 @@ class RssParser @Inject constructor() {
      */
     internal fun stripHtmlKeepParagraphs(html: String): String {
         val withBreaks = html
-            .replace(Regex("(?i)</(p|div|li|h[1-6]|blockquote|tr|section|article)>|<br\\s*/?>"), "\n\n")
-            .replace(Regex("<[^>]+>"), " ")
+            .replace(BLOCK_END, "\n\n")
+            .replace(ANY_TAG, " ")
         val decoded = decodeEntities(withBreaks)
+        // LINE_WS 原写在 joinToString 的 lambda 内：每行编译一次正则
         return decoded.lines()
-            .joinToString("\n") { Regex("[ \\t\\x0B\\f]+").replace(it, " ").trim() }
-            .replace(Regex("\n{3,}"), "\n\n")
+            .joinToString("\n") { LINE_WS.replace(it, " ").trim() }
+            .replace(EXCESS_NEWLINES, "\n\n")
             .trim()
     }
 
@@ -484,7 +496,7 @@ class RssParser @Inject constructor() {
     internal fun decodeEntities(s: String): String {
         val idx = s.indexOf('&')
         if (idx < 0) return s
-        return s.replace(Regex("(&#[xX]?[0-9a-fA-F]+;|&[a-zA-Z][a-zA-Z0-9]*;)")) { m ->
+        return s.replace(ENTITY) { m ->
             decodeEntity(m.value)
         }
     }
@@ -511,9 +523,9 @@ class RssParser @Inject constructor() {
         // 静默忽略 " GMT" 尾巴，RSS 最常见的 GMT 时间整体偏移数小时。
         // 先把文本时区归一成数字偏移再解析。
         val normalized = dateStr.trim()
-            .replace(Regex("([+-]\\d{2}):(\\d{2})"), "$1$2") // +00:00 -> +0000（RFC3339 偏移归一）
+            .replace(TZ_OFFSET, "$1$2") // +00:00 -> +0000（RFC3339 偏移归一）
             .replace("Z", "+0000")
-            .replace(Regex("\\s+(GMT|UTC|UT)$"), " +0000")
+            .replace(TZ_NAME, " +0000")
         // SimpleDateFormat 非线程安全：每次调用新建实例，避免并发刷新时互相污染
         for (pattern in DATE_PATTERNS) {
             try {

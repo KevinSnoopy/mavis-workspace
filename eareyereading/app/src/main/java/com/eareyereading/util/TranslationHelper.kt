@@ -14,6 +14,8 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.Locale
@@ -249,6 +251,8 @@ class TranslationHelper @Inject constructor(
         // issue 8.4：全文翻译 200 段顺序 await 无并发、无分段、无进度反馈。
         // 改为并发翻译（每段独立 async），ML Kit translate 是异步 Task，CPU 不占满，
         // 但网络/模型推理可并行，明显缩短整本书翻译时长。
+        // Semaphore 限流：不限流时几百段同时压 ML Kit（各自还可能等模型就绪）
+        val semaphore = Semaphore(PARAGRAPH_CONCURRENCY)
         val blank = paragraphs.indices.filter { paragraphs[it].isBlank() }.toSet()
         return coroutineScope {
             paragraphs.indices.map { index ->
@@ -257,7 +261,9 @@ class TranslationHelper @Inject constructor(
                         // 空段保留占位（下述 filter 会按"翻译结果为空"剔除，二者无冲突）
                         index to ""
                     } else {
-                        index to (translate(paragraphs[index].take(TRANSLATION_CHAR_LIMIT), sourceLang) ?: "")
+                        semaphore.withPermit {
+                            index to (translate(paragraphs[index].take(TRANSLATION_CHAR_LIMIT), sourceLang) ?: "")
+                        }
                     }
                 }
             }.awaitAll().filter { (_, value) ->
@@ -347,7 +353,7 @@ class TranslationHelper @Inject constructor(
         // 首词或子串的无意义结果（"the book is" 命中 "the"），直接放弃
         if (text.contains(' ')) return null
         // Locale.ROOT：避免土耳其语等 locale 下 lowercase 的 I→ı 变体破坏查词
-        val clean = text.trim().lowercase(Locale.ROOT).replace(Regex("[^a-z]"), "")
+        val clean = text.trim().lowercase(Locale.ROOT).replace(NON_ALPHA_REGEX, "")
         if (clean.length < 2) return null
         // 查用户选中的下载词典，未选中/未命中返回 null（不再有内置兜底）
         return dictionaryManager.lookup(clean)
@@ -391,5 +397,12 @@ class TranslationHelper @Inject constructor(
 
         // 初始化失败后的重试窗口（issue 8.2）
         const val INIT_RETRY_WINDOW_MS = 60_000L
+
+        // 整书翻译并发上限：旧实现 200 段一次性 async 同时压 ML Kit
+        //（各自还可能等模型就绪），限流后吞吐更高也更稳
+        const val PARAGRAPH_CONCURRENCY = 6
+
+        // 本地词典查词的归一化正则（查词热路径预编译）
+        val NON_ALPHA_REGEX = Regex("[^a-z]")
     }
 }

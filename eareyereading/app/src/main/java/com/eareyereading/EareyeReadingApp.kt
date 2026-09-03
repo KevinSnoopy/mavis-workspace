@@ -36,11 +36,15 @@ class EareyeReadingApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
-        // 初始化通知渠道
-        notificationHelper.createNotificationChannel()
-        // DataStore 首读是磁盘 IO：此前 runBlocking 卡在主线程，
-        // 冷启动触发 StrictMode DiskReadViolation、白屏可感知（issue 6.1）
-        appScope.launch { syncReminderPrefsMirror() }
+        // 初始化通知渠道 + DataStore 对账都放后台：
+        // 渠道创建是 NotificationManager Binder IPC，且 syncReminderPrefsMirror
+        // 内部的 scheduleReviewReminder 还会再建一次——主线程这次纯属重复
+        appScope.launch {
+            notificationHelper.createNotificationChannel()
+            // DataStore 首读是磁盘 IO：此前 runBlocking 卡在主线程，
+            // 冷启动触发 StrictMode DiskReadViolation、白屏可感知（issue 6.1）
+            syncReminderPrefsMirror()
+        }
         // issue 6.2：ACTION_TIME_SET / ACTION_TIMEZONE_CHANGED 是系统受保护广播，
         // Android 5+ 不再投递给 manifest 静态注册的接收器，只有动态注册能收到。
         // 改在 Application.onCreate 动态注册，跨时区/手动改系统时间后提醒闹钟重新调度。

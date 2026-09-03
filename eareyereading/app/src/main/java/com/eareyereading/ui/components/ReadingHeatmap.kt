@@ -1,5 +1,6 @@
 package com.eareyereading.ui.components
 
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -19,9 +20,13 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
@@ -34,6 +39,10 @@ import com.eareyereading.ui.theme.Primary
  * 学习热力图（GitHub contributions 式）：
  * [dailyMinutes] 为按周一到周日、周序排列的每日阅读分钟数（最旧在前），
  * 负值表示"未来日期"（本周尚未到来的天），渲染为透明占位。
+ *
+ * 性能：格子用单个 Canvas 一次遍历绘制。旧实现 7×12=84 个 Box 组合节点
+ *（每个带 clip + background 绘制层），每次重组还创建 84 个
+ * RoundedCornerShape 与 Color 实例。
  */
 @Composable
 fun ReadingHeatmap(
@@ -42,8 +51,11 @@ fun ReadingHeatmap(
 ) {
     val weeks = dailyMinutes.size / 7
     if (weeks == 0) return
-    val activeDays = dailyMinutes.count { it > 0 }
-    val totalMinutes = dailyMinutes.sumOf { it.coerceAtLeast(0) }
+    val (activeDays, totalMinutes) = remember(dailyMinutes) {
+        dailyMinutes.count { it > 0 } to dailyMinutes.sumOf { it.coerceAtLeast(0) }
+    }
+    val cellSize = 12.dp
+    val gap = 3.dp
 
     Surface(
         modifier = modifier,
@@ -64,18 +76,25 @@ fun ReadingHeatmap(
                 )
             }
             Spacer(modifier = Modifier.height(12.dp))
-            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Canvas(
+                modifier = Modifier.size(
+                    width = cellSize * weeks + gap * (weeks - 1),
+                    height = cellSize * 7 + gap * 6,
+                ),
+            ) {
+                val cellPx = cellSize.toPx()
+                val gapPx = gap.toPx()
+                val corner = CornerRadius(3.dp.toPx())
                 for (day in 0 until 7) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
-                        for (week in 0 until weeks) {
-                            val minutes = dailyMinutes.getOrElse(week * 7 + day) { 0 }
-                            Box(
-                                modifier = Modifier
-                                    .size(12.dp)
-                                    .clip(RoundedCornerShape(3.dp))
-                                    .background(heatmapCellColor(minutes)),
-                            )
-                        }
+                    for (week in 0 until weeks) {
+                        val minutes = dailyMinutes.getOrElse(week * 7 + day) { 0 }
+                        if (minutes < 0) continue // 未来日期：透明占位
+                        drawRoundRect(
+                            color = heatmapCellColor(minutes),
+                            topLeft = Offset(week * (cellPx + gapPx), day * (cellPx + gapPx)),
+                            size = Size(cellPx, cellPx),
+                            cornerRadius = corner,
+                        )
                     }
                 }
             }
@@ -106,14 +125,21 @@ fun ReadingHeatmap(
     }
 }
 
-/** 热力格颜色：0 分钟用极浅底，阅读时长分四档加深（品牌棕的单色阶）。 */
+/** 热力格颜色档位常量：0 分钟用极浅底，阅读时长分四档加深（品牌棕的单色阶）。 */
+private val CELL_EMPTY = Primary.copy(alpha = 0.08f)
+private val CELL_LEVEL_1 = Primary.copy(alpha = 0.28f)
+private val CELL_LEVEL_2 = Primary.copy(alpha = 0.48f)
+private val CELL_LEVEL_3 = Primary.copy(alpha = 0.68f)
+private val CELL_LEVEL_4 = Primary.copy(alpha = 0.92f)
+
+/** 热力格颜色（返回预建常量，免每次调用分配新 Color）。 */
 private fun heatmapCellColor(minutes: Int): Color = when {
     minutes < 0 -> Color.Transparent          // 未来日期
-    minutes == 0 -> Primary.copy(alpha = 0.08f)
-    minutes < 15 -> Primary.copy(alpha = 0.28f)
-    minutes < 35 -> Primary.copy(alpha = 0.48f)
-    minutes < 60 -> Primary.copy(alpha = 0.68f)
-    else -> Primary.copy(alpha = 0.92f)
+    minutes == 0 -> CELL_EMPTY
+    minutes < 15 -> CELL_LEVEL_1
+    minutes < 35 -> CELL_LEVEL_2
+    minutes < 60 -> CELL_LEVEL_3
+    else -> CELL_LEVEL_4
 }
 
 /**

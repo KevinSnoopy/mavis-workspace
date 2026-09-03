@@ -68,6 +68,10 @@ interface ReadingStatsDao {
     @Query("SELECT * FROM reading_stats ORDER BY timestamp DESC")
     suspend fun getAllStats(): List<ReadingStatsEntity>
 
+    /** 连胜计算只需要去重日期：widget 高频刷新场景免拉全表实体。 */
+    @Query("SELECT DISTINCT date FROM reading_stats")
+    suspend fun getAllDates(): List<String>
+
     @Query("SELECT * FROM reading_stats ORDER BY timestamp DESC LIMIT :limit")
     fun getRecentStats(limit: Int): Flow<List<ReadingStatsEntity>>
 

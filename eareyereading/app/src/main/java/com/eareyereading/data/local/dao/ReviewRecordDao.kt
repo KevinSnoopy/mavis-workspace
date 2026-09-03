@@ -41,6 +41,10 @@ interface ReviewRecordDao {
     @Query("SELECT COUNT(*) FROM review_records WHERE nextReviewDate <= :now")
     fun getDueReviewCount(now: Long): Flow<Int>
 
+    /** widget 一次性读取用：免 Flow/InvalidationTracker 包装开销。 */
+    @Query("SELECT COUNT(*) FROM review_records WHERE nextReviewDate <= :now")
+    suspend fun getDueReviewCountOnce(now: Long): Int
+
     @Query("SELECT * FROM review_records ORDER BY nextReviewDate ASC")
     fun getAllReviews(): Flow<List<ReviewRecordEntity>>
 }

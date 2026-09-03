@@ -20,7 +20,7 @@ import com.eareyereading.data.local.entity.*
         // issue 12.5：大词典条目落库（migration 9→10 建表 + 唯一索引）
         DictionaryEntryEntity::class,
     ],
-    version = 11,
+    version = 12,
     // 导出 schema 到 app/schemas/：手写 migration 可以与 Room 期望的表结构
     // 逐版本对照，杜绝"迁移后 schema 校验失败 → 升级用户启动即崩"的漂移
     exportSchema = true

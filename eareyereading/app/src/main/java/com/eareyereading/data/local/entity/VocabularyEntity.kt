@@ -9,6 +9,11 @@ import androidx.room.PrimaryKey
     indices = [
         // getWordsByBook / 按书删词场景的过滤列
         Index(value = ["bookId"]),
+        // 点词查词（getWordExact）：阅读界面高频热路径，无索引时全表扫描
+        Index(value = ["word"]),
+        // 生词/已学列表：isLearned 过滤 + dateAdded/lastReviewTime 排序
+        Index(value = ["isLearned", "dateAdded"]),
+        Index(value = ["isLearned", "lastReviewTime"]),
     ],
 )
 data class VocabularyEntity(

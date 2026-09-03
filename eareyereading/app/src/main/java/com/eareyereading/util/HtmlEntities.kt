@@ -17,9 +17,13 @@ object HtmlEntities {
         "mdash" to "\u2014", "ndash" to "\u2013", "hellip" to "\u2026",
     )
 
+    // 预编译：decode 被 ArticleParser/EpubParser 逐段落调用，
+    // 旧实现每次调用都 Pattern.compile，是两条导入路径共享的热点
+    private val ENTITY_REGEX = Regex("&(#\\d+|#[xX][0-9a-fA-F]+|[a-zA-Z][a-zA-Z0-9]*);")
+
     fun decode(text: String): String {
         if (!text.contains('&')) return text
-        return Regex("&(#\\d+|#[xX][0-9a-fA-F]+|[a-zA-Z][a-zA-Z0-9]*);").replace(text) { m ->
+        return ENTITY_REGEX.replace(text) { m ->
             val inner = m.groupValues[1]
             when {
                 inner.startsWith("#x", ignoreCase = true) ->

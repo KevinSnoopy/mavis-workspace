@@ -345,17 +345,135 @@ class EmbeddedTtsEngine @Inject constructor(
  *  - 货币、特殊符号 → 英文读法
  *  - CJK 字符整段 → "[Chinese/Korean text]" 占位符
  */
+private object TtsPreprocess {
+    val YEAR = Regex("\\b(1\\d{3}|20\\d{2})\\b")
+    val TIME = Regex("\\b(\\d{1,2}):(\\d{2})\\b")
+    val CURRENCY = Regex("\\$(\\d+)?(?:\\.(\\d{1,2}))?")
+    val NUMBER = Regex("(?<!\\d)(\\d+)(?!\\d|:)")
+    val CJK_RUN = Regex("([\\u4E00-\\u9FFF\\u3400-\\u4DBF\\u3040-\\u309F\\u30A0-\\u30FF\\uAC00-\\uD7AF]+)")
+    val UPPERCASE_RUN = Regex("\\b[A-Z]{3,}\\b")
+    val WHITESPACE = Regex("\\s+")
+    val TIME_SUFFIX = Regex("\\d{1,2}:\\d{1,2}$")
+
+    val US = Regex("\\bU\\.S\\.\\b")
+    val USA = Regex("\\bU\\.S\\.A\\.\\b")
+    val UK = Regex("\\bU\\.K\\.\\b")
+    val EU = Regex("\\bE\\.U\\.\\b")
+    val PM_DOTTED = Regex("\\bP\\.M\\.\\b")
+    val AM_DOTTED = Regex("\\bA\\.M\\.\\b")
+    val DC = Regex("\\bD\\.C\\.\\b")
+    val NY = Regex("\\bN\\.Y\\.\\b")
+    val PM = Regex("\\bPM\\b")
+    val AM = Regex("\\bAM\\b")
+    val AP = Regex("\\bAP\\b")
+    val CEO = Regex("\\bCEO\\b")
+    val GDP = Regex("\\bGDP\\b")
+    val NASA = Regex("\\bNASA\\b")
+    val FBI = Regex("\\bFBI\\b")
+    val CIA = Regex("\\bCIA\\b")
+
+    /** 时区缩写正则缓存（disambiguateTimeZoneAbb 的 abbrev 参数只有 4 个取值）。 */
+    private val tzAbbRegexes = java.util.concurrent.ConcurrentHashMap<String, Regex>()
+    fun tzAbbRegex(abbrev: String): Regex =
+        tzAbbRegexes.computeIfAbsent(abbrev) { Regex("\\b$it\\b") }
+
+    /** 单字符 → 读法/替身的单趟映射（替代约 35 次逐字符 String.replace 扫描）。 */
+    val LITERAL_REPLACEMENTS: Map<Char, String> = mapOf(
+        '\u2014' to ", ",   // em-dash → comma+space
+        '\u2013' to "-",    // en-dash → hyphen
+        '\u2018' to "'",    // left single quote
+        '\u2019' to "'",    // right single quote
+        '\u201C' to "\"",   // left double quote
+        '\u201D' to "\"",   // right double quote
+        '\u00ed' to "i",    // í → i (Rodríguez → Rodriguez)
+        '\u00e9' to "e",    // é → e
+        '\u00e1' to "a",    // á → a
+        '\u00f1' to "n",    // ñ → n
+        '\u00fc' to "u",    // ü → u
+        '\u00e7' to "c",    // ç → c
+        // 货币符号
+        '$' to " dollars ",
+        '\u20ac' to " euros ",
+        '\u00a3' to " pounds ",
+        '\u00a5' to " yen ",
+        // 其他常见 OOV 符号（含 '<' '>' —— 此前遗漏未替换）
+        '@' to " at ",
+        '&' to " and ",
+        '+' to " plus ",
+        '=' to " equals ",
+        '#' to " number ",
+        '%' to " percent ",
+        '\\' to " ",
+        '/' to " ",        // 日期斜杠
+        '<' to " less than ",
+        '>' to " greater than ",
+        '*' to " ",
+        '[' to ", ",
+        ']' to ", ",
+        '_' to " ",
+        '{' to ", ",
+        '}' to ", ",
+        '(' to ", ",
+        ')' to ", ",
+        '\u00a0' to " ",   // non-breaking space
+        '`' to "'",        // backtick
+        '|' to " ",
+        '^' to " ",
+        '~' to " ",
+        '\u2026' to "...", // ellipsis
+    )
+
+    /** 无特殊字符时原样返回（免 StringBuilder）；有则单趟替换。 */
+    fun applyLiteralReplacements(s: String): String {
+        var hasSpecial = false
+        for (c in s) {
+            if (c in LITERAL_REPLACEMENTS) {
+                hasSpecial = true
+                break
+            }
+        }
+        if (!hasSpecial) return s
+        val sb = StringBuilder(s.length + 16)
+        for (c in s) {
+            val rep = LITERAL_REPLACEMENTS[c]
+            if (rep != null) sb.append(rep) else sb.append(c)
+        }
+        return sb.toString()
+    }
+
+    // numberToWords 的词表（原实现每次调用重建 3 个数组）
+    val UNITS = arrayOf("", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine")
+    val TEENS = arrayOf(
+        "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen",
+        "sixteen", "seventeen", "eighteen", "nineteen",
+    )
+    val TENS = arrayOf(
+        "", "", "twenty", "thirty", "forty", "fifty",
+        "sixty", "seventy", "eighty", "ninety",
+    )
+
+    // digitsToWords 的数字名映射（原实现每次调用重建 Map）
+    val DIGIT_NAMES: Map<Char, String> = mapOf(
+        '0' to "zero", '1' to "one", '2' to "two", '3' to "three",
+        '4' to "four", '5' to "five", '6' to "six", '7' to "seven",
+        '8' to "eight", '9' to "nine",
+    )
+}
+
+/**
+ * 朗读前文本归一化（句子级热路径，正则/词表全部预编译见 [TtsPreprocess]）。
+ */
 private fun preprocessForTts(text: String): String {
     var s = text
 
     // 4 位年份 (1000-2099)：转成英文单词
     // 注意：要在普通数字转换之前，避免 "2026" 被切成 "two thousand" + "twenty-six"
-    s = Regex("\\b(1\\d{3}|20\\d{2})\\b").replace(s) { match ->
+    s = TtsPreprocess.YEAR.replace(s) { match ->
         numberToWords(match.value.toInt())
     }
 
     // 时间格式 "10:07" → "ten oh seven"
-    s = Regex("\\b(\\d{1,2}):(\\d{2})\\b").replace(s) { match ->
+    s = TtsPreprocess.TIME.replace(s) { match ->
         val (h, m) = match.groupValues[1] to match.groupValues[2]
         "${numberToWords(h.toInt())} oh ${numberToWords(m.toInt())}"
     }
@@ -364,7 +482,7 @@ private fun preprocessForTts(text: String): String {
     // 否则 "$100" 会先变成 "$one hundred" 再变成 " dollars one hundred"（语序颠倒）
     // 整数部分可选：$.50 / $0.99 也要命中（旧正则要求 $ 后紧跟数字，
     // "$.50" 漏匹配后 "$" 被兜底替换成 " dollars " → 读成 "dollars point fifty"）
-    s = Regex("\\$(\\d+)?(?:\\.(\\d{1,2}))?").replace(s) { match ->
+    s = TtsPreprocess.CURRENCY.replace(s) { match ->
         fun words(digits: String): String =
             digits.toIntOrNull()?.takeIf { it in 0..9999 }?.let { numberToWords(it) }
                 ?: digitsToWords(digits)
@@ -383,7 +501,7 @@ private fun preprocessForTts(text: String): String {
     // 关键：超过 Int 或超过支持范围的数字必须逐位转成单词，
     // 绝不能把裸数字留给 generate()——本文件注释明确记载数字会触发
     // native tensor 索引越界 SIGSEGV，且信号无法被 catch 拦截
-    s = Regex("(?<!\\d)(\\d+)(?!\\d|:)").replace(s) { match ->
+    s = TtsPreprocess.NUMBER.replace(s) { match ->
         val num = match.value.toIntOrNull()
         if (num != null && num in 0..9999) {
             numberToWords(num)
@@ -392,73 +510,30 @@ private fun preprocessForTts(text: String): String {
         }
     }
 
-    // 标点替换
-    s = s.replace("\u2014", ", ")     // em-dash → comma+space
-    s = s.replace("\u2013", "-")      // en-dash → hyphen
-    s = s.replace("\u2018", "'")      // left single quote
-    s = s.replace("\u2019", "'")      // right single quote
-    s = s.replace("\u201C", "\"")     // left double quote
-    s = s.replace("\u201D", "\"")     // right double quote
-    s = s.replace("\u00ed", "i")      // í → i (Rodríguez → Rodriguez)
-    s = s.replace("\u00e9", "e")      // é → e
-    s = s.replace("\u00e1", "a")      // á → a
-    s = s.replace("\u00f1", "n")      // ñ → n
-    s = s.replace("\u00fc", "u")      // ü → u
-    s = s.replace("\u00e7", "c")      // ç → c
-    // 货币符号
-    s = s.replace("$", " dollars ")
-    s = s.replace("\u20ac", " euros ")  // €
-    s = s.replace("\u00a3", " pounds ") // £
-    s = s.replace("\u00a5", " yen ")    // ¥
-    // 其他常见 OOV 符号（含注释中记载的 '<' '>' —— 此前遗漏未替换）
-    s = s.replace("@", " at ")
-    s = s.replace("&", " and ")
-    s = s.replace("+", " plus ")
-    s = s.replace("=", " equals ")
-    s = s.replace("#", " number ")
-    s = s.replace("%", " percent ")
-    s = s.replace("\\", " ")
-    s = s.replace("/", " ")            // 日期斜杠
-    s = s.replace("<", " less than ")
-    s = s.replace(">", " greater than ")
-    s = s.replace("*", " ")
-    s = s.replace("[", ", ")
-    s = s.replace("]", ", ")
-    s = s.replace("_", " ")
-    s = s.replace("{", ", ")
-    s = s.replace("}", ", ")
-
-    // 括号、特殊括号、引号变体
-    s = s.replace("(", ", ")
-    s = s.replace(")", ", ")
-    s = s.replace("\u00a0", " ")        // non-breaking space
-    s = s.replace("`", "'")             // backtick
-    s = s.replace("|", " ")
-    s = s.replace("^", " ")
-    s = s.replace("~", " ")
-    s = s.replace("\u2026", "...")      // ellipsis
+    // 单字符符号替换：约 35 个逐字符 String.replace 合并为单趟扫描
+    //（每个命中字符原先都要全串拷贝一次）
+    s = TtsPreprocess.applyLiteralReplacements(s)
 
     // CJK 强制过滤：把连续中日韩段替换为占位符（参见函数头注释）。
     // 用 capture group + lookahead 实现"整段连续 CJK" 的合并替换，单字符替换的话
     // 每字一字 placeholder，TTS 会读得稀碎。
-    s = Regex("([\\u4E00-\\u9FFF\\u3400-\\u4DBF\\u3040-\\u309F\\u30A0-\\u30FF\\uAC00-\\uD7AF]+)")
-        .replace(s) { match ->
-            // 短中文段（如 "的"）直接沉默；长段提示用户已跳过
-            if (match.value.length <= 3) " " else " [Chinese or other text omitted] "
-        }
+    s = TtsPreprocess.CJK_RUN.replace(s) { match ->
+        // 短中文段（如 "的"）直接沉默；长段提示用户已跳过
+        if (match.value.length <= 3) " " else " [Chinese or other text omitted] "
+    }
 
     // 常见缩写展开（MeloTTS lexicon 不含这些，G2P fallback 可能触发 native 空指针）
-    s = s.replace(Regex("\\bU\\.S\\.\\b"), "United States")
-    s = s.replace(Regex("\\bU\\.S\\.A\\.\\b"), "United States of America")
-    s = s.replace(Regex("\\bU\\.K\\.\\b"), "United Kingdom")
-    s = s.replace(Regex("\\bE\\.U\\.\\b"), "European Union")
-    s = s.replace(Regex("\\bP\\.M\\.\\b"), "P M")
-    s = s.replace(Regex("\\bA\\.M\\.\\b"), "A M")
-    s = s.replace(Regex("\\bD\\.C\\.\\b"), "D C")
-    s = s.replace(Regex("\\bN\\.Y\\.\\b"), "New York")
+    s = s.replace(TtsPreprocess.US, "United States")
+    s = s.replace(TtsPreprocess.USA, "United States of America")
+    s = s.replace(TtsPreprocess.UK, "United Kingdom")
+    s = s.replace(TtsPreprocess.EU, "European Union")
+    s = s.replace(TtsPreprocess.PM_DOTTED, "P M")
+    s = s.replace(TtsPreprocess.AM_DOTTED, "A M")
+    s = s.replace(TtsPreprocess.DC, "D C")
+    s = s.replace(TtsPreprocess.NY, "New York")
     // 时间缩写 PM/AM（无点号的全大写）
-    s = s.replace(Regex("\\bPM\\b"), "P M")
-    s = s.replace(Regex("\\bAM\\b"), "A M")
+    s = s.replace(TtsPreprocess.PM, "P M")
+    s = s.replace(TtsPreprocess.AM, "A M")
     // 时区缩写 ET/CT/PT/MT：语境白名单启发式（2.10）——
     // 仅当明确是时间/时段语境才展开为时区名，否则按缩写逐字母读，
     // 避免 "CT scan" 被误读为 "Central Time scan"。
@@ -466,21 +541,21 @@ private fun preprocessForTts(text: String): String {
     s = disambiguateTimeZoneAbb(s, "CT", "Central Time")
     s = disambiguateTimeZoneAbb(s, "PT", "Pacific Time")
     s = disambiguateTimeZoneAbb(s, "MT", "Mountain Time")
-    s = s.replace(Regex("\\bAP\\b"), "Associated Press")
-    s = s.replace(Regex("\\bCEO\\b"), "C E O")
-    s = s.replace(Regex("\\bGDP\\b"), "G D P")
-    s = s.replace(Regex("\\bNASA\\b"), "N A S A")
-    s = s.replace(Regex("\\bFBI\\b"), "F B I")
-    s = s.replace(Regex("\\bCIA\\b"), "C I A")
+    s = s.replace(TtsPreprocess.AP, "Associated Press")
+    s = s.replace(TtsPreprocess.CEO, "C E O")
+    s = s.replace(TtsPreprocess.GDP, "G D P")
+    s = s.replace(TtsPreprocess.NASA, "N A S A")
+    s = s.replace(TtsPreprocess.FBI, "F B I")
+    s = s.replace(TtsPreprocess.CIA, "C I A")
 
     // 把连续 3+ 大写字母拆成单字母（如 "NATO" → "N A T O"），
     // MeloTTS lexicon 有单字母发音，避免 G2P 对未知缩写崩溃
-    s = Regex("\\b[A-Z]{3,}\\b").replace(s) { match ->
+    s = TtsPreprocess.UPPERCASE_RUN.replace(s) { match ->
         match.value.toCharArray().joinToString(" ")
     }
 
     // 把连续空白合并
-    s = s.replace(Regex("\\s+"), " ").trim()
+    s = s.replace(TtsPreprocess.WHITESPACE, " ").trim()
     return s
 }
 
@@ -492,7 +567,7 @@ private fun preprocessForTts(text: String): String {
  * 语境判定白名单：后跟 time/am/pm，或前跟数字（小时 / HH:mm）。
  */
 private fun disambiguateTimeZoneAbb(s: String, abbrev: String, timezone: String): String {
-    return Regex("\\b$abbrev\\b").replace(s) { m ->
+    return TtsPreprocess.tzAbbRegex(abbrev).replace(s) { m ->
         val after = s.substring(m.range.last + 1).trimStart()
         val before = s.substring(0, m.range.first).trimEnd()
         val timeContext =
@@ -500,7 +575,7 @@ private fun disambiguateTimeZoneAbb(s: String, abbrev: String, timezone: String)
                 after.startsWith("am", ignoreCase = true) ||
                 after.startsWith("pm", ignoreCase = true) ||
                 before.lastOrNull()?.isDigit() == true ||
-                Regex("\\d{1,2}:\\d{1,2}$").containsMatchIn(before)
+                TtsPreprocess.TIME_SUFFIX.containsMatchIn(before)
         if (timeContext) timezone else abbrev.map(Char::toString).joinToString(" ")
     }
 }
@@ -515,11 +590,9 @@ private fun numberToWords(n: Int): String {
     if (n > 9999) return digitsToWords(n.toString())
     if (n == 0) return "zero"
 
-    val units = arrayOf("", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine")
-    val teens = arrayOf("ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen",
-                        "sixteen", "seventeen", "eighteen", "nineteen")
-    val tens = arrayOf("", "", "twenty", "thirty", "forty", "fifty",
-                       "sixty", "seventy", "eighty", "ninety")
+    val units = TtsPreprocess.UNITS
+    val teens = TtsPreprocess.TEENS
+    val tens = TtsPreprocess.TENS
 
     fun under1000(x: Int): String {
         if (x == 0) return ""
@@ -543,11 +616,7 @@ private fun numberToWords(n: Int): String {
 
 /** 数字串逐位读出（电话号/编号/超范围数值），保证不留裸数字。 */
 private fun digitsToWords(digits: String): String {
-    val names = mapOf(
-        '0' to "zero", '1' to "one", '2' to "two", '3' to "three",
-        '4' to "four", '5' to "five", '6' to "six", '7' to "seven",
-        '8' to "eight", '9' to "nine",
-    )
+    val names = TtsPreprocess.DIGIT_NAMES
     return digits.mapNotNull { names[it] }.joinToString(" ").ifEmpty { "zero" }
 }
 
@@ -780,6 +849,7 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
             val totalSize = modelInfo.sizeBytes
             var downloadedTotal = 0L
             var lastNotifyMs = 0L
+            var lastProgressEmitMs = 0L
 
             for (file in modelInfo.files) {
                 val targetFile = File(dir, file.relativePath)
@@ -810,18 +880,23 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
                             // 这里仍按"累计"口径算分母，与 onTotalSizeKnown 配合
                             downloadedTotal += bytesRead
                             val denom = if (totalSize > 0) totalSize else totalBytes
-                            val p = if (denom > 0) {
-                                (downloadedTotal.toFloat() / denom.toFloat()).coerceIn(0f, 1f)
-                            } else 0f
-                            _downloadProgress.value = Progress.Downloading(downloadedTotal, denom)
-                            onProgress(p)
                             val now = System.currentTimeMillis()
-                            if (now - lastNotifyMs > 500) {
-                                lastNotifyMs = now
-                                showDownloadNotification(
-                                    p,
-                                    "${(p * 100).toInt()}% · ${file.relativePath.substringAfterLast('/')}",
-                                )
+                            // 状态流节流：每 8KB chunk 发射一次 = 66MB 模型 8000+ 次
+                            // 发射、收集端每秒数百次重组；100ms 粒度对进度视觉无差别
+                            if (now - lastProgressEmitMs >= 100) {
+                                lastProgressEmitMs = now
+                                val p = if (denom > 0) {
+                                    (downloadedTotal.toFloat() / denom.toFloat()).coerceIn(0f, 1f)
+                                } else 0f
+                                _downloadProgress.value = Progress.Downloading(downloadedTotal, denom)
+                                onProgress(p)
+                                if (now - lastNotifyMs > 500) {
+                                    lastNotifyMs = now
+                                    showDownloadNotification(
+                                        p,
+                                        "${(p * 100).toInt()}% · ${file.relativePath.substringAfterLast('/')}",
+                                    )
+                                }
                             }
                             // totalBytes 在此回调里也只是参考值，留着供调试使用
                             @Suppress("UNUSED_VARIABLE")
@@ -910,6 +985,7 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
         val totalSize = modelInfo.sizeBytes
         var tarballTotalSize = 0L    // 响应 Content-Length，由 onTotalSizeKnown 回填
         var lastNotifyMs = 0L
+        var lastProgressEmitMs = 0L
 
         // 下载 tarball（多镜像回退 + 断点续传）
         var downloaded = false
@@ -925,17 +1001,21 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
                 onChunkDownloaded = { _, totalBytes ->
                     // 按 tarball 自身大小算分母：用 Content-Length，否则用 modelInfo.sizeBytes
                     val denominator = if (tarballTotalSize > 0) tarballTotalSize else totalSize
-                    val p = if (denominator > 0) {
-                        (totalBytes.toFloat() / denominator.toFloat()).coerceIn(0f, 1f)
-                    } else 0f
-                    _downloadProgress.value = Progress.Downloading(totalBytes, denominator)
-                    onProgress(p)
                     val now = System.currentTimeMillis()
-                    if (now - lastNotifyMs > 500) {
-                        lastNotifyMs = now
-                        val downloadedMB = totalBytes / 1_000_000
-                        val totalMB = if (denominator > 0) denominator / 1_000_000 else 0
-                        showDownloadNotification(p, "下载中（${downloadedMB}/${totalMB}MB）")
+                    // 状态流节流（与逐文件路径同款）：8KB/chunk 全量发射是重组风暴
+                    if (now - lastProgressEmitMs >= 100) {
+                        lastProgressEmitMs = now
+                        val p = if (denominator > 0) {
+                            (totalBytes.toFloat() / denominator.toFloat()).coerceIn(0f, 1f)
+                        } else 0f
+                        _downloadProgress.value = Progress.Downloading(totalBytes, denominator)
+                        onProgress(p)
+                        if (now - lastNotifyMs > 500) {
+                            lastNotifyMs = now
+                            val downloadedMB = totalBytes / 1_000_000
+                            val totalMB = if (denominator > 0) denominator / 1_000_000 else 0
+                            showDownloadNotification(p, "下载中（${downloadedMB}/${totalMB}MB）")
+                        }
                     }
                 },
                 onTotalSizeKnown = { totalBytes ->
@@ -1494,12 +1574,20 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
                 try {
                     speakMutex.withLock {
                         synchronized(this) {
-                            // 替换前 shutdown 旧的
-                            tts?.let { try { it.release() } catch (_: Exception) {} }
-                            tts = newTts
-                            assigned = true
-                            currentModelName = modelInfo.id
-                            sampleRate = newTts.sampleRate()
+                            // 锁内双检：快路径检查后两个协程可能同时在锁外构造
+                            // OfflineTts（各 ~66MB native 内存）。后进锁者若发现
+                            // 同模型已被抢先加载，直接复用——否则会把刚加载好的
+                            // 实例 release 掉再换自己的（双份峰值 + 白加载一次）
+                            if (tts != null && currentModelName == modelInfo.id) {
+                                Log.i(TAG, "initialize: model=${modelInfo.id} already loaded by concurrent call, reuse")
+                            } else {
+                                // 替换前 shutdown 旧的
+                                tts?.let { try { it.release() } catch (_: Exception) {} }
+                                tts = newTts
+                                assigned = true
+                                currentModelName = modelInfo.id
+                                sampleRate = newTts.sampleRate()
+                            }
                             // 状态写入也进锁：出锁再写会与 release()（同锁内置
                             // tts=null + NOT_INITIALIZED）交错出 READY∧tts=null 的
                             // 说谎状态——之后所有 speak 静默失败而 UI 显示就绪
@@ -1507,7 +1595,7 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
                         }
                     }
                 } finally {
-                    // 构造成功但从未赋值（等锁时被取消/异常）：显式释放，
+                    // 构造成功但从未赋值（等锁时被取消/异常/被并发抢先）：显式释放，
                     // 上百 MB 的 native 模型不该只等 GC finalizer
                     if (!assigned) {
                         try { newTts.release() } catch (_: Exception) {}

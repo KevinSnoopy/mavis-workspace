@@ -48,8 +48,8 @@ interface ReadingRepository {
     // ── issue 8.5：段落翻译缓存 ─────────────────────────
     /** 读取整本书某语言对的译文缓存（Map: paragraphIndex → translatedText）。 */
     suspend fun getTranslations(bookId: Long, langPair: String): Map<Int, String>
-    /** 缓存某段的译文（同段 REPLACE 覆盖）。 */
-    suspend fun saveTranslation(bookId: Long, langPair: String, paragraphIndex: Int, sourceText: String, translatedText: String)
+    /** 批量缓存译文（单事务写整本，替代逐段写库的 N+1 落盘）。 */
+    suspend fun saveTranslations(bookId: Long, langPair: String, sourceParagraphs: List<String>, translations: Map<Int, String>)
     /** 删书时清空该书全部译文缓存。 */
     suspend fun deleteTranslations(bookId: Long)
 }

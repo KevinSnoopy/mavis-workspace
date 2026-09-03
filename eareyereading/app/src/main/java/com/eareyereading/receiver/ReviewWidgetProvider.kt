@@ -17,7 +17,6 @@ import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -43,20 +42,28 @@ class ReviewWidgetProvider : AppWidgetProvider() {
     ) {
         // 查库是挂起操作：goAsync 拿到广播处理的延期窗口，IO 协程里查完再回填
         val pendingResult = goAsync()
-        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+        // 单例 scope + 去重：旧实现每次 onUpdate new 一个无人持有、无法取消的
+        // scope，30 分钟系统唤醒与回前台广播接踵而至时两组全表查询并发跑
+        widgetScope.launch {
             try {
                 val now = System.currentTimeMillis()
-                val dueCount = reviewRecordDao.getDueReviewCount(now).first()
-                val streakDays = ReadingStreak.calculate(readingStatsDao.getAllStats())
+                val dueCount = reviewRecordDao.getDueReviewCountOnce(now)
+                // 连胜只需去重日期：不再拉全表实体（旧行为随使用天数线性劣化）
+                val streakDays = ReadingStreak.calculateFromDates(readingStatsDao.getAllDates())
 
+                // 各实例共享同一个 PendingIntent：系统按 requestCode+intent 去重，
+                // 循环内逐个构造只是重复的 Binder 往返
+                val launchIntent = buildLaunchIntent(context)
                 appWidgetIds.forEach { widgetId ->
                     val views = RemoteViews(context.packageName, R.layout.widget_review).apply {
                         setTextViewText(R.id.widget_due_count, "$dueCount")
                         setTextViewText(R.id.widget_streak, "连续打卡 $streakDays 天")
-                        setOnClickPendingIntent(R.id.widget_root, buildLaunchIntent(context))
+                        setOnClickPendingIntent(R.id.widget_root, launchIntent)
                     }
                     appWidgetManager.updateAppWidget(widgetId, views)
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
                 // 小组件失败绝不能崩 App 进程：保持上次内容即可
                 Log.w("ReviewWidget", "widget update failed", e)
@@ -75,6 +82,9 @@ class ReviewWidgetProvider : AppWidgetProvider() {
         )
 
     companion object {
+        /** widget 专用单例 scope：更新任务可追踪、不随每次广播重建。 */
+        private val widgetScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
         /** App 回到前台 / 复习完成等时机调用：向全部实例广播一次更新。 */
         fun triggerUpdate(context: Context) {
             try {

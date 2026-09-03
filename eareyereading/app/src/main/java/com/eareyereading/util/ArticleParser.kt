@@ -20,24 +20,11 @@ class ArticleParser @Inject constructor() {
 
     companion object {
         // HTML 标签清理正则
-        private val SCRIPT_TAG = Regex("<script[^>]*>.*?</script>", RegexOption.DOT_MATCHES_ALL)
-        private val STYLE_TAG = Regex("<style[^>]*>.*?</style>", RegexOption.DOT_MATCHES_ALL)
-        private val COMMENT_TAG = Regex("<!--.*?-->", RegexOption.DOT_MATCHES_ALL)
         private val HTML_TAG = Regex("<[^>]+>")
 
-        // issue 7.2：噪音元素整段剔除（配对闭合）
-        private val NOISE_BLOCK_TAG = Regex(
-            "<(aside|nav|figure|figcaption|iframe|button|form|input|select|textarea|ins)\\b[^>]*>[\\s\\S]*?</\\1>",
-            RegexOption.IGNORE_CASE,
-        )
         // issue 7.4：策略 5 命中 <body> 时页眉/页脚仍是噪音，先剥掉再取正文
         private val HEADER_FOOTER_TAG = Regex(
             "<(header|footer)\\b[^>]*>[\\s\\S]*?</\\1>",
-            RegexOption.IGNORE_CASE,
-        )
-        // 未闭合/自闭合的噪音标签（补丁式剔除，防止残标签被当正文文本）
-        private val NOISE_VOID_TAG = Regex(
-            "<(aside|nav|figure|figcaption|iframe|button|form|input|select|textarea|ins)\\b[^>]*/?>",
             RegexOption.IGNORE_CASE,
         )
         // issue 7.5/10.10：块级标签边界 → 空行，保留原文段落结构（cleanText 分段用）
@@ -45,11 +32,62 @@ class ArticleParser @Inject constructor() {
             "</(p|div|li|h[1-6]|blockquote|tr|section|article|figure|figcaption|header|footer|aside|nav)>|<br\\s*/?>",
             RegexOption.IGNORE_CASE,
         )
-        // issue 7.2：按 class 名剔除的噪音容器（分享/订阅/广告/相关推荐/侧栏/面包屑/作者卡/评论区）
-        private val NOISE_CLASS_BLOCK = Regex(
-            "<\\s*(div|section)\\b[^>]*class\\s*=\\s*[\"'][^\"']*\\b(share|social|newsletter|subscribe|ad-|advert|promo|related|recommend|sidebar|breadcrumb|byline|author-bio|comments)\\b[^\"']*[\"'][^>]*>[\\s\\S]*?</\\1>",
+
+        // 性能：script/style/comment 的"整块删除"合并为单趟扫描（原 3 遍全文
+        // 各一次全量拷贝，5MB 页面最坏 3×10MB 级临时分配）。三者模式均无
+        // 分组/反向引用，直接拼 alternation 语义等价
+        private val STRIP_ALL_BLOCK = Regex(
+            "<script[^>]*>.*?</script>|<style[^>]*>.*?</style>|<!--.*?-->",
+            RegexOption.DOT_MATCHES_ALL,
+        )
+
+        // 性能：三种噪音剔除（issue 7.2 配对块 / 按 class 的容器 / 残标签）合并为
+        // 单趟扫描。回溯引用改用命名组——组合后匿名组号会漂移，\1 会指错组
+        private val NOISE_ALL_BLOCK = Regex(
+            "<(?<noiseTag>aside|nav|figure|figcaption|iframe|button|form|input|select|textarea|ins)\\b[^>]*>[\\s\\S]*?</\\k<noiseTag>" +
+                "|<\\s*(?<classTag>div|section)\\b[^>]*class\\s*=\\s*[\"'][^\"']*\\b" +
+                "(?:share|social|newsletter|subscribe|ad-|advert|promo|related|recommend|sidebar|breadcrumb|byline|author-bio|comments)" +
+                "\\b[^\"']*[\"'][^>]*>[\\s\\S]*?</\\k<classTag>" +
+                "|<(?:aside|nav|figure|figcaption|iframe|button|form|input|select|textarea|ins)\\b[^>]*/?>",
             RegexOption.IGNORE_CASE,
         )
+
+        // ── 每次调用重新编译的正则全部提升为常量（文章解析路径高频）──
+        private val EXCLUDE_LINK_PATTERN = Regex(
+            """(login|sign[-]?in|sign[-]?up|register|about|contact|privacy|terms|category|tag|author|profile|feed|rss|xml|sitemap|css|js|png|jpg|gif|svg|ico|pdf|zip)""",
+            RegexOption.IGNORE_CASE,
+        )
+        private val ANCHOR_REGEX = Regex(
+            """<a[^>]+href=["']([^"']+)["'][^>]*>([^<]+)</a>""",
+            RegexOption.DOT_MATCHES_ALL,
+        )
+        private val CHARSET_REGEX = Regex("charset=([^;\\s]+)")
+
+        private val OG_TITLE_CONTENT = Regex("""og:title["\s]+content=["']([^"']+)["']""")
+        private val OG_TITLE_META = Regex("""<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)["']""")
+        private val TITLE_TAG = Regex("""<title[^>]*>([^<]+)</title>""")
+        private val H1_TAG = Regex("""<h1[^>]*>([^<]+)</h1>""")
+
+        private val ARTICLE_TAG = Regex("""<article[^>]*>(.*?)</article>""", RegexOption.DOT_MATCHES_ALL)
+        private val MAIN_TAG = Regex("""<main[^>]*>(.*?)</main>""", RegexOption.DOT_MATCHES_ALL)
+        private val JSON_LD_ARTICLE_BODY = Regex(
+            """"articleBody"\s*:\s*"((?:\\.|[^"\\]){100,})"""",
+            RegexOption.DOT_MATCHES_ALL,
+        )
+        private val CONTENT_DIV = Regex(
+            """<div[^>]+class=["'][^"']*(?:content|article|body|text|story|entry)[^"']*["'][^>]*>(.*?)</div>""",
+            RegexOption.DOT_MATCHES_ALL,
+        )
+        private val CONTENT_SECTION = Regex(
+            """<section[^>]+class=["'][^"']*(?:content|article|body|text|story|entry)[^"']*["'][^>]*>(.*?)</section>""",
+            RegexOption.DOT_MATCHES_ALL,
+        )
+        private val BODY_TAG = Regex("""<body[^>]*>(.*?)</body>""", RegexOption.DOT_MATCHES_ALL)
+
+        private val PARAGRAPH_SPLIT = Regex("\n{2,}")
+        private val WHITESPACE = Regex("\\s+")
+        private val SENTENCE_SPLIT = Regex("(?<=[.!?])\\s+")
+        private val SENTENCE_SPLIT_CAPITAL = Regex("(?<=[.!?])\\s+(?=[A-Z])")
 
         // 网络请求参数
         private const val CONNECT_TIMEOUT_MS = 15000
@@ -177,14 +215,12 @@ class ArticleParser @Inject constructor() {
 
     private fun extractLinksFromHtml(html: String, baseUrl: String): ArticleLinkResult? {
         val title = extractTitle(html)
-        // 过滤规则：排除导航、登录、注册等非文章链接
-        val excludePattern = Regex("""(login|sign[-]?in|sign[-]?up|register|about|contact|privacy|terms|category|tag|author|profile|feed|rss|xml|sitemap|css|js|png|jpg|gif|svg|ico|pdf|zip)""", RegexOption.IGNORE_CASE)
-
-        val anchorRegex = Regex("""<a[^>]+href=["']([^"']+)["'][^>]*>([^<]+)</a>""", RegexOption.DOT_MATCHES_ALL)
+        // 过滤规则：排除导航、登录、注册等非文章链接（正则已预编译为常量）
+        val excludePattern = EXCLUDE_LINK_PATTERN
         val seen = mutableSetOf<String>()
         val links = mutableListOf<ArticleLink>()
 
-        for (match in anchorRegex.findAll(html)) {
+        for (match in ANCHOR_REGEX.findAll(html)) {
             val href = match.groupValues[1].trim()
             val text = match.groupValues[2].trim()
 
@@ -227,7 +263,7 @@ class ArticleParser @Inject constructor() {
     private fun detectCharset(conn: HttpURLConnection): String? {
         conn.getHeaderField("Content-Type")?.let { ct ->
             // charset="utf-8" 带引号是 RFC 合法写法，需去掉引号再交给 InputStreamReader
-            Regex("charset=([^;\\s]+)").find(ct)?.let { return it.groupValues[1].trim('"', '\'') }
+            CHARSET_REGEX.find(ct)?.let { return it.groupValues[1].trim('"', '\'') }
         }
         return null
     }
@@ -284,12 +320,8 @@ class ArticleParser @Inject constructor() {
         // 表单/按 class 名的分享·订阅·广告·相关推荐容器）——策略命中容器前
         // 先剔除，否则 cleanText 的标签替换会把它们留进正文
         val text = html
-            .replace(SCRIPT_TAG, "")
-            .replace(STYLE_TAG, "")
-            .replace(COMMENT_TAG, "")
-            .replace(NOISE_BLOCK_TAG, " ")
-            .replace(NOISE_CLASS_BLOCK, " ")
-            .replace(NOISE_VOID_TAG, " ")
+            .replace(STRIP_ALL_BLOCK, "")
+            .replace(NOISE_ALL_BLOCK, " ")
 
         // 提取标题
         val title = extractTitle(text)
@@ -305,14 +337,14 @@ class ArticleParser @Inject constructor() {
      */
     private fun extractTitle(html: String): String {
         // og:title
-        Regex("""og:title["\s]+content=["']([^"']+)["']""").find(html)?.let { return it.groupValues[1].trim() }
-        Regex("""<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)["']""").find(html)?.let { return it.groupValues[1].trim() }
+        OG_TITLE_CONTENT.find(html)?.let { return it.groupValues[1].trim() }
+        OG_TITLE_META.find(html)?.let { return it.groupValues[1].trim() }
 
         // <title> tag
-        Regex("""<title[^>]*>([^<]+)</title>""").find(html)?.let { return it.groupValues[1].trim() }
+        TITLE_TAG.find(html)?.let { return it.groupValues[1].trim() }
 
         // h1
-        Regex("""<h1[^>]*>([^<]+)</h1>""").find(html)?.let { return it.groupValues[1].trim() }
+        H1_TAG.find(html)?.let { return it.groupValues[1].trim() }
 
         return "Untitled Article"
     }
@@ -322,27 +354,24 @@ class ArticleParser @Inject constructor() {
      */
     private fun extractContent(html: String): List<String> {
         // 策略1: article tag
-        Regex("""<article[^>]*>(.*?)</article>""", RegexOption.DOT_MATCHES_ALL).find(html)?.let {
+        ARTICLE_TAG.find(html)?.let {
             return cleanText(it.groupValues[1])
         }
 
         // 策略2: main tag
-        Regex("""<main[^>]*>(.*?)</main>""", RegexOption.DOT_MATCHES_ALL).find(html)?.let {
+        MAIN_TAG.find(html)?.let {
             return cleanText(it.groupValues[1])
         }
 
         // 策略3: JSON-LD structured data
         // 匹配时跳过转义序列（\" 等），否则正文里第一个转义引号就会截断匹配
-        Regex(""""articleBody"\s*:\s*"((?:\\.|[^"\\]){100,})"""", RegexOption.DOT_MATCHES_ALL).find(html)?.let {
+        JSON_LD_ARTICLE_BODY.find(html)?.let {
             val raw = unescapeJson(it.groupValues[1])
-            return raw.split(Regex("(?<=[.!?])\\s+")).filter { s -> s.length > 20 }.map { it.trim() }
+            return raw.split(SENTENCE_SPLIT).filter { s -> s.length > 20 }.map { it.trim() }
         }
 
         // 策略4: 找最大的文本块（content div）
-        val candidates = listOf(
-            Regex("""<div[^>]+class=["'][^"']*(?:content|article|body|text|story|entry)[^"']*["'][^>]*>(.*?)</div>""", RegexOption.DOT_MATCHES_ALL),
-            Regex("""<section[^>]+class=["'][^"']*(?:content|article|body|text|story|entry)[^"']*["'][^>]*>(.*?)</section>""", RegexOption.DOT_MATCHES_ALL),
-        )
+        val candidates = listOf(CONTENT_DIV, CONTENT_SECTION)
         for (regex in candidates) {
             regex.findAll(html).maxByOrNull { match -> match.value.length }?.let { match ->
                 val cleaned = cleanText(match.groupValues[1])
@@ -351,7 +380,7 @@ class ArticleParser @Inject constructor() {
         }
 
         // 策略5: body 正文（issue 7.4：先剥页眉/页脚，否则整页文本都算正文）
-        Regex("""<body[^>]*>(.*?)</body>""", RegexOption.DOT_MATCHES_ALL).find(html)?.let {
+        BODY_TAG.find(html)?.let {
             val cleaned = cleanText(it.groupValues[1].replace(HEADER_FOOTER_TAG, " "))
             if (cleaned.sumOf { s -> s.length } > 100) return cleaned
         }
@@ -372,18 +401,20 @@ class ArticleParser @Inject constructor() {
         val text = HtmlEntities.decode(
             html.replace(BLOCK_END_TAG, "\n\n").replace(HTML_TAG, " ")
         )
-        val paragraphs = text.split(Regex("\n{2,}"))
-            .map { it.replace(Regex("\\s+"), " ").trim() }
+        // 段落级正则预编译：\s+ 原写在 map lambda 内，每个段落编译一次
+        val paragraphs = text.split(PARAGRAPH_SPLIT)
+            .map { it.replace(WHITESPACE, " ").trim() }
             .filter { it.isNotBlank() && it.length > 20 && it.any { c -> c.isLetter() } }
         if (paragraphs.isNotEmpty()) return paragraphs
 
         // 回退：页面没有块级标签（纯句子流）时，保持旧的"每 4 句一段"合并，
         // 不返回空列表导致策略判定失败
-        val sentences = text.replace(Regex("\\s+"), " ").trim()
-            .split(Regex("(?<=[.!?])\\s+(?=[A-Z])"))
+        val normalized = text.replace(WHITESPACE, " ").trim()
+        val sentences = normalized
+            .split(SENTENCE_SPLIT_CAPITAL)
             .map { it.trim() }
             .filter { it.length > 30 && it.any { c -> c.isLetter() } }
-        if (sentences.isEmpty()) return listOf(text.replace(Regex("\\s+"), " ").trim())
+        if (sentences.isEmpty()) return listOf(normalized)
         val merged = mutableListOf<String>()
         for (i in sentences.indices step 4) {
             merged.add(sentences.subList(i, minOf(i + 4, sentences.size)).joinToString(" "))

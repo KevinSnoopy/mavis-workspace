@@ -31,7 +31,9 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
 import kotlin.coroutines.resume
@@ -455,6 +457,10 @@ class ReaderViewModel @Inject constructor(
 
         // 单段翻译字符上限（与 TranslationHelper 侧一致，避免超出 ML Kit 请求限制）
         private const val TRANSLATION_CHAR_LIMIT = 4000
+
+        // 整书翻译并发上限：几百段一次性 async 同时压 ML Kit（各自还可能
+        // 等模型就绪/触发下载限流），限流后吞吐更高也更稳
+        private const val TRANSLATION_CONCURRENCY = 6
 
         // 句子边界（ASCII）：句末标点 + 空白 + 大写字母/引号/左括号。
         // "Aug." "Mr." "Dr." 这类缩写后的 "." + 空格 + 小写/数字不会误切，
@@ -1662,27 +1668,28 @@ class ReaderViewModel @Inject constructor(
                 }
                 if (missing.isNotEmpty()) {
                     // issue 8.1：全书翻译随书语言进行，不再写死 en→zh；
-                    // 逐段并发（与 TranslationHelper.translateParagraphs 同型），失败段返回 null
+                    // 逐段并发 + Semaphore 限流（几百段不限流会同时压 ML Kit），失败段返回 null
+                    val semaphore = Semaphore(TRANSLATION_CONCURRENCY)
                     val fresh = coroutineScope {
                         missing.map { idx ->
                             async(Dispatchers.IO) {
-                                idx to translationHelper.translate(
-                                    paragraphs[idx].take(TRANSLATION_CHAR_LIMIT),
-                                    sourceLang,
-                                )
+                                semaphore.withPermit {
+                                    idx to translationHelper.translate(
+                                        paragraphs[idx].take(TRANSLATION_CHAR_LIMIT),
+                                        sourceLang,
+                                    )
+                                }
                             }
                         }.awaitAll()
                     }.toMap()
                     // issue 8.3：失败段（null/空）不写入显示，也不落缓存
                     val freshMap = fresh.filterValues { !it.isNullOrBlank() }
                         .mapValues { it.value.orEmpty() }
-                    // 成功段落库缓存；单条失败不影响其他段（逐段 try，不做整批事务）
-                    freshMap.forEach { (idx, text) ->
-                        try {
-                            readingRepository.saveTranslation(bookId, langPair, idx, paragraphs[idx], text)
-                        } catch (e: Exception) {
-                            android.util.Log.e("ReaderViewModel", "save translation cache failed", e)
-                        }
+                    // 成功段落单事务批量落缓存：旧路径逐段独立事务 = 整本几百次 fsync
+                    try {
+                        readingRepository.saveTranslations(bookId, langPair, paragraphs, freshMap)
+                    } catch (e: Exception) {
+                        android.util.Log.e("ReaderViewModel", "save translation cache failed", e)
                     }
                     merged.putAll(freshMap)
                 }

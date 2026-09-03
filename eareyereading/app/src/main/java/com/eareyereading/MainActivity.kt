@@ -44,8 +44,13 @@ class MainActivity : ComponentActivity() {
         handleViewIntent(intent)
 
         setContent {
-            val theme by settingsRepository.getTheme().collectAsState(initial = com.eareyereading.domain.model.ReadingTheme.LIGHT)
-            val dynamicColor by settingsRepository.getDynamicColor().collectAsState(initial = false)
+            // Flow 实例 remember：getter 每次调用都新建 map 链上的冷 Flow，
+            // 顶层作用域任何重组（onboarding 消失/ACTION_VIEW 深链）都会
+            // 取消旧收集、重新订阅 DataStore。记住实例后 collectAsState 稳定复用
+            val themeFlow = remember { settingsRepository.getTheme() }
+            val theme by themeFlow.collectAsState(initial = com.eareyereading.domain.model.ReadingTheme.LIGHT)
+            val dynamicColorFlow = remember { settingsRepository.getDynamicColor() }
+            val dynamicColor by dynamicColorFlow.collectAsState(initial = false)
             val navController = rememberNavController()
 
             // issue 5.1：首次启动展示轻量通知引导页（SharedPreferences 记一次，简单不引入 DataStore）

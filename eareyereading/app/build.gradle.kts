@@ -49,7 +49,11 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            // R8 裁剪 + 资源缩减：未用到的类/方法/资源全部裁掉。
+            // 此前 minify=false 使 proguard-rules.pro 整个文件是死配置，
+            // material-icons-extended（2 万+ 图标类）等大体积依赖全量进包
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

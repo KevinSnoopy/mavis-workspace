@@ -1,10 +1,7 @@
 package com.eareyereading.ui.components
 
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -22,7 +19,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -57,16 +55,27 @@ fun StatCard(
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             if (pulse) {
-                val transition = rememberInfiniteTransition(label = "pulse")
-                val scale by transition.animateFloat(
-                    initialValue = 0.85f,
-                    targetValue = 1.15f,
-                    animationSpec = infiniteRepeatable(
-                        animation = tween(durationMillis = 900, easing = FastOutSlowInEasing),
-                        repeatMode = RepeatMode.Reverse,
-                    ),
-                    label = "pulseScale",
-                )
+                // 有限次呼吸（4 次 × 900ms，Reverse 偶数次收在初始值 1.0）：
+                // 旧实现是 infiniteRepeatable——只要用户有打卡记录，Home 页
+                // 可见期间永远无法进入静止帧，持续耗电耗 GPU。
+                // 呼吸幅度收窄到 1.0~1.15，保证动画结束后图标停在原始大小
+                val scale = remember(pulse) {
+                    Animatable(1f)
+                }
+                LaunchedEffect(pulse) {
+                    if (pulse) {
+                        repeat(4) {
+                            scale.animateTo(
+                                targetValue = 1.15f,
+                                animationSpec = tween(durationMillis = 900, easing = FastOutSlowInEasing),
+                            )
+                            scale.animateTo(
+                                targetValue = 1f,
+                                animationSpec = tween(durationMillis = 900, easing = FastOutSlowInEasing),
+                            )
+                        }
+                    }
+                }
                 Icon(
                     icon,
                     contentDescription = label,
@@ -74,8 +83,8 @@ fun StatCard(
                     modifier = Modifier
                         .size(22.dp)
                         .graphicsLayer {
-                            scaleX = scale
-                            scaleY = scale
+                            scaleX = scale.value
+                            scaleY = scale.value
                         },
                 )
             } else {

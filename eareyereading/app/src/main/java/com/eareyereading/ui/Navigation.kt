@@ -1,11 +1,13 @@
 package com.eareyereading.ui
 
+import androidx.compose.animation.AnimatedContentTransitionScope
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
@@ -30,9 +32,11 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.navigation.NavBackStackEntry
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavHostController
@@ -90,6 +94,30 @@ val bottomNavItems = listOf(
     BottomNavItem(Screen.Settings, "设置", Icons.Filled.Settings, Icons.Outlined.Settings),
 )
 
+// 转场 lambda 提升为顶层常量：不捕获任何状态，旧实现写在 NavHost 参数里，
+// AppNavigation 每次重组（每次导航都会）都新建 4 个实例传给 AnimatedContent。
+// 类型必须显式声明为 NavHost 期望的 AnimatedContentTransitionScope 扩展 lambda
+private val NavEnterTransition: AnimatedContentTransitionScope<NavBackStackEntry>.() -> EnterTransition = {
+    fadeIn(animationSpec = tween(220)) +
+        slideInVertically(
+            animationSpec = tween(220),
+            initialOffsetY = { it / 12 },
+        )
+}
+private val NavExitTransition: AnimatedContentTransitionScope<NavBackStackEntry>.() -> ExitTransition = {
+    fadeOut(animationSpec = tween(150))
+}
+private val NavPopEnterTransition: AnimatedContentTransitionScope<NavBackStackEntry>.() -> EnterTransition = {
+    fadeIn(animationSpec = tween(220))
+}
+private val NavPopExitTransition: AnimatedContentTransitionScope<NavBackStackEntry>.() -> ExitTransition = {
+    fadeOut(animationSpec = tween(150)) +
+        slideOutVertically(
+            animationSpec = tween(220),
+            targetOffsetY = { it / 12 },
+        )
+}
+
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun AppNavigation(
@@ -101,10 +129,18 @@ fun AppNavigation(
     // 是否显示底部导航（阅读器页面隐藏）
     val showBottomBar = currentDestination?.route?.startsWith("reader") != true
 
-    BoxWithConstraints {
+    // 选中路由集合按 currentDestination 记忆：旧实现 5 个导航项 × 每次重组
+    // 都遍历一遍 hierarchy 链
+    val selectedRoutes = remember(currentDestination) {
+        currentDestination?.hierarchy?.mapNotNull { it.route }?.toSet() ?: emptySet()
+    }
+
+    run {
         // M3 expanded 断点（≥840dp）：平板/横屏/折叠屏展开态换 NavigationRail，
-        // 5 个标签的底部栏在宽屏上挤压内容，侧栏是 M3 自适应规范做法
-        val isExpanded = maxWidth >= 840.dp
+        // 5 个标签的底部栏在宽屏上挤压内容，侧栏是 M3 自适应规范做法。
+        // 用 LocalConfiguration 判断：BoxWithConstraints 会把整个子树推迟到
+        // 首次布局后组合（还随断点翻转全子树重组），只为一个 840dp 判断不值
+        val isExpanded = LocalConfiguration.current.screenWidthDp >= 840
 
         Scaffold(
             // issue 3.9：不要在这里额外预留系统栏 Insets（enableEdgeToEdge 后系统栏
@@ -118,7 +154,7 @@ fun AppNavigation(
                     // 风格，且绕过了涟漪/无障碍/状态层的默认行为
                     NavigationBar {
                         bottomNavItems.forEach { item ->
-                            val selected = currentDestination?.hierarchy?.any { it.route == item.screen.route } == true
+                            val selected = item.screen.route in selectedRoutes
                             NavigationBarItem(
                                 selected = selected,
                                 onClick = { navController.navigateToTopLevel(item.screen.route) },
@@ -143,7 +179,7 @@ fun AppNavigation(
                 if (showBottomBar && isExpanded) {
                     NavigationRail {
                         bottomNavItems.forEach { item ->
-                            val selected = currentDestination?.hierarchy?.any { it.route == item.screen.route } == true
+                            val selected = item.screen.route in selectedRoutes
                             NavigationRailItem(
                                 selected = selected,
                                 onClick = { navController.navigateToTopLevel(item.screen.route) },
@@ -166,26 +202,11 @@ fun AppNavigation(
                 // M3 SharedAxis 风格转场：淡入 + 轻微上移（Material Motion 的
                 // Z 轴共享位移，微信读书/Keep 的页面切换质感），替代原先的瞬切。
                 // 进入 220ms / 退出 150ms：新页面快速就位，旧页面不拖沓。
-                enterTransition = {
-                    fadeIn(animationSpec = tween(220)) +
-                        slideInVertically(
-                            animationSpec = tween(220),
-                            initialOffsetY = { it / 12 },
-                        )
-                },
-                exitTransition = {
-                    fadeOut(animationSpec = tween(150))
-                },
-                popEnterTransition = {
-                    fadeIn(animationSpec = tween(220))
-                },
-                popExitTransition = {
-                    fadeOut(animationSpec = tween(150)) +
-                        slideOutVertically(
-                            animationSpec = tween(220),
-                            targetOffsetY = { it / 12 },
-                        )
-                },
+                // lambda 为顶层常量（见文件头注释）
+                enterTransition = NavEnterTransition,
+                exitTransition = NavExitTransition,
+                popEnterTransition = NavPopEnterTransition,
+                popExitTransition = NavPopExitTransition,
             ) {
                 composable(Screen.Home.route) {
                     HomeScreen(

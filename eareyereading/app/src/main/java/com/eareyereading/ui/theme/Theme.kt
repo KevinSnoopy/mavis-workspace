@@ -6,6 +6,7 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
@@ -67,6 +68,21 @@ private val DarkColorScheme = darkColorScheme(
     onErrorContainer = Color(0xFFFFB4AB),
 )
 
+// DARK / SEPIA 的 copy 结果提升为顶层单例：
+// 旧实现在每次重组时 copy 出全新 ColorScheme 实例 → MaterialTheme
+// 参数不相等 → 整棵 UI 树自顶向下全量重组
+private val DarkAppColorScheme = DarkColorScheme.copy(
+    background = DarkBg,
+    surface = Color(0xFF252540),
+)
+
+private val SepiaColorScheme = LightColorScheme.copy(
+    background = SepiaBg,
+    surface = Color(0xFFF5E6C8),
+    onBackground = SepiaText,
+    onSurface = SepiaText,
+)
+
 @Composable
 fun EareyeReadingTheme(
     readingTheme: ReadingTheme = ReadingTheme.LIGHT,
@@ -77,26 +93,23 @@ fun EareyeReadingTheme(
     // 动态取色（Material You）：Android 12+ 跟随壁纸生成整套配色，
     // 品牌暖棕让位给系统色。低于 12 或未开启时保持品牌色不变。
     val context = LocalContext.current
-    val colorScheme = if (dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-        if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
-    } else {
-        // 深色模式覆盖 readingTheme 的颜色方案
-        val effectiveTheme = if (darkTheme) ReadingTheme.DARK else readingTheme
-        when (effectiveTheme) {
-            ReadingTheme.DARK -> DarkColorScheme.copy(
-                background = DarkBg,
-                surface = Color(0xFF252540),
-            )
-            ReadingTheme.LIGHT -> LightColorScheme
-            ReadingTheme.SEPIA -> LightColorScheme.copy(
-                background = SepiaBg,
-                surface = Color(0xFFF5E6C8),
-                onBackground = SepiaText,
-                onSurface = SepiaText,
-            )
+    val useDynamic = dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+    val colorScheme = remember(context, useDynamic, darkTheme, readingTheme) {
+        if (useDynamic) {
+            if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+        } else {
+            // 深色模式覆盖 readingTheme 的颜色方案
+            val effectiveTheme = if (darkTheme) ReadingTheme.DARK else readingTheme
+            when (effectiveTheme) {
+                ReadingTheme.DARK -> DarkAppColorScheme
+                ReadingTheme.LIGHT -> LightColorScheme
+                ReadingTheme.SEPIA -> SepiaColorScheme
+            }
         }
     }
-    val isDark = darkTheme || colorScheme == DarkColorScheme
+    // 是否深色由输入直接推导：旧实现的 colorScheme == DarkColorScheme 全字段
+    // 结构比较在动态取色分支永远为 false（图标颜色判断错误），且每重组一次
+    val isDark = if (useDynamic) darkTheme else darkTheme || readingTheme == ReadingTheme.DARK
 
     val view = LocalView.current
     if (!view.isInEditMode) {

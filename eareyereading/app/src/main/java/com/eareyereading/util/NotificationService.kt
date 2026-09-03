@@ -42,6 +42,21 @@ class NotificationService @Inject constructor(
         NotificationManagerCompat.from(context)
     }
 
+    // 已确认存在的 Channel 内存标志：ensureChannel 的 getNotificationChannel
+    // 是一次 Binder IPC，下载进度这类高频通知路径不该每次重查
+    private val ensuredChannels = java.util.Collections.synchronizedSet(HashSet<String>())
+
+    // 主界面 PendingIntent 固定不变：缓存复用，免每次 notify 都走一次
+    // PendingIntent.getActivity 的 Binder 往返
+    private val mainIntent: PendingIntent by lazy {
+        PendingIntent.getActivity(
+            context,
+            0,
+            Intent(context, MainActivity::class.java),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+    }
+
     private fun notificationsEnabled(): Boolean =
         notificationManagerCompat.areNotificationsEnabled()
 
@@ -63,12 +78,17 @@ class NotificationService @Inject constructor(
             }
         }
 
-    /** Android 8+ 幂等建 Channel：已存在则跳过。 */
+    /** Android 8+ 幂等建 Channel：已存在则跳过（内存标志短路重复 IPC）。 */
     private fun ensureChannel(id: String, importance: Int) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        if (id in ensuredChannels) return
         val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager ?: return
-        if (nm.getNotificationChannel(id) != null) return
+        if (nm.getNotificationChannel(id) != null) {
+            ensuredChannels.add(id)
+            return
+        }
         nm.createNotificationChannel(buildChannel(id, importance))
+        ensuredChannels.add(id)
     }
 
     /**
@@ -85,6 +105,8 @@ class NotificationService @Inject constructor(
         if (nm.getNotificationChannel(id) == null) {
             nm.createNotificationChannel(buildChannel(id, importance))
         }
+        // 重建后与内存标志对齐：后续 ensureChannel 直接短路
+        ensuredChannels.add(id)
     }
 
     // ── 复习提醒 ─────────────────────────────────────────
@@ -98,7 +120,7 @@ class NotificationService @Inject constructor(
             .setContentText("今天还有待复习的单词，点击查看 →")
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .setAutoCancel(true)
-            .setContentIntent(mainActivityPendingIntent())
+            .setContentIntent(mainIntent)
             .build()
         // 权限撤销竞态防护：Android 13+ 通知权限可能在检查后被撤销，
         // 裸 notify 会抛 SecurityException 崩掉 Receiver。走 NotificationManagerCompat + catch 兜底
@@ -122,7 +144,7 @@ class NotificationService @Inject constructor(
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
-            .setContentIntent(mainActivityPendingIntent())
+            .setContentIntent(mainIntent)
         if (percent != null) {
             builder.setProgress(100, (percent * 100).toInt(), false)
         } else {
@@ -150,7 +172,7 @@ class NotificationService @Inject constructor(
             .setAutoCancel(true)
             .setOnlyAlertOnce(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
-            .setContentIntent(mainActivityPendingIntent())
+            .setContentIntent(mainIntent)
             .build()
         notificationManagerCompat.notify(NOTIFICATION_ID_TTS_DOWNLOAD, notification)
     }
@@ -193,12 +215,4 @@ class NotificationService @Inject constructor(
     fun ensureReviewReminderChannel() {
         ensureChannel(CHANNEL_REVIEW_REMINDER, NotificationManager.IMPORTANCE_DEFAULT)
     }
-
-    private fun mainActivityPendingIntent(): PendingIntent =
-        PendingIntent.getActivity(
-            context,
-            0,
-            Intent(context, MainActivity::class.java),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-        )
 }

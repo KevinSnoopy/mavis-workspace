@@ -16,8 +16,14 @@ interface VocabularyDao {
     @Query("SELECT * FROM vocabulary WHERE isLearned = 1 ORDER BY lastReviewTime DESC")
     fun getLearnedWords(): Flow<List<VocabularyEntity>>
 
+    /** 精确匹配：走 word 二级索引 O(log n)，绝大多数点词查询命中于此。 */
+    @Query("SELECT * FROM vocabulary WHERE word = :word LIMIT 1")
+    suspend fun getWordExact(word: String): VocabularyEntity?
+
+    /** 大小写不敏感兜底：旧查询 LOWER(word)=LOWER(:word) 对任何索引都失效，
+     *  点词热路径每次全表扫描。先精确后兜底，索引命中的快路径零扫描。 */
     @Query("SELECT * FROM vocabulary WHERE LOWER(word) = LOWER(:word) LIMIT 1")
-    suspend fun getWord(word: String): VocabularyEntity?
+    suspend fun getWordIgnoreCase(word: String): VocabularyEntity?
 
     /** 备份导入判存预加载用：一次性取全部现存词的小写形态，
      * 避免循环内逐词 LOWER 全表扫描的 O(n²) 行访问。 */
@@ -69,9 +75,6 @@ interface VocabularyDao {
     // 保护已积累的 SM-2 进度不被竞态插入重建
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertReviewRecord(review: ReviewRecordEntity)
-
-    @Query("SELECT EXISTS(SELECT 1 FROM review_records WHERE vocabularyId = :vocabularyId LIMIT 1)")
-    suspend fun hasReviewRecord(vocabularyId: Long): Boolean
 
     @Delete
     suspend fun deleteEntity(word: VocabularyEntity)

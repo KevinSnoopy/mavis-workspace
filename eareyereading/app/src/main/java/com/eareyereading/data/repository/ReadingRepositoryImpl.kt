@@ -8,7 +8,9 @@ import com.eareyereading.domain.model.ReadingMode
 import com.eareyereading.domain.model.ReadingState
 import com.eareyereading.domain.model.ReadingTheme
 import com.eareyereading.domain.repository.ReadingRepository
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -19,11 +21,21 @@ class ReadingRepositoryImpl @Inject constructor(
     private val paragraphTranslationDao: ParagraphTranslationDao,
 ) : ReadingRepository {
 
+    private companion object {
+        /** 枚举按 value 的预建索引：替代每次发射的 entries 线性扫描。 */
+        private val readingModeById = ReadingMode.entries.associateBy { it.value }
+        private val readingThemeById = ReadingTheme.entries.associateBy { it.value }
+    }
+
+
     override suspend fun getState(bookId: Long): ReadingState? =
         readingStateDao.getForBook(bookId)?.toDomain()
 
     override fun getStateFlow(bookId: Long): Flow<ReadingState?> =
-        readingStateDao.observeForBook(bookId).map { it?.toDomain() }
+        readingStateDao.observeForBook(bookId)
+            .map { it?.toDomain() }
+            // map 落在收集者上下文（主线程），转换虽轻但每书一行也无妨统一
+            .flowOn(Dispatchers.Default)
 
     override suspend fun saveState(state: ReadingState) {
         readingStateDao.upsert(state.toEntity())
@@ -47,23 +59,26 @@ class ReadingRepositoryImpl @Inject constructor(
         paragraphTranslationDao.getForBook(bookId, langPair)
             .associate { it.paragraphIndex to it.translatedText }
 
-    override suspend fun saveTranslation(
+    override suspend fun saveTranslations(
         bookId: Long,
         langPair: String,
-        paragraphIndex: Int,
-        sourceText: String,
-        translatedText: String,
+        sourceParagraphs: List<String>,
+        translations: Map<Int, String>,
     ) {
-        paragraphTranslationDao.upsert(
+        if (translations.isEmpty()) return
+        val now = System.currentTimeMillis()
+        val entities = translations.map { (index, text) ->
             ParagraphTranslationEntity(
                 bookId = bookId,
-                paragraphIndex = paragraphIndex,
-                sourceText = sourceText,
-                translatedText = translatedText,
+                paragraphIndex = index,
+                sourceText = sourceParagraphs.getOrElse(index) { "" },
+                translatedText = text,
                 langPair = langPair,
-                translatedAt = System.currentTimeMillis(),
+                translatedAt = now,
             )
-        )
+        }
+        // 批量单事务：整本几百段旧路径逐段 upsert = 几百次独立事务落盘
+        paragraphTranslationDao.upsertAll(entities)
     }
 
     override suspend fun deleteTranslations(bookId: Long) =
@@ -75,10 +90,10 @@ class ReadingRepositoryImpl @Inject constructor(
         currentParagraph = currentParagraph,
         totalCharacters = totalCharacters,
         totalParagraphs = totalParagraphs,
-        readingMode = ReadingMode.entries.find { it.value == readingMode } ?: ReadingMode.NORMAL,
+        readingMode = readingModeById[readingMode] ?: ReadingMode.NORMAL,
         rsvpSpeed = rsvpSpeed,
         fontSize = fontSize,
-        theme = ReadingTheme.entries.find { it.value == theme } ?: ReadingTheme.LIGHT,
+        theme = readingThemeById[theme] ?: ReadingTheme.LIGHT,
     )
 
     private fun ReadingState.toEntity() = ReadingStateEntity(

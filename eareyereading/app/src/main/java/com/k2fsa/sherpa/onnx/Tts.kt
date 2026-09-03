@@ -175,32 +175,7 @@ class OfflineTts(
     }
 }
 
-// please refer to
+// 已删除 getOfflineTtsConfig 辅助函数：全仓无调用点（EmbeddedTtsEngine
+// 自行构造 config），且其硬编码 debug=true 会让 sherpa-onnx native 层
+// 打印海量日志拖慢推理。模型配置见
 // https://k2-fsa.github.io/sherpa/onnx/tts/pretrained_models/index.html
-// to download models
-fun getOfflineTtsConfig(
-    modelDir: String,
-    modelName: String,
-    lexicon: String,
-    dataDir: String,
-    dictDir: String,
-    ruleFsts: String,
-    ruleFars: String
-): OfflineTtsConfig {
-    return OfflineTtsConfig(
-        model = OfflineTtsModelConfig(
-            vits = OfflineTtsVitsModelConfig(
-                model = "$modelDir/$modelName",
-                lexicon = "$modelDir/$lexicon",
-                tokens = "$modelDir/tokens.txt",
-                dataDir = dataDir,
-                dictDir = dictDir,
-            ),
-            numThreads = 2,
-            debug = true,
-            provider = "cpu",
-        ),
-        ruleFsts = ruleFsts,
-        ruleFars = ruleFars,
-    )
-}

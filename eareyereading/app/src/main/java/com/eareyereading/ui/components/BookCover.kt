@@ -3,8 +3,6 @@ package com.eareyereading.ui.components
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
@@ -22,7 +20,6 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import java.io.File
-import kotlin.math.abs
 
 /** 生成封面用的暖调渐变库：按书名哈希稳定取色，同一本书永远是同一张"伪封面"。 */
 private val coverPalettes = listOf(
@@ -38,6 +35,10 @@ private val coverPalettes = listOf(
  * 书籍封面：EPUB 内嵌封面（[coverPath] 指向导入时提取的图片文件）优先，
  * 缺失时回退为"书名哈希渐变 + 首字母 + 书脊高光"的生成式封面（Readwise 风格），
  * 替代原先千篇一律的纯色块。
+ *
+ * 性能：封面存在性检查交给 Coil（IO 线程解码，失败静默露出下层渐变）。
+ * 旧实现在组合阶段对每个滚入屏幕的封面执行 File.exists()/length() 磁盘
+ * stat——书库快速滚动时每张封面都做主线程 IO，直接掉帧。
  */
 @Composable
 fun BookCover(
@@ -46,29 +47,32 @@ fun BookCover(
     modifier: Modifier = Modifier,
     cornerRadius: Dp = 10.dp,
 ) {
-    val coverFile = remember(coverPath) {
-        coverPath?.let { File(it) }?.takeIf { it.exists() && it.length() > 0 }
+    // floorMod：abs(hashCode()) 在 Int.MIN_VALUE 时仍为负，旧实现的
+    // abs % size 会直接负索引越界崩溃
+    val (top, bottom) = remember(title) {
+        coverPalettes[Math.floorMod(title.hashCode(), coverPalettes.size)]
     }
-    val (top, bottom) = coverPalettes[abs(title.hashCode()) % coverPalettes.size]
+    val gradientBrush = remember(top, bottom) {
+        Brush.linearGradient(listOf(Color(top), Color(bottom)))
+    }
+    val initials = remember(title) { title.take(2).uppercase() }
 
     Box(
         modifier = modifier
             .clip(RoundedCornerShape(cornerRadius))
-            .background(
-                Brush.linearGradient(listOf(Color(top), Color(bottom))),
-            ),
+            .background(gradientBrush),
         contentAlignment = Alignment.Center,
     ) {
-        if (coverFile != null) {
+        if (coverPath != null) {
             AsyncImage(
-                model = coverFile,
+                model = File(coverPath),
                 contentDescription = title,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize(),
             )
         } else {
             Text(
-                text = title.take(2).uppercase(),
+                text = initials,
                 style = MaterialTheme.typography.titleLarge,
                 color = Color.White,
                 fontWeight = FontWeight.Bold,

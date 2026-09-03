@@ -97,6 +97,49 @@ class EpubParser @Inject constructor() {
 
         /** 封面图片字节上限：超过则放弃真实封面，回退生成式封面（防炸弹）。 */
         private const val MAX_COVER_BYTES = 5L * 1024 * 1024
+
+        // ── 正则全部预编译：旧实现散落在各函数/循环 lambda 内，一本书
+        // 数百章 × 每章数次 Pattern.compile，是导入路径最热的分配点 ──
+        private val SCRIPT_BLOCK = Regex("<script[^>]*>[\\s\\S]*?</script>")
+        private val STYLE_BLOCK = Regex("<style[^>]*>[\\s\\S]*?</style>")
+        private val IMG_TAG = Regex("<img\\b", RegexOption.IGNORE_CASE)
+        private val P_TAG = Regex("<p[^>]*>(.*?)</p>", RegexOption.DOT_MATCHES_ALL)
+        private val BR_OR_BLOCK_SPLIT = Regex("<br\\s*/?>|</(?:div|section|article|p)>")
+        private val ANY_TAG = Regex("<[^>]+>")
+        private val WHITESPACE = Regex("\\s+")
+
+        private val META_CHARSET = Regex(
+            "<meta[^>]+charset\\s*=\\s*[\"']?([a-zA-Z0-9_\\-]+)",
+            RegexOption.IGNORE_CASE,
+        )
+        private val CHARSET_ATTR = Regex("""charset\s*=\s*["']?([a-zA-Z0-9_\-]+)["']?""", RegexOption.IGNORE_CASE)
+        private val XML_ENCODING = Regex("""<\?xml[^>]*encoding\s*=\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
+
+        private val CONTAINER_FULLPATH_1 = Regex(
+            "<rootfile\\b[^>]*full-path\\s*=\\s*[\"']([^\"']+)[\"'][^>]*/?>",
+            RegexOption.IGNORE_CASE,
+        )
+        private val CONTAINER_FULLPATH_2 = Regex(
+            "<rootfile\\b[^>]*>[\\s\\S]*?full-path\\s*=\\s*[\"']([^\"']+)[\"'][^>]*>",
+            RegexOption.IGNORE_CASE,
+        )
+
+        private val ITEMREF_TAG = Regex("<itemref\\b[^>]*>", RegexOption.IGNORE_CASE)
+        private val IDREF_ATTR = Regex("idref\\s*=\\s*[\"']([^\"']+)[\"']", RegexOption.IGNORE_CASE)
+        private val LINEAR_ATTR = Regex("linear\\s*=\\s*[\"']([^\"']+)[\"']", RegexOption.IGNORE_CASE)
+        private val ITEM_TAG = Regex("<item\\b[^>]*?>", RegexOption.IGNORE_CASE)
+        private val ID_ATTR = Regex("\\bid\\s*=\\s*[\"']([^\"']+)[\"']", RegexOption.IGNORE_CASE)
+        private val HREF_ATTR = Regex("\\bhref\\s*=\\s*[\"']([^\"']+)[\"']", RegexOption.IGNORE_CASE)
+
+        private val COVER_IMAGE_ITEM = Regex(
+            "<item\\b[^>]*properties\\s*=\\s*[\"'][^\"']*cover-image[^\"']*[\"'][^>]*>",
+            RegexOption.IGNORE_CASE,
+        )
+        private val COVER_META_TAG = Regex(
+            "<meta\\b[^>]*name\\s*=\\s*[\"']cover[\"'][^>]*>",
+            RegexOption.IGNORE_CASE,
+        )
+        private val CONTENT_ATTR = Regex("content\\s*=\\s*[\"']([^\"']+)[\"']", RegexOption.IGNORE_CASE)
     }
 
     /** 非正文页面黑名单：版权页/封面/目录/扉页/出版信息（issue 9.4）。 */
@@ -201,24 +244,16 @@ class EpubParser @Inject constructor() {
                 }
 
                 // 1) EPUB 3：properties="cover-image"（先抓整个 item 标签再取 href，属性顺序无关）
-                val coverHref = Regex(
-                    "<item\\b[^>]*properties\\s*=\\s*[\"'][^\"']*cover-image[^\"']*[\"'][^>]*>",
-                    RegexOption.IGNORE_CASE,
-                ).findAll(opfContent)
+                val coverHref = COVER_IMAGE_ITEM.findAll(opfContent)
                     .mapNotNull { tag ->
-                        Regex("\\bhref\\s*=\\s*[\"']([^\"']+)[\"']", RegexOption.IGNORE_CASE)
-                            .find(tag.value)?.groupValues?.get(1)
+                        HREF_ATTR.find(tag.value)?.groupValues?.get(1)
                     }
                     .firstOrNull()
 
                 // 2) EPUB 2：<meta name="cover" content="cover-id" />
-                val metaCoverId = Regex(
-                    "<meta\\b[^>]*name\\s*=\\s*[\"']cover[\"'][^>]*>",
-                    RegexOption.IGNORE_CASE,
-                ).findAll(opfContent)
+                val metaCoverId = COVER_META_TAG.findAll(opfContent)
                     .mapNotNull { tag ->
-                        Regex("content\\s*=\\s*[\"']([^\"']+)[\"']", RegexOption.IGNORE_CASE)
-                            .find(tag.value)?.groupValues?.get(1)
+                        CONTENT_ATTR.find(tag.value)?.groupValues?.get(1)
                     }
                     .firstOrNull()
 
@@ -347,9 +382,10 @@ class EpubParser @Inject constructor() {
                     ?: continue
 
                 val html = readEntryTextCapped(zip.getInputStream(entry), MAX_DOC_CHARS)
-                // issue 9.8：统计章节内 <img> 数量（图册检测）
-                imageCount += Regex("<img\\b", RegexOption.IGNORE_CASE).findAll(html).count()
-                val (entryParagraphs, _) = extractParagraphsFromHtml(html)
+                // issue 9.8：extractParagraphsFromHtml 顺带统计 <img> 数量
+                //（旧实现同一正则对整章 HTML 扫两遍、编译两次）
+                val (entryParagraphs, entryImages) = extractParagraphsFromHtml(html)
+                imageCount += entryImages
                 for (para in entryParagraphs) {
                     // 原文累计：含被截断的段落，表示扫描到的原文规模（issue 9.2 提示用）
                     originalTotalChars += para.length
@@ -357,13 +393,14 @@ class EpubParser @Inject constructor() {
                         truncated = true
                         break@outer
                     }
-                    paragraphs.add(para)
                     totalChars += para.length
+                    // 入库时顺手过滤空段：免最后再全量 filter 一遍
+                    if (para.isNotBlank()) paragraphs.add(para)
                 }
             }
         }
 
-        val result = paragraphs.filter { it.isNotBlank() }
+        val result = paragraphs
         // issue 9.8：没有可读段落但全是图片 → 图册，给明确错误而非笼统 NoContent
         if (result.isEmpty() && imageCount > 0) throw EpubParseException.ImageOnly()
         if (result.isEmpty()) throw EpubParseException.NoContent()
@@ -392,14 +429,8 @@ class EpubParser @Inject constructor() {
             try {
                 val text = readEntryTextCapped(zip.getInputStream(containerEntry), 4096)
                 // 双正则处理属性顺序：full-path 可能出现在 rootfile 标签任意位置
-                val fullPath = Regex(
-                    "<rootfile\\b[^>]*full-path\\s*=\\s*[\"']([^\"']+)[\"'][^>]*/?>",
-                    RegexOption.IGNORE_CASE,
-                ).find(text)?.groupValues?.get(1)?.trim()
-                    ?: Regex(
-                        "<rootfile\\b[^>]*>[\\s\\S]*?full-path\\s*=\\s*[\"']([^\"']+)[\"'][^>]*>",
-                        RegexOption.IGNORE_CASE,
-                    ).find(text)?.groupValues?.get(1)?.trim()
+                val fullPath = CONTAINER_FULLPATH_1.find(text)?.groupValues?.get(1)?.trim()
+                    ?: CONTAINER_FULLPATH_2.find(text)?.groupValues?.get(1)?.trim()
                 if (!fullPath.isNullOrBlank()) {
                     // container 里的路径是 zip 根下的绝对路径（不含前导 '/'）
                     val normalized = fullPath.removePrefix("/")
@@ -507,14 +538,11 @@ class EpubParser @Inject constructor() {
         }
         val head = String(bytes.copyOfRange(0, minOf(bytes.size, 1024)), Charsets.ISO_8859_1)
         // <meta charset="gbk">（HTML5 简写）
-        Regex("<meta[^>]+charset\\s*=\\s*[\"']?([a-zA-Z0-9_\\-]+)", RegexOption.IGNORE_CASE)
-            .find(head)?.let { return parseCharset(it.groupValues[1]) }
+        META_CHARSET.find(head)?.let { return parseCharset(it.groupValues[1]) }
         // <meta http-equiv="Content-Type" content="text/html; charset=gbk">
-        Regex("""charset\s*=\s*["']?([a-zA-Z0-9_\-]+)["']?""", RegexOption.IGNORE_CASE)
-            .find(head)?.let { return parseCharset(it.groupValues[1]) }
+        CHARSET_ATTR.find(head)?.let { return parseCharset(it.groupValues[1]) }
         // <?xml version="1.0" encoding="utf-8"?>
-        Regex("""<\?xml[^>]*encoding\s*=\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
-            .find(head)?.let { return parseCharset(it.groupValues[1]) }
+        XML_ENCODING.find(head)?.let { return parseCharset(it.groupValues[1]) }
         return Charsets.UTF_8
     }
 
@@ -546,12 +574,9 @@ class EpubParser @Inject constructor() {
      * linear="no" 的条目（封面/目录/版权页）不再被当正文读入（issue 9.4）。
      */
     private fun extractSpineRefs(opfContent: String): List<SpineRef> {
-        val tagRegex = Regex("<itemref\\b[^>]*>", RegexOption.IGNORE_CASE)
-        val idRegex = Regex("idref\\s*=\\s*[\"']([^\"']+)[\"']", RegexOption.IGNORE_CASE)
-        val linearRegex = Regex("linear\\s*=\\s*[\"']([^\"']+)[\"']", RegexOption.IGNORE_CASE)
-        return tagRegex.findAll(opfContent).mapNotNull { tag ->
-            val id = idRegex.find(tag.value)?.groupValues?.get(1) ?: return@mapNotNull null
-            val linear = linearRegex.find(tag.value)?.groupValues?.get(1)?.lowercase() ?: "yes"
+        return ITEMREF_TAG.findAll(opfContent).mapNotNull { tag ->
+            val id = IDREF_ATTR.find(tag.value)?.groupValues?.get(1) ?: return@mapNotNull null
+            val linear = LINEAR_ATTR.find(tag.value)?.groupValues?.get(1)?.lowercase() ?: "yes"
             SpineRef(idref = id, linear = linear != "no")
         }.toList()
     }
@@ -566,12 +591,9 @@ class EpubParser @Inject constructor() {
      */
     private fun extractManifestItems(opfContent: String): Map<String, String> {
         val result = LinkedHashMap<String, String>()
-        val tagRegex = Regex("<item\\b[^>]*?>", RegexOption.IGNORE_CASE)
-        val idRegex = Regex("\\bid\\s*=\\s*[\"']([^\"']+)[\"']", RegexOption.IGNORE_CASE)
-        val hrefRegex = Regex("\\bhref\\s*=\\s*[\"']([^\"']+)[\"']", RegexOption.IGNORE_CASE)
-        for (tag in tagRegex.findAll(opfContent)) {
-            val id = idRegex.find(tag.value)?.groupValues?.get(1) ?: continue
-            val href = hrefRegex.find(tag.value)?.groupValues?.get(1) ?: continue
+        for (tag in ITEM_TAG.findAll(opfContent)) {
+            val id = ID_ATTR.find(tag.value)?.groupValues?.get(1) ?: continue
+            val href = HREF_ATTR.find(tag.value)?.groupValues?.get(1) ?: continue
             if (id !in result) result[id] = href
         }
         return result
@@ -583,29 +605,30 @@ class EpubParser @Inject constructor() {
      */
     private fun extractParagraphsFromHtml(html: String): Pair<List<String>, Int> {
         // 移除脚本和样式
-        var text = html.replace(Regex("<script[^>]*>[\\s\\S]*?</script>"), "")
-        text = text.replace(Regex("<style[^>]*>[\\s\\S]*?</style>"), "")
-        val imageCount = Regex("<img\\b", RegexOption.IGNORE_CASE).findAll(html).count()
+        var text = html.replace(SCRIPT_BLOCK, "")
+        text = text.replace(STYLE_BLOCK, "")
+        val imageCount = IMG_TAG.findAll(html).count()
 
         // 优先按 <p> 标签分割段落（EPUB 最常见的段落标签）
-        val pTagRegex = Regex("<p[^>]*>(.*?)</p>", RegexOption.DOT_MATCHES_ALL)
-        val pParagraphs = pTagRegex.findAll(text).map { it.groupValues[1] }.toList()
+        val pParagraphs = P_TAG.findAll(text).map { it.groupValues[1] }.toList()
 
         val rawParagraphs = if (pParagraphs.isNotEmpty()) {
             pParagraphs
         } else {
             // 回退：按 <br> 或块级标签分割
-            text.split(Regex("<br\\s*/?>|</(?:div|section|article|p)>"))
+            text.split(BR_OR_BLOCK_SPLIT)
         }
 
+        // 段落级正则已预编译：旧实现 <[^>]+> 与 \s+ 写在 map lambda 内，
+        // 一本书数千段落 × 2 次 Pattern.compile
         val paragraphs = rawParagraphs
             .map { para ->
                 // 移除剩余 HTML 标签
-                var cleaned = para.replace(Regex("<[^>]+>"), " ")
+                var cleaned = para.replace(ANY_TAG, " ")
                 // 解码 HTML 实体（与 ArticleParser 共用同一实现，行为不分叉）
                 cleaned = HtmlEntities.decode(cleaned)
                 // 压缩空白并 trim
-                cleaned.replace(Regex("\\s+"), " ").trim()
+                cleaned.replace(WHITESPACE, " ").trim()
             }
             .filter { it.length > 3 }   // 阈值从 10 降到 3：章标题"Chapter 1"等短段不再被吞（issue 10.8）
         return paragraphs to imageCount

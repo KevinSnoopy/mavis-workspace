@@ -2245,6 +2245,9 @@ class CollinsClassifier @Inject constructor() {
     /** classifyText 对每个词调用 classify，正则提升为常量避免重复编译。 */
     private val ALPHA_ONLY = Regex("^[a-z]+$")
 
+    /** classifyText 的分词正则同样预编译（旧实现每次调用 Pattern.compile）。 */
+    private val WORD_REGEX = Regex("[a-zA-Z]+")
+
     } // companion object
 
     /**
@@ -2280,7 +2283,7 @@ class CollinsClassifier @Inject constructor() {
      * 批量分类一串文本中的所有词汇
      */
     fun classifyText(text: String): Map<String, WordLevel> {
-        val words = Regex("[a-zA-Z]+").findAll(text).map { it.value }.toSet()
+        val words = WORD_REGEX.findAll(text).mapTo(HashSet()) { it.value }
         return words.associateWith { classify(it) }
     }
 }

@@ -178,6 +178,7 @@ class VocabularyViewModel @Inject constructor(
                         throw e
                     } catch (e: Exception) {
                         // 单条失败跳过，继续处理其它词
+                        android.util.Log.w("VocabularyViewModel", "backfill '${w.word}' failed", e)
                     }
                 }
             } catch (e: kotlinx.coroutines.CancellationException) {

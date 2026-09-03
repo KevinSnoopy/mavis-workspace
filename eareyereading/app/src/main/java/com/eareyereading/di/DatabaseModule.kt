@@ -302,6 +302,26 @@ object DatabaseModule {
                         )
                     }
                 },
+                object : Migration(11, 12) {
+                    // 性能：vocabulary 补热查索引——word（点词查词 getWordExact，
+                    // 无索引时阅读界面每次点词全表扫描）、isLearned+排序列
+                    // （生词/已学列表过滤排序）。索引名与 VocabularyEntity
+                    // 声明式索引的 Room 自动命名严格一致，保证 schema 校验通过。
+                    override fun migrate(db: SupportSQLiteDatabase) {
+                        db.execSQL(
+                            "CREATE INDEX IF NOT EXISTS `index_vocabulary_word` " +
+                                "ON `vocabulary` (`word`)"
+                        )
+                        db.execSQL(
+                            "CREATE INDEX IF NOT EXISTS `index_vocabulary_isLearned_dateAdded` " +
+                                "ON `vocabulary` (`isLearned`, `dateAdded`)"
+                        )
+                        db.execSQL(
+                            "CREATE INDEX IF NOT EXISTS `index_vocabulary_isLearned_lastReviewTime` " +
+                                "ON `vocabulary` (`isLearned`, `lastReviewTime`)"
+                        )
+                    }
+                },
             )
             .build()
     }

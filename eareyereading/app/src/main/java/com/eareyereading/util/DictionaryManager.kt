@@ -91,10 +91,23 @@ class DictionaryManager @Inject constructor(
         // 大词典最近命中的小 LRU：阅读/RSVP 热路径同一词会反复查询，
         // 缓存最近命中可大幅减少对 Room 的单条查询次数。
         private const val BIG_DICT_LRU_MAX = 256
+
+        // 下载进度推送节流：定量进度按步进（1%）节流，不定量（-1f）按时间节流。
+        // 旧实现每读 256KB 就全列表拷贝 + StateFlow 发射，100MB 词典 ≈ 400 次
+        private const val DOWNLOAD_PROGRESS_STEP = 0.01f
+        private const val DOWNLOAD_PROGRESS_INTERVAL_MS = 250L
+
+        // 查词归一化用（剥离非字母），查词热路径每次调用编译一次太浪费
+        private val NON_ALPHA_REGEX = Regex("[^a-z]")
     }
 
     private val gson = Gson()
-    private val dictDir = File(context.filesDir, DICT_DIR_NAME).apply { mkdirs() }
+
+    // 惰性建目录：单例构造在 Hilt 注入点（App 启动主线程），
+    // mkdirs 是磁盘操作，延迟到首个后台使用者触发
+    private val dictDir: File by lazy {
+        File(context.filesDir, DICT_DIR_NAME).apply { mkdirs() }
+    }
 
     private val _statuses = MutableStateFlow<List<DictionaryStatus>>(emptyList())
     val statuses: StateFlow<List<DictionaryStatus>> = _statuses.asStateFlow()
@@ -122,6 +135,17 @@ class DictionaryManager @Inject constructor(
     // 两个下载协程交错写入（产物损坏且 rename 会把坏文件转正）
     private val downloadingIds = mutableSetOf<String>()
 
+    // manifest 内存缓存（按文件 lastModified+length 失效）：
+    // 查词热路径每次 lookup 都要过 getActiveDict/resolveActiveFile，
+    // 旧实现每次点词 = 2 次磁盘读 + 2 次 Gson 反序列化
+    @Volatile
+    private var cachedManifest: DictionaryManifest? = null
+    @Volatile
+    private var cachedManifestStamp: Long = 0L
+
+    // 大词典"已导入 Room"内存标志：替代每次查词的 countByDictId 聚合查询
+    private val importedBigDicts = mutableSetOf<String>()
+
     // 后台状态刷新用：setActiveDict 等公共入口不得在 Main 线程做
     // manifest 解析/文件存在性检查
     private val bgScope = kotlinx.coroutines.CoroutineScope(
@@ -129,14 +153,17 @@ class DictionaryManager @Inject constructor(
     )
 
     init {
-        // 恢复上次选中的词典
-        val savedActive = context.getSharedPreferences(ACTIVE_DICT_PREFS, Context.MODE_PRIVATE)
-            .getString(ACTIVE_DICT_KEY, null)
-        _activeDictId.value = savedActive
-
-        // 如果有缓存的 manifest，先加载它（离线可用）。
-        // 磁盘解析放后台：单例在 Hilt 注入时于 Main 线程构造
-        bgScope.launch { loadCachedManifest() }
+        // 恢复上次选中的词典 + 加载缓存 manifest（离线可用）。
+        // SharedPreferences 首次加载是磁盘 IO：移出主线程构造路径，
+        // 且仅在仍为空时回填，避免覆盖用户刚设置的更新值
+        bgScope.launch {
+            val savedActive = context.getSharedPreferences(ACTIVE_DICT_PREFS, Context.MODE_PRIVATE)
+                .getString(ACTIVE_DICT_KEY, null)
+            if (_activeDictId.value == null) {
+                _activeDictId.value = savedActive
+            }
+            loadCachedManifest()
+        }
     }
 
     /**
@@ -184,8 +211,14 @@ class DictionaryManager @Inject constructor(
     private fun parseManifest(): DictionaryManifest? {
         val manifestFile = File(dictDir, MANIFEST_FILE_NAME)
         if (!manifestFile.exists()) return null
+        // 内存缓存命中（文件未变）直接复用；并发下的重复解析是无害竞态
+        val stamp = manifestFile.lastModified() * 31 + manifestFile.length()
+        cachedManifest?.let { if (cachedManifestStamp == stamp) return it }
         return try {
-            gson.fromJson(manifestFile.readText(), DictionaryManifest::class.java)
+            val manifest = gson.fromJson(manifestFile.readText(), DictionaryManifest::class.java)
+            cachedManifest = manifest
+            cachedManifestStamp = stamp
+            manifest
         } catch (e: Exception) {
             // manifest 损坏/半截写入时降级为无列表，但要留痕便于排查
             android.util.Log.w("DictionaryManager", "parse manifest failed", e)
@@ -265,9 +298,23 @@ class DictionaryManager @Inject constructor(
 
                 // 标记下载中
                 updateStatusDownloading(dictId, true, 0f)
+                // 进度节流：updateStatusDownloading 是全列表拷贝 + StateFlow 发射，
+                // 每 256KB 触发一次会驱动 UI 每秒数百次重组
+                var lastPushedProgress = 0f
+                var lastPushAtMs = 0L
                 try {
                     downloadFile(info.downloadUrl, dest) { p ->
-                        updateStatusDownloading(dictId, true, p)
+                        val now = System.currentTimeMillis()
+                        val shouldPush = when {
+                            p < 0f -> now - lastPushAtMs >= DOWNLOAD_PROGRESS_INTERVAL_MS
+                            p - lastPushedProgress >= DOWNLOAD_PROGRESS_STEP -> true
+                            else -> false
+                        }
+                        if (shouldPush) {
+                            lastPushedProgress = if (p > lastPushedProgress) p else lastPushedProgress
+                            lastPushAtMs = now
+                            updateStatusDownloading(dictId, true, p)
+                        }
                         onProgress(p)
                     }
                     // 内容最小校验：HTTP 200 的 CDN 错误页/自举门户页也会被写入，
@@ -321,6 +368,8 @@ class DictionaryManager @Inject constructor(
         if (ok) {
             // issue 12.5：删除词典时同步清掉已入库的大词典条目，避免孤儿行常驻 DB
             dictionaryEntryDao.deleteByDictId(dictId)
+            // 同步失效"已导入"内存标志，否则删除后查词永远命中旧 Room 数据
+            synchronized(importedBigDicts) { importedBigDicts.remove(dictId) }
         }
         if (ok && _activeDictId.value == dictId) {
             setActiveDict(null)
@@ -404,7 +453,7 @@ class DictionaryManager @Inject constructor(
         // 未命中再退回剥离非字母的旧归一化，两种键格式都不漏
         val lower = word.trim().lowercase(java.util.Locale.ROOT)
         if (lower.length < 2) return@withContext null
-        val clean = lower.replace(Regex("[^a-z]"), "")
+        val clean = lower.replace(NON_ALPHA_REGEX, "")
         val candidates = if (clean.length >= 2 && clean != lower) listOf(lower, clean) else listOf(lower)
 
         // 小词典：优先整份载内存查（getActiveDict 对大词典返回 null）
@@ -438,7 +487,14 @@ class DictionaryManager @Inject constructor(
      * 不重复扫描）。(dictId, word) 唯一 + REPLACE 覆盖，重复导入无副作用。
      */
     private suspend fun ensureBigDictImported(dictId: String, file: File) {
-        if (dictionaryEntryDao.countByDictId(dictId) > 0L) return
+        // 内存标志短路：旧实现每次查词都对几十万行的表做一次 count 聚合
+        synchronized(importedBigDicts) {
+            if (dictId in importedBigDicts) return
+        }
+        if (dictionaryEntryDao.countByDictId(dictId) > 0L) {
+            synchronized(importedBigDicts) { importedBigDicts.add(dictId) }
+            return
+        }
         val buffer = ArrayList<DictionaryEntryEntity>(BIG_DICT_IMPORT_BATCH)
         try {
             file.bufferedReader().useLines { lines ->
@@ -467,7 +523,9 @@ class DictionaryManager @Inject constructor(
             )
         } catch (e: java.io.IOException) {
             android.util.Log.w("DictionaryManager", "导入大词典到 Room 失败 $dictId: ${e.message}")
+            return
         }
+        synchronized(importedBigDicts) { importedBigDicts.add(dictId) }
     }
 
     /** 大词典单条查询，命中最近的查询结果用 LRU 缓存减少反复敲 DB。 */
