@@ -102,6 +102,8 @@ data class ReaderUiState(
     val theme: ReadingTheme = ReadingTheme.LIGHT,
     // 正文字体：true=衬线（阅读 App 的灵魂配置，Kindle/微信读书标配）
     val serifFont: Boolean = false,
+    // 阅读方式：true=左右翻页（仿书页 HorizontalPager），false=上下滚动
+    val pageMode: Boolean = false,
     val isPlaying: Boolean = false,
     val isTtsPlaying: Boolean = false,
     val ttsInitialized: Boolean = false,
@@ -171,6 +173,7 @@ private data class ReadingSettings(
     val strength: Int = 3,
     val collinsHighlight: Boolean = false,
     val serifFont: Boolean = false,
+    val pageMode: Boolean = false,
 )
 
 @HiltViewModel
@@ -542,6 +545,7 @@ class ReaderViewModel @Inject constructor(
                     settingsRepository.getTranslationAlpha(),
                     settingsRepository.getCollinsHighlight(),
                     settingsRepository.getSerifFont(),
+                    settingsRepository.getReadingPageMode(),
                 ) { values ->
                     // P1 修复: 用 as? 安全转换 + 默认值,避免 DataStore 旧版本数据 schema
                     // 不匹配时 ClassCastException 直接死掉 init block(整个 Reader 屏开不起来)。
@@ -560,7 +564,9 @@ class ReaderViewModel @Inject constructor(
                     val collinsHighlight = values[5] as? Boolean ?: false
                     @Suppress("UNCHECKED_CAST")
                     val serifFont = values[6] as? Boolean ?: false
-                    ReadingSettings(speed, fontSize, theme, alpha, strength, collinsHighlight, serifFont)
+                    @Suppress("UNCHECKED_CAST")
+                    val pageMode = values[7] as? Boolean ?: false
+                    ReadingSettings(speed, fontSize, theme, alpha, strength, collinsHighlight, serifFont, pageMode)
                 }.collect { s ->
                     _uiState.update {
                         it.copy(
@@ -573,6 +579,7 @@ class ReaderViewModel @Inject constructor(
                             translationAlpha = s.alpha,
                             showWordLevelColors = s.collinsHighlight,
                             serifFont = s.serifFont,
+                            pageMode = s.pageMode,
                         )
                     }
                 }
@@ -1466,6 +1473,21 @@ class ReaderViewModel @Inject constructor(
                 throw e
             } catch (e: Exception) {
                 android.util.Log.e("ReaderViewModel", "setSerifFont failed", e)
+            }
+        }
+    }
+
+    /** 阅读方式切换：上下滚动 ⇄ 左右翻页（仿书页，全局设置持久化）。 */
+    fun togglePageMode() {
+        val next = !_uiState.value.pageMode
+        _uiState.update { it.copy(pageMode = next) }
+        viewModelScope.launch {
+            try {
+                settingsRepository.setReadingPageMode(next)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                android.util.Log.e("ReaderViewModel", "setReadingPageMode failed", e)
             }
         }
     }

@@ -76,6 +76,13 @@ class BookRepositoryImpl @Inject constructor(
         if (book.filePath.isNotBlank()) {
             bookDao.findByFilePath(book.filePath)?.let { existing ->
                 android.util.Log.i("BookRepository", "Book already imported (filePath=${book.filePath}), reusing id=${existing.id}")
+                // 命中的旧书记于归档态时自动取消归档：书库列表只显示未归档书，
+                // 归档后经典书列表重新出现"下载"按钮，用户点击期望书回到书库；
+                // 旧实现复用 id 但保持归档态，提示"已加入书库"列表里却永远看不到
+                if (existing.isArchived) {
+                    bookDao.setArchived(existing.id, false)
+                    android.util.Log.i("BookRepository", "Unarchived on re-add (id=${existing.id})")
+                }
                 return@withContext existing.id
             }
         }
@@ -122,6 +129,11 @@ class BookRepositoryImpl @Inject constructor(
                     "BookRepository",
                     "Book already imported (identifier=$identifier), reusing id=${existing.id}",
                 )
+                // 与 filePath 去重同款：重新导入已归档的书 = 用户要它回书库
+                if (existing.isArchived) {
+                    bookDao.setArchived(existing.id, false)
+                    android.util.Log.i("BookRepository", "Unarchived on re-add (id=${existing.id})")
+                }
                 deleteOrphanCopy(book.filePath)
                 return@withContext existing.id
             }

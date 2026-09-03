@@ -35,6 +35,8 @@ class SettingsRepositoryImpl @Inject constructor(
         val TTS_SPEED = floatPreferencesKey("tts_speed")
         // 阅读器正文字体：true=衬线（FontFamily.Serif），false=默认无衬线
         val SERIF_FONT = booleanPreferencesKey("serif_font")
+        // 阅读方式：true=左右翻页（仿书页），false=上下滚动（默认）
+        val READING_PAGE_MODE = booleanPreferencesKey("reading_page_mode")
         // Material You 动态取色（Android 12+ 跟随壁纸）
         val DYNAMIC_COLOR = booleanPreferencesKey("dynamic_color")
     }
@@ -101,11 +103,18 @@ class SettingsRepositoryImpl @Inject constructor(
     override fun getSerifFont(): Flow<Boolean> =
         dataStore.data.map { it[SERIF_FONT] ?: false }
 
+    override fun getReadingPageMode(): Flow<Boolean> =
+        dataStore.data.map { it[READING_PAGE_MODE] ?: false }
+
     override fun getDynamicColor(): Flow<Boolean> =
         dataStore.data.map { it[DYNAMIC_COLOR] ?: false }
 
     override suspend fun setSerifFont(enabled: Boolean) {
         dataStore.edit { it[SERIF_FONT] = enabled }
+    }
+
+    override suspend fun setReadingPageMode(enabled: Boolean) {
+        dataStore.edit { it[READING_PAGE_MODE] = enabled }
     }
 
     override suspend fun setDynamicColor(enabled: Boolean) {

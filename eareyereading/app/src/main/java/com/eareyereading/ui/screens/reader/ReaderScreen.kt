@@ -8,6 +8,8 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -16,9 +18,11 @@ import androidx.compose.material.icons.outlined.Translate
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import com.eareyereading.util.notificationPermissionGranted
 import com.eareyereading.util.rememberNotificationPermissionRequester
 import androidx.compose.ui.Alignment
@@ -430,31 +434,55 @@ fun ReaderScreen(
                 }
             } else {
                 when (uiState.readingMode) {
-                    ReadingMode.NORMAL -> NormalReadingView(
-                        paragraphs = uiState.paragraphs,
-                        currentIndex = uiState.currentParagraphIndex,
-                        fontSize = uiState.fontSize,
-                        textColor = textColor,
-                        showTranslation = uiState.showTranslation,
-                        paragraphTranslations = uiState.paragraphTranslations,
-                        translationAlpha = uiState.translationAlpha,
-                        showWordLevelColors = uiState.showWordLevelColors,
-                        showKnownWordsHighlight = uiState.showKnownWordsHighlight,
-                        knownWords = uiState.knownWords,
-                        learnedWords = uiState.learnedWords,
-                        isAutoReading = uiState.isAutoReading,
-                        currentSentences = uiState.currentSentences,
-                        currentSentenceIndex = uiState.currentSentenceIndex,
-                        onWordClick = viewModel::selectWord,
-                        onSentenceDoubleTap = viewModel::translateSentence,
-                        onVisibleParagraphChanged = viewModel::onVisibleParagraphChanged,
-                        bookmarkedParagraphs = uiState.bookmarkedParagraphs,
-                        highlights = uiState.highlights,
-                        onAddHighlight = { pIdx, start, end, text ->
-                            viewModel.addHighlight(pIdx, start, end, text)
-                        },
-                        onRemoveHighlight = viewModel::removeHighlight,
-                    )
+                    ReadingMode.NORMAL -> if (uiState.pageMode) {
+                        PagedReadingView(
+                            paragraphs = uiState.paragraphs,
+                            currentIndex = uiState.currentParagraphIndex,
+                            fontSize = uiState.fontSize,
+                            textColor = textColor,
+                            showTranslation = uiState.showTranslation,
+                            paragraphTranslations = uiState.paragraphTranslations,
+                            translationAlpha = uiState.translationAlpha,
+                            showWordLevelColors = uiState.showWordLevelColors,
+                            showKnownWordsHighlight = uiState.showKnownWordsHighlight,
+                            knownWords = uiState.knownWords,
+                            learnedWords = uiState.learnedWords,
+                            isAutoReading = uiState.isAutoReading,
+                            currentSentences = uiState.currentSentences,
+                            currentSentenceIndex = uiState.currentSentenceIndex,
+                            onWordClick = viewModel::selectWord,
+                            onSentenceDoubleTap = viewModel::translateSentence,
+                            onVisibleParagraphChanged = viewModel::onVisibleParagraphChanged,
+                            bookmarkedParagraphs = uiState.bookmarkedParagraphs,
+                            highlights = uiState.highlights,
+                        )
+                    } else {
+                        NormalReadingView(
+                            paragraphs = uiState.paragraphs,
+                            currentIndex = uiState.currentParagraphIndex,
+                            fontSize = uiState.fontSize,
+                            textColor = textColor,
+                            showTranslation = uiState.showTranslation,
+                            paragraphTranslations = uiState.paragraphTranslations,
+                            translationAlpha = uiState.translationAlpha,
+                            showWordLevelColors = uiState.showWordLevelColors,
+                            showKnownWordsHighlight = uiState.showKnownWordsHighlight,
+                            knownWords = uiState.knownWords,
+                            learnedWords = uiState.learnedWords,
+                            isAutoReading = uiState.isAutoReading,
+                            currentSentences = uiState.currentSentences,
+                            currentSentenceIndex = uiState.currentSentenceIndex,
+                            onWordClick = viewModel::selectWord,
+                            onSentenceDoubleTap = viewModel::translateSentence,
+                            onVisibleParagraphChanged = viewModel::onVisibleParagraphChanged,
+                            bookmarkedParagraphs = uiState.bookmarkedParagraphs,
+                            highlights = uiState.highlights,
+                            onAddHighlight = { pIdx, start, end, text ->
+                                viewModel.addHighlight(pIdx, start, end, text)
+                            },
+                            onRemoveHighlight = viewModel::removeHighlight,
+                        )
+                    }
                     ReadingMode.RSVP -> RsvpReadingView(
                         paragraph = uiState.paragraphs.getOrNull(uiState.currentParagraphIndex) ?: "",
                         currentWordIndex = uiState.currentWordIndex,
@@ -555,12 +583,14 @@ fun ReaderScreen(
             translationAlpha = uiState.translationAlpha,
             showWordLevelColors = uiState.showWordLevelColors,
             showKnownWordsHighlight = uiState.showKnownWordsHighlight,
+            pageMode = uiState.pageMode,
             onFontSizeChange = viewModel::setFontSize,
             onSpeedChange = viewModel::setRsvpSpeed,
             onStrengthChange = viewModel::setRsvpStrength,
             onTranslationAlphaChange = viewModel::setTranslationAlpha,
             onWordLevelColorsToggle = viewModel::toggleWordLevelColors,
             onKnownWordsHighlightToggle = viewModel::toggleKnownWordsHighlight,
+            onTogglePageMode = viewModel::togglePageMode,
             onDismiss = viewModel::toggleSettings,
         )
     }
@@ -805,246 +835,466 @@ fun NormalReadingView(
             items = paragraphs,
             key = { index, _ -> index }, // 段落按书加载后不可变，index 是稳定身份
         ) { index, para ->
-            val isCurrent = index == currentIndex
-            val isBookmarked = index in bookmarkedParagraphs
-            val paraHighlights = highlights[index] ?: emptyList()
-            val alpha = if (isCurrent) 1f else if (index < currentIndex) 0.4f else 0.7f
+            ReaderParagraphBlock(
+                index = index,
+                para = para,
+                isCurrent = index == currentIndex,
+                isBookmarked = index in bookmarkedParagraphs,
+                paraHighlights = highlights[index] ?: emptyList(),
+                alpha = if (index == currentIndex) 1f else if (index < currentIndex) 0.4f else 0.7f,
+                fontSize = fontSize,
+                textColor = textColor,
+                showTranslation = showTranslation,
+                translation = paragraphTranslations[index],
+                translationAlpha = translationAlpha,
+                showWordLevelColors = showWordLevelColors,
+                showKnownWordsHighlight = showKnownWordsHighlight,
+                knownWords = knownWords,
+                learnedWords = learnedWords,
+                isAutoReading = isAutoReading,
+                currentSentences = currentSentences,
+                currentSentenceIndex = currentSentenceIndex,
+                onWordClick = onWordClick,
+                onSentenceDoubleTap = onSentenceDoubleTap,
+                classifier = classifier,
+            )
+        }
+    }
+}
 
-            // 朗读中的当前段落：背景直接加在内容容器上。
-            // 原实现额外放了一个包 Text("") 的 Surface —— 零高度，背景永远不可见
-            Column(
+/**
+ * 单个段落的完整渲染块：书签标记行 + 正文（朗读句子级同步 / Collins 词色 /
+ * 生词高亮 / 用户高亮四分支）+ 译文。从滚动视图的 LazyColumn item 抽出，
+ * 供滚动（NormalReadingView）与左右翻页（PagedReadingView）两视图共用，
+ * 保证两种阅读方式的段落渲染完全一致。
+ */
+@Composable
+private fun ReaderParagraphBlock(
+    index: Int,
+    para: String,
+    isCurrent: Boolean,
+    isBookmarked: Boolean,
+    paraHighlights: List<HighlightData>,
+    alpha: Float,
+    fontSize: Int,
+    textColor: Color,
+    showTranslation: Boolean,
+    translation: String?,
+    translationAlpha: Float,
+    showWordLevelColors: Boolean,
+    showKnownWordsHighlight: Boolean,
+    knownWords: Set<String>,
+    learnedWords: Set<String>,
+    isAutoReading: Boolean,
+    currentSentences: List<String>,
+    currentSentenceIndex: Int,
+    onWordClick: (String) -> Unit,
+    onSentenceDoubleTap: (String) -> Unit,
+    classifier: CollinsClassifier,
+) {
+    // 朗读中的当前段落：背景直接加在内容容器上。
+    // 原实现额外放了一个包 Text("") 的 Surface —— 零高度，背景永远不可见
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(
+                if (isCurrent && isAutoReading) {
+                    Modifier
+                        .background(Primary.copy(alpha = 0.06f), RoundedCornerShape(8.dp))
+                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                } else {
+                    Modifier
+                }
+            ),
+    ) {
+        // 书签段落标记行
+        if (isBookmarked) {
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .then(
-                        if (isCurrent && isAutoReading) {
-                            Modifier
-                                .background(Primary.copy(alpha = 0.06f), RoundedCornerShape(8.dp))
-                                .padding(horizontal = 6.dp, vertical = 2.dp)
-                        } else {
-                            Modifier
-                        }
-                    ),
+                    .padding(vertical = 4.dp),
+                horizontalArrangement = Arrangement.Start,
+                verticalAlignment = Alignment.CenterVertically,
             ) {
+                Icon(
+                    Icons.Default.Bookmark,
+                    "已书签",
+                    modifier = Modifier.size(16.dp),
+                    tint = Secondary,
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Divider(
+                    modifier = Modifier.weight(1f),
+                    thickness = 1.dp,
+                    color = Secondary.copy(alpha = 0.3f),
+                )
+            }
+        }
 
-            // 书签段落标记行
-            if (isBookmarked) {
-                Row(
+        // 句子级声文同步高亮（朗读中）
+        if (isCurrent && isAutoReading && currentSentences.isNotEmpty()) {
+            // 显示已读/当前/未读句子
+            currentSentences.forEachIndexed { sIdx, sentence ->
+                val sAlpha = when {
+                    sIdx < currentSentenceIndex -> 0.45f  // 已读完
+                    sIdx == currentSentenceIndex -> 1f      // 当前读
+                    else -> 0.6f                           // 未读
+                }
+                val bgColor = if (sIdx == currentSentenceIndex)
+                    Primary.copy(alpha = 0.10f) else Color.Transparent
+
+                Surface(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(vertical = 4.dp),
-                    horizontalArrangement = Arrangement.Start,
-                    verticalAlignment = Alignment.CenterVertically,
+                        .padding(vertical = 1.dp),
+                    color = bgColor,
+                    shape = RoundedCornerShape(4.dp),
                 ) {
-                    Icon(
-                        Icons.Default.Bookmark,
-                        "已书签",
-                        modifier = Modifier.size(16.dp),
-                        tint = Secondary,
-                    )
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Divider(
-                        modifier = Modifier.weight(1f),
-                        thickness = 1.dp,
-                        color = Secondary.copy(alpha = 0.3f),
-                    )
-                }
-            }
-
-            // 句子级声文同步高亮（朗读中）
-            if (isCurrent && isAutoReading && currentSentences.isNotEmpty()) {
-                // 显示已读/当前/未读句子
-                currentSentences.forEachIndexed { sIdx, sentence ->
-                    val sAlpha = when {
-                        sIdx < currentSentenceIndex -> 0.45f  // 已读完
-                        sIdx == currentSentenceIndex -> 1f      // 当前读
-                        else -> 0.6f                           // 未读
-                    }
-                    val bgColor = if (sIdx == currentSentenceIndex)
-                        Primary.copy(alpha = 0.10f) else Color.Transparent
-
-                    Surface(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 1.dp),
-                        color = bgColor,
-                        shape = RoundedCornerShape(4.dp),
-                    ) {
-                        // 朗读中的句子也走 TappableParagraphText：朗读时点词查义
-                        // 是核心功能，此前该分支只渲染纯 Text 完全不可点（issue 3.4）
-                        val sentenceText = if (showWordLevelColors) {
-                            buildAnnotatedString {
-                                val words = Regex("([a-zA-Z]+)|([^a-zA-Z]+)").findAll(sentence)
-                                words.forEach { match ->
-                                    val word = match.value
-                                    if (Regex("^[a-zA-Z]+$").matches(word)) {
-                                        val level = classifier.classify(word)
-                                        val color = when (level) {
-                                            WordLevel.CORE -> WordLevelCore
-                                            WordLevel.INTERMEDIATE -> WordLevelIntmd
-                                            WordLevel.UPPER_INTERMEDIATE -> WordLevelUpper
-                                            WordLevel.ADVANCED -> WordLevelAdv
-                                            WordLevel.RARE -> WordLevelRare
-                                            WordLevel.UNKNOWN -> textColor.copy(alpha = sAlpha * 0.5f)
-                                        }
-                                        withStyle(SpanStyle(color = color.copy(alpha = sAlpha))) { append(word) }
-                                    } else {
-                                        withStyle(SpanStyle(color = textColor.copy(alpha = sAlpha * 0.6f))) { append(word) }
-                                    }
-                                }
-                            }
-                        } else {
-                            buildAnnotatedString {
-                                withStyle(SpanStyle(color = textColor.copy(alpha = sAlpha))) { append(sentence) }
-                            }
-                        }
-                        TappableParagraphText(
-                            text = sentenceText,
-                            paragraph = sentence,
-                            onWordClick = onWordClick,
-                            onSentenceDoubleTap = onSentenceDoubleTap,
-                            modifier = Modifier.padding(vertical = 4.dp, horizontal = 4.dp),
-                            style = readerParagraphStyle(fontSize),
-                        )
-                    }
-                }
-            } else {
-                // Collins 词频色彩（非朗读中）
-                if (showWordLevelColors) {
-                    // 排版结果按真正影响产物的键缓存：播放句级状态变化不再重切全部可见段落
-                    val annotatedText = remember(para, alpha, textColor, showKnownWordsHighlight, knownWords, paraHighlights) {
+                    // 朗读中的句子也走 TappableParagraphText：朗读时点词查义
+                    // 是核心功能，此前该分支只渲染纯 Text 完全不可点（issue 3.4）
+                    val sentenceText = if (showWordLevelColors) {
                         buildAnnotatedString {
-                            val words = Regex("([a-zA-Z]+)|([^a-zA-Z]+)").findAll(para)
+                            val words = Regex("([a-zA-Z]+)|([^a-zA-Z]+)").findAll(sentence)
                             words.forEach { match ->
                                 val word = match.value
                                 if (Regex("^[a-zA-Z]+$").matches(word)) {
                                     val level = classifier.classify(word)
-                                    val lower = word.lowercase()
-                                    // 生词本优先：已认识的词用绿色
-                                    val color = when {
-                                        showKnownWordsHighlight && lower in knownWords -> Success.copy(alpha = alpha)
-                                        else -> when (level) {
-                                            WordLevel.CORE -> WordLevelCore
-                                            WordLevel.INTERMEDIATE -> WordLevelIntmd
-                                            WordLevel.UPPER_INTERMEDIATE -> WordLevelUpper
-                                            WordLevel.ADVANCED -> WordLevelAdv
-                                            WordLevel.RARE -> WordLevelRare
-                                            WordLevel.UNKNOWN -> textColor.copy(alpha = alpha * 0.5f)
-                                        }.let { it.copy(alpha = alpha) }
+                                    val color = when (level) {
+                                        WordLevel.CORE -> WordLevelCore
+                                        WordLevel.INTERMEDIATE -> WordLevelIntmd
+                                        WordLevel.UPPER_INTERMEDIATE -> WordLevelUpper
+                                        WordLevel.ADVANCED -> WordLevelAdv
+                                        WordLevel.RARE -> WordLevelRare
+                                        WordLevel.UNKNOWN -> textColor.copy(alpha = sAlpha * 0.5f)
                                     }
-                                    withStyle(SpanStyle(color = color)) { append(word) }
+                                    withStyle(SpanStyle(color = color.copy(alpha = sAlpha))) { append(word) }
                                 } else {
-                                    withStyle(SpanStyle(color = textColor.copy(alpha = alpha * 0.6f))) { append(word) }
+                                    withStyle(SpanStyle(color = textColor.copy(alpha = sAlpha * 0.6f))) { append(word) }
                                 }
                             }
-                            // 词色之上叠加用户高亮背景（原实现此分支完全不画高亮）
-                            overlayParagraphHighlights(para, paraHighlights)
+                        }
+                    } else {
+                        buildAnnotatedString {
+                            withStyle(SpanStyle(color = textColor.copy(alpha = sAlpha))) { append(sentence) }
                         }
                     }
                     TappableParagraphText(
-                        text = annotatedText,
-                        paragraph = para,
+                        text = sentenceText,
+                        paragraph = sentence,
                         onWordClick = onWordClick,
                         onSentenceDoubleTap = onSentenceDoubleTap,
-                        modifier = Modifier.padding(vertical = 6.dp),
+                        modifier = Modifier.padding(vertical = 4.dp, horizontal = 4.dp),
                         style = readerParagraphStyle(fontSize),
                     )
-                } else if (showKnownWordsHighlight && knownWords.isNotEmpty()) {
-                    // 生词本高亮模式（Collins 关）
-                    val annotatedText = remember(para, alpha, textColor, knownWords, learnedWords, paraHighlights) {
-                        buildAnnotatedString {
-                            val words = Regex("([a-zA-Z]+)|([^a-zA-Z]+)").findAll(para)
-                            words.forEach { match ->
-                                val word = match.value
-                                if (Regex("^[a-zA-Z]+$").matches(word)) {
-                                    val lower = word.lowercase()
-                                    val color = when {
-                                        lower in knownWords -> Success.copy(alpha = alpha)
-                                        lower in learnedWords -> KnownWord.copy(alpha = alpha)
-                                        else -> textColor.copy(alpha = alpha)
-                                    }
-                                    withStyle(SpanStyle(color = color)) { append(word) }
-                                } else {
-                                    withStyle(SpanStyle(color = textColor.copy(alpha = alpha * 0.6f))) { append(word) }
+                }
+            }
+        } else {
+            // Collins 词频色彩（非朗读中）
+            if (showWordLevelColors) {
+                // 排版结果按真正影响产物的键缓存：播放句级状态变化不再重切全部可见段落
+                val annotatedText = remember(para, alpha, textColor, showKnownWordsHighlight, knownWords, paraHighlights) {
+                    buildAnnotatedString {
+                        val words = Regex("([a-zA-Z]+)|([^a-zA-Z]+)").findAll(para)
+                        words.forEach { match ->
+                            val word = match.value
+                            if (Regex("^[a-zA-Z]+$").matches(word)) {
+                                val level = classifier.classify(word)
+                                val lower = word.lowercase()
+                                // 生词本优先：已认识的词用绿色
+                                val color = when {
+                                    showKnownWordsHighlight && lower in knownWords -> Success.copy(alpha = alpha)
+                                    else -> when (level) {
+                                        WordLevel.CORE -> WordLevelCore
+                                        WordLevel.INTERMEDIATE -> WordLevelIntmd
+                                        WordLevel.UPPER_INTERMEDIATE -> WordLevelUpper
+                                        WordLevel.ADVANCED -> WordLevelAdv
+                                        WordLevel.RARE -> WordLevelRare
+                                        WordLevel.UNKNOWN -> textColor.copy(alpha = alpha * 0.5f)
+                                    }.let { it.copy(alpha = alpha) }
                                 }
+                                withStyle(SpanStyle(color = color)) { append(word) }
+                            } else {
+                                withStyle(SpanStyle(color = textColor.copy(alpha = alpha * 0.6f))) { append(word) }
                             }
-                            // 词色之上叠加用户高亮背景（默认配置就走本分支，
-                            // 原实现高亮在这里完全不画）
-                            overlayParagraphHighlights(para, paraHighlights)
                         }
+                        // 词色之上叠加用户高亮背景（原实现此分支完全不画高亮）
+                        overlayParagraphHighlights(para, paraHighlights)
                     }
-                    TappableParagraphText(
-                        text = annotatedText,
-                        paragraph = para,
-                        onWordClick = onWordClick,
-                        onSentenceDoubleTap = onSentenceDoubleTap,
-                        modifier = Modifier.padding(vertical = 6.dp),
-                        style = readerParagraphStyle(fontSize),
-                    )
-                } else {
-                    // 普通模式 + 高亮渲染
-                    val annotatedText = remember(para, alpha, textColor, paraHighlights) {
-                        buildAnnotatedString {
-                            var cursor = 0
-                            // 按 offset 顺序处理高亮区域；对每条高亮按当前 cursor 收敛：
-                            // 重叠高亮不再重复输出重叠段，负值/反向/越界的脏数据
-                            // （startOffset > endOffset、endOffset > 段落长）也不会让
-                            // substring 抛 IllegalArgumentException
-                            val sortedHighlights = paraHighlights.sortedBy { it.startOffset }
-                            for (highlight in sortedHighlights) {
-                                val start = highlight.startOffset.coerceAtLeast(cursor)
-                                val end = highlight.endOffset.coerceIn(start, para.length)
-                                if (end <= start) continue
-                                // 插入高亮前的文本
-                                if (cursor < start) {
-                                    withStyle(SpanStyle(color = textColor.copy(alpha = alpha * 0.8f))) {
-                                        append(para.substring(cursor, start))
-                                    }
+                }
+                TappableParagraphText(
+                    text = annotatedText,
+                    paragraph = para,
+                    onWordClick = onWordClick,
+                    onSentenceDoubleTap = onSentenceDoubleTap,
+                    modifier = Modifier.padding(vertical = 6.dp),
+                    style = readerParagraphStyle(fontSize),
+                )
+            } else if (showKnownWordsHighlight && knownWords.isNotEmpty()) {
+                // 生词本高亮模式（Collins 关）
+                val annotatedText = remember(para, alpha, textColor, knownWords, learnedWords, paraHighlights) {
+                    buildAnnotatedString {
+                        val words = Regex("([a-zA-Z]+)|([^a-zA-Z]+)").findAll(para)
+                        words.forEach { match ->
+                            val word = match.value
+                            if (Regex("^[a-zA-Z]+$").matches(word)) {
+                                val lower = word.lowercase()
+                                val color = when {
+                                    lower in knownWords -> Success.copy(alpha = alpha)
+                                    lower in learnedWords -> KnownWord.copy(alpha = alpha)
+                                    else -> textColor.copy(alpha = alpha)
                                 }
-                                // 高亮文本
-                                withStyle(SpanStyle(
-                                    background = highlight.color.copy(alpha = 0.25f),
-                                    color = highlight.color,
-                                )) {
-                                    append(para.substring(start, end))
-                                }
-                                cursor = end
+                                withStyle(SpanStyle(color = color)) { append(word) }
+                            } else {
+                                withStyle(SpanStyle(color = textColor.copy(alpha = alpha * 0.6f))) { append(word) }
                             }
-                            // 剩余文本
-                            if (cursor < para.length) {
+                        }
+                        // 词色之上叠加用户高亮背景（默认配置就走本分支，
+                        // 原实现高亮在这里完全不画）
+                        overlayParagraphHighlights(para, paraHighlights)
+                    }
+                }
+                TappableParagraphText(
+                    text = annotatedText,
+                    paragraph = para,
+                    onWordClick = onWordClick,
+                    onSentenceDoubleTap = onSentenceDoubleTap,
+                    modifier = Modifier.padding(vertical = 6.dp),
+                    style = readerParagraphStyle(fontSize),
+                )
+            } else {
+                // 普通模式 + 高亮渲染
+                val annotatedText = remember(para, alpha, textColor, paraHighlights) {
+                    buildAnnotatedString {
+                        var cursor = 0
+                        // 按 offset 顺序处理高亮区域；对每条高亮按当前 cursor 收敛：
+                        // 重叠高亮不再重复输出重叠段，负值/反向/越界的脏数据
+                        // （startOffset > endOffset、endOffset > 段落长）也不会让
+                        // substring 抛 IllegalArgumentException
+                        val sortedHighlights = paraHighlights.sortedBy { it.startOffset }
+                        for (highlight in sortedHighlights) {
+                            val start = highlight.startOffset.coerceAtLeast(cursor)
+                            val end = highlight.endOffset.coerceIn(start, para.length)
+                            if (end <= start) continue
+                            // 插入高亮前的文本
+                            if (cursor < start) {
                                 withStyle(SpanStyle(color = textColor.copy(alpha = alpha * 0.8f))) {
-                                    append(para.substring(cursor))
+                                    append(para.substring(cursor, start))
                                 }
+                            }
+                            // 高亮文本
+                            withStyle(SpanStyle(
+                                background = highlight.color.copy(alpha = 0.25f),
+                                color = highlight.color,
+                            )) {
+                                append(para.substring(start, end))
+                            }
+                            cursor = end
+                        }
+                        // 剩余文本
+                        if (cursor < para.length) {
+                            withStyle(SpanStyle(color = textColor.copy(alpha = alpha * 0.8f))) {
+                                append(para.substring(cursor))
                             }
                         }
                     }
-                    TappableParagraphText(
-                        text = annotatedText,
-                        paragraph = para,
-                        onWordClick = onWordClick,
-                        onSentenceDoubleTap = onSentenceDoubleTap,
-                        modifier = Modifier.padding(vertical = 6.dp),
-                        style = readerParagraphStyle(fontSize),
-                    )
                 }
+                TappableParagraphText(
+                    text = annotatedText,
+                    paragraph = para,
+                    onWordClick = onWordClick,
+                    onSentenceDoubleTap = onSentenceDoubleTap,
+                    modifier = Modifier.padding(vertical = 6.dp),
+                    style = readerParagraphStyle(fontSize),
+                )
             }
+        }
 
-            // 翻译（透明度可调）
-            if (showTranslation && paragraphTranslations.isNotEmpty()) {
-                val translation = paragraphTranslations[index]
-                if (!translation.isNullOrBlank()) {
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = translation,
-                        modifier = Modifier.padding(vertical = 2.dp),
-                        style = readerParagraphStyle(fontSize - 2, 1.5f).copy(
-                            color = Primary.copy(alpha = alpha * translationAlpha),
-                        ),
-                    )
-                    // 只有实际有译文才留间距：原实现把 Spacer 放在判空之外，
-                    // 未翻译段落也多出一截空白，节奏不齐
-                    Spacer(modifier = Modifier.height(12.dp))
+        // 翻译（透明度可调）
+        if (showTranslation && !translation.isNullOrBlank()) {
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = translation,
+                modifier = Modifier.padding(vertical = 2.dp),
+                style = readerParagraphStyle(fontSize - 2, 1.5f).copy(
+                    color = Primary.copy(alpha = alpha * translationAlpha),
+                ),
+            )
+            // 只有实际有译文才留间距：原实现把 Spacer 放在判空之外，
+            // 未翻译段落也多出一截空白，节奏不齐
+            Spacer(modifier = Modifier.height(12.dp))
+        }
+    }
+}
+
+// ── 左右翻页阅读视图（仿书页） ────────────────────
+/**
+ * 仿书页横向翻页阅读：HorizontalPager 逐页渲染，页面按"段落高度预算"贪心
+ * 分箱（Paint 估行数，后台线程整书测量一次），段落渲染与滚动视图共用
+ * [ReaderParagraphBlock]——词色/生词高亮/用户高亮/译文/朗读同步完全一致。
+ *
+ * 同步语义（与滚动视图对齐）：
+ *  - 翻页 settle 后把该页首段回报 VM（底栏滑杆/进度/统计跟上）；
+ *  - 程序推进（朗读/滑杆/章节跳转）时翻到目标段所在页；
+ *  - 相邻页动画翻页，跨页跳转（如续读恢复）瞬时定位。
+ */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@Composable
+fun PagedReadingView(
+    paragraphs: List<String>,
+    currentIndex: Int,
+    fontSize: Int,
+    textColor: Color,
+    showTranslation: Boolean,
+    paragraphTranslations: Map<Int, String>,
+    translationAlpha: Float,
+    showWordLevelColors: Boolean,
+    showKnownWordsHighlight: Boolean,
+    knownWords: Set<String>,
+    learnedWords: Set<String>,
+    isAutoReading: Boolean = false,
+    currentSentences: List<String> = emptyList(),
+    currentSentenceIndex: Int = 0,
+    onWordClick: (String) -> Unit,
+    onSentenceDoubleTap: (String) -> Unit,
+    onVisibleParagraphChanged: (Int) -> Unit = {},
+    bookmarkedParagraphs: Set<Int> = emptySet(),
+    highlights: Map<Int, List<HighlightData>> = emptyMap(),
+    classifier: CollinsClassifier = remember { CollinsClassifier() },
+) {
+    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        val density = LocalDensity.current
+        val contentWidthPx = with(density) { maxWidth.roundToPx() }
+        // 页高预算：视口高 - 上下 8dp 留白（与滚动视图 contentPadding 一致）
+        val pageBudgetPx = with(density) { (maxHeight - 16.dp).roundToPx() }
+        val serif = LocalReaderFontFamily.current != FontFamily.Default
+        // 各项 px 尺寸（密度/字号变化时 produceState 的 key 一起变）
+        val fontSizePx = with(density) { fontSize.sp.toPx() }
+        val transFontSizePx = with(density) { (fontSize - 2).sp.toPx() }
+        val paragraphVPadPx = with(density) { 12.dp.toPx() }    // TappableParagraphText vertical 6*2
+        val bookmarkRowPx = with(density) { 25.dp.toPx() }      // 书签标记行
+        val transBlockPadPx = with(density) { 20.dp.toPx() }    // 译文 4 + 2*2 + 12
+
+        // 分页排版：整书 Paint 估高 + 贪心装箱。放 Default 调度器：
+        // 大书几百段的测量同步做在组合期会顶掉帧（字号滑杆逐像素回调时尤甚），
+        // 后台算完一次性替换，期间保留旧分页不闪空
+        val pages by produceState(
+            initialValue = emptyList<List<Int>>(),
+            paragraphs, fontSizePx, transFontSizePx, showTranslation,
+            paragraphTranslations, contentWidthPx, pageBudgetPx, serif,
+            bookmarkedParagraphs,
+        ) {
+            value = withContext(Dispatchers.Default) {
+                val paint = android.graphics.Paint().apply {
+                    isAntiAlias = true
+                    typeface = if (serif) android.graphics.Typeface.SERIF
+                    else android.graphics.Typeface.DEFAULT
+                }
+                fun estHeight(text: String, textSizePx: Float, lineMult: Float, extraPx: Float): Int {
+                    if (text.isEmpty()) return 0
+                    paint.textSize = textSizePx
+                    // 等宽均分估行数 ≥ 实际按词断行的行数：宁少放不溢出，
+                    // 页尾略空优于段落被裁
+                    val lines = kotlin.math.ceil(paint.measureText(text) / contentWidthPx)
+                        .toInt().coerceAtLeast(1)
+                    return (lines * textSizePx * lineMult).toInt() + extraPx.toInt()
+                }
+                val result = mutableListOf<List<Int>>()
+                var current = mutableListOf<Int>()
+                var used = 0
+                paragraphs.forEachIndexed { idx, para ->
+                    var h = estHeight(para, fontSizePx, 1.8f, paragraphVPadPx)
+                    if (idx in bookmarkedParagraphs) h += bookmarkRowPx.toInt()
+                    val trans = if (showTranslation) paragraphTranslations[idx] else null
+                    if (!trans.isNullOrBlank()) {
+                        h += estHeight(trans, transFontSizePx, 1.5f, transBlockPadPx)
+                    }
+                    if (h > pageBudgetPx) {
+                        // 超页高的单段独占一页（页内 verticalScroll 兜底可看全）
+                        if (current.isNotEmpty()) {
+                            result.add(current)
+                            current = mutableListOf()
+                        }
+                        result.add(mutableListOf(idx))
+                        used = 0
+                    } else if (used + h > pageBudgetPx && current.isNotEmpty()) {
+                        result.add(current)
+                        current = mutableListOf(idx)
+                        used = h
+                    } else {
+                        current.add(idx)
+                        used += h
+                    }
+                }
+                if (current.isNotEmpty()) result.add(current)
+                result
+            }
+        }
+
+        val pagerState = rememberPagerState(pageCount = { pages.size })
+
+        // 翻页回报：页 settle 后把该页首段回报 VM
+        // （底栏滑杆/进度/阅读统计跟上视口，播放中由播放循环主导，VM 侧会忽略）
+        LaunchedEffect(pagerState, pages) {
+            snapshotFlow { pagerState.currentPage }
+                .collect { page ->
+                    pages.getOrNull(page)?.firstOrNull()?.let(onVisibleParagraphChanged)
+                }
+        }
+        // 程序推进跟随：朗读/滑杆/章节跳转把 currentIndex 推走时翻到目标页。
+        // 远距离（续读恢复/跳章）瞬时定位，相邻页动画翻页
+        LaunchedEffect(currentIndex, pages) {
+            if (pages.isEmpty()) return@LaunchedEffect
+            val target = pages.indexOfFirst { currentIndex in it }
+            if (target >= 0 && target != pagerState.currentPage && !pagerState.isScrollInProgress) {
+                if (kotlin.math.abs(target - pagerState.currentPage) > 1) {
+                    pagerState.scrollToPage(target)
+                } else {
+                    pagerState.animateScrollToPage(target)
                 }
             }
+        }
+
+        if (pages.isEmpty()) {
+            // 分页排版计算中（后台整书测量，通常 <100ms）：保持空白防跳变
+            Box(modifier = Modifier.fillMaxSize())
+        } else {
+            HorizontalPager(
+                state = pagerState,
+                modifier = Modifier.fillMaxSize(),
+            ) { page ->
+                // verticalScroll 兜底：超页高单段/估算偏差导致的内容溢出仍可滚动查看
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .verticalScroll(rememberScrollState())
+                        .padding(vertical = 8.dp),
+                ) {
+                    pages[page].forEach { idx ->
+                        ReaderParagraphBlock(
+                            index = idx,
+                            para = paragraphs[idx],
+                            isCurrent = idx == currentIndex,
+                            isBookmarked = idx in bookmarkedParagraphs,
+                            paraHighlights = highlights[idx] ?: emptyList(),
+                            alpha = if (idx == currentIndex) 1f else if (idx < currentIndex) 0.4f else 0.7f,
+                            fontSize = fontSize,
+                            textColor = textColor,
+                            showTranslation = showTranslation,
+                            translation = paragraphTranslations[idx],
+                            translationAlpha = translationAlpha,
+                            showWordLevelColors = showWordLevelColors,
+                            showKnownWordsHighlight = showKnownWordsHighlight,
+                            knownWords = knownWords,
+                            learnedWords = learnedWords,
+                            isAutoReading = isAutoReading,
+                            currentSentences = currentSentences,
+                            currentSentenceIndex = currentSentenceIndex,
+                            onWordClick = onWordClick,
+                            onSentenceDoubleTap = onSentenceDoubleTap,
+                            classifier = classifier,
+                        )
+                    }
+                }
             }
         }
     }
@@ -2100,12 +2350,14 @@ fun ReaderSettingsDialog(
     translationAlpha: Float,
     showWordLevelColors: Boolean,
     showKnownWordsHighlight: Boolean,
+    pageMode: Boolean = false,
     onFontSizeChange: (Int) -> Unit,
     onSpeedChange: (Int) -> Unit,
     onStrengthChange: (Int) -> Unit,
     onTranslationAlphaChange: (Float) -> Unit,
     onWordLevelColorsToggle: () -> Unit,
     onKnownWordsHighlightToggle: () -> Unit,
+    onTogglePageMode: () -> Unit = {},
     onDismiss: () -> Unit,
 ) {
     ModalBottomSheet(
@@ -2155,6 +2407,25 @@ fun ReaderSettingsDialog(
                 onValueChange = onTranslationAlphaChange,
                 valueRange = 0.3f..1f,
             )
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column {
+                    Text("左右翻页", style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        if (pageMode) "仿书页横向翻页阅读" else "当前：上下滚动阅读",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(
+                    checked = pageMode,
+                    onCheckedChange = { onTogglePageMode() },
+                )
+            }
             Spacer(modifier = Modifier.height(8.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),

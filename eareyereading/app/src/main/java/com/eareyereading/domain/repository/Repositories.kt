@@ -72,6 +72,8 @@ interface SettingsRepository {
     fun getTtsSpeed(): Flow<Float>
     /** 阅读器正文字体：true=衬线（FontFamily.Serif），false=默认无衬线 */
     fun getSerifFont(): Flow<Boolean>
+    /** 阅读方式：true=左右翻页（仿书页 HorizontalPager），false=上下滚动（默认） */
+    fun getReadingPageMode(): Flow<Boolean>
     /** Material You 动态取色（Android 12+ 跟随壁纸取色），默认关闭保留品牌色 */
     fun getDynamicColor(): Flow<Boolean>
     suspend fun setRsvpSpeed(speed: Int)
@@ -86,6 +88,7 @@ interface SettingsRepository {
     suspend fun setCollinsHighlight(enabled: Boolean)
     suspend fun setTtsSpeed(speed: Float)
     suspend fun setSerifFont(enabled: Boolean)
+    suspend fun setReadingPageMode(enabled: Boolean)
     suspend fun setDynamicColor(enabled: Boolean)
     suspend fun clearAll()
 }
