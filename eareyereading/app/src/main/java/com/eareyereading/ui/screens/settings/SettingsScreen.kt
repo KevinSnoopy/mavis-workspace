@@ -280,6 +280,13 @@ class SettingsViewModel @Inject constructor(
         }
         viewModelScope.launch {
             try {
+                // 整百分比/阶段去重（与 ReaderViewModel 同款）：引擎侧虽已按
+                // 100ms 节流发射，但设置页此前每条都 update uiState，下载/解压
+                // 的几十秒里整屏每秒重组 10 次；去重后只在整百分比或阶段文案
+                // 变化时才更新（66MB 下载全程 ≤100 次 + 解压文件名变化）
+                var lastEmittedPct = -999
+                var lastEmittedStage: String? = null
+                var lastEmittedInitializing: Boolean? = null
                 embeddedTts.downloadProgress.collect { progress ->
                     // sealed Progress → (fraction, stage文案, isInitializing) 三通道
                     // isInitializing 单独抽出：Initializing/Completed 阶段 UI 要显示
@@ -315,22 +322,30 @@ class SettingsViewModel @Inject constructor(
                         com.eareyereading.tts.EmbeddedTtsEngine.Progress.Initializing -> true
                         else -> false
                     }
-                    _uiState.update {
-                        // Completed 时模型必然已落盘，同步置 embeddedModelDownloaded=true，
-                        // 避免 initialize() 写 Completed 后、downloadEmbeddedTts() 还没执行到
-                        // refreshEmbeddedStatus 的窗口期里 UI 闪现"未下载"
-                        val downloadedOverride = when (progress) {
-                            com.eareyereading.tts.EmbeddedTtsEngine.Progress.Completed -> true
-                            is com.eareyereading.tts.EmbeddedTtsEngine.Progress.Failed -> null
-                            else -> null
+                    val pctInt = (frac * 100).toInt()
+                    if (pctInt != lastEmittedPct || stage != lastEmittedStage ||
+                        isInitializing != lastEmittedInitializing
+                    ) {
+                        lastEmittedPct = pctInt
+                        lastEmittedStage = stage
+                        lastEmittedInitializing = isInitializing
+                        _uiState.update {
+                            // Completed 时模型必然已落盘，同步置 embeddedModelDownloaded=true，
+                            // 避免 initialize() 写 Completed 后、downloadEmbeddedTts() 还没执行到
+                            // refreshEmbeddedStatus 的窗口期里 UI 闪现"未下载"
+                            val downloadedOverride = when (progress) {
+                                com.eareyereading.tts.EmbeddedTtsEngine.Progress.Completed -> true
+                                is com.eareyereading.tts.EmbeddedTtsEngine.Progress.Failed -> null
+                                else -> null
+                            }
+                            it.copy(
+                                embeddedDownloading = isInProgress && !isInitializing,
+                                embeddedDownloadProgress = frac,
+                                embeddedDownloadStage = stage,
+                                embeddedInitializing = isInitializing,
+                                embeddedModelDownloaded = downloadedOverride ?: it.embeddedModelDownloaded,
+                            )
                         }
-                        it.copy(
-                            embeddedDownloading = isInProgress && !isInitializing,
-                            embeddedDownloadProgress = frac,
-                            embeddedDownloadStage = stage,
-                            embeddedInitializing = isInitializing,
-                            embeddedModelDownloaded = downloadedOverride ?: it.embeddedModelDownloaded,
-                        )
                     }
                 }
             } catch (e: kotlinx.coroutines.CancellationException) {

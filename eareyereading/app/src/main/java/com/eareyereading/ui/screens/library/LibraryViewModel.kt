@@ -24,6 +24,8 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.text.SimpleDateFormat
@@ -343,7 +345,9 @@ class LibraryViewModel @Inject constructor(
                 withContext(Dispatchers.IO) {
                     inputStream.use { input ->
                         dest.outputStream().use { output ->
-                            val buffer = ByteArray(8192)
+                            // 256KB 缓冲：SAF 拷贝几十 MB 的 EPUB 时，
+                            // 8KB 缓冲 = 数万次 read/write 系统调用
+                            val buffer = ByteArray(262144)
                             var copied = 0L
                             while (true) {
                                 val n = input.read(buffer)
@@ -394,6 +398,14 @@ class LibraryViewModel @Inject constructor(
     }
 
     /**
+     * 经典书并发下载上限：下载完每本都要走 addBook 的整本解析 +
+     * 词频统计（CPU 密集），不限并发时批量点下载会同时开 N 条
+     * HttpURLConnection + N 个解析任务，GC/IO 风暴拖慢全进程。
+     * 2 路（下载一队、解析一队）实测吞吐与流畅度的平衡点
+     */
+    private val classicDownloadLimiter = Semaphore(2)
+
+    /**
      * 一键下载英文经典名著（Project Gutenberg 纯文本）并加入书库。
      * 确定性路径名（books/classics/{id}.txt）让重复下载走 addBook 的 filePath 去重。
      */
@@ -405,50 +417,55 @@ class LibraryViewModel @Inject constructor(
             try {
                 _uiState.update { it.copy(downloadingClassicIds = it.downloadingClassicIds + classic.id) }
                 beginImportOp("正在下载《${classic.title}》...")
-                val dir = File(context.filesDir, "books/classics").apply { mkdirs() }
-                val dest = File(dir, "${classic.id}.txt")
-                destFile = dest
-                if (!dest.exists()) {
-                    withContext(Dispatchers.IO) {
-                        val conn = (java.net.URL(classic.url).openConnection() as java.net.HttpURLConnection).apply {
-                            connectTimeout = 20_000
-                            readTimeout = 120_000
-                            setRequestProperty("User-Agent", "Mozilla/5.0")
-                            setRequestProperty("Accept", "text/plain,*/*")
-                            instanceFollowRedirects = true
-                        }
-                        try {
-                            if (conn.responseCode != java.net.HttpURLConnection.HTTP_OK) {
-                                throw java.io.IOException("HTTP ${conn.responseCode}")
+                classicDownloadLimiter.withPermit {
+                    // mkdirs/exists/下载全部放 IO 调度器（旧实现 mkdirs/exists 跑在
+                    // Main）；失败以异常抛出由外层 catch 统一处理
+                    val dest = withContext(Dispatchers.IO) {
+                        val dir = File(context.filesDir, "books/classics").apply { mkdirs() }
+                        val d = File(dir, "${classic.id}.txt")
+                        if (!d.exists()) {
+                            val conn = (java.net.URL(classic.url).openConnection() as java.net.HttpURLConnection).apply {
+                                connectTimeout = 20_000
+                                readTimeout = 120_000
+                                setRequestProperty("User-Agent", "Mozilla/5.0")
+                                setRequestProperty("Accept", "text/plain,*/*")
+                                instanceFollowRedirects = true
                             }
-                            // 30MB 上限：整本长篇绰绰有余，同时防异常来源撑爆磁盘
-                            val max = 30L * 1024 * 1024
-                            conn.inputStream.use { input ->
-                                dest.outputStream().use { output ->
-                                    val buffer = ByteArray(262144)
-                                    var done = 0L
-                                    while (true) {
-                                        val n = input.read(buffer)
-                                        if (n < 0) break
-                                        done += n
-                                        if (done > max) throw java.io.IOException("File too large")
-                                        output.write(buffer, 0, n)
+                            try {
+                                if (conn.responseCode != java.net.HttpURLConnection.HTTP_OK) {
+                                    throw java.io.IOException("HTTP ${conn.responseCode}")
+                                }
+                                // 30MB 上限：整本长篇绰绰有余，同时防异常来源撑爆磁盘
+                                val max = 30L * 1024 * 1024
+                                conn.inputStream.use { input ->
+                                    d.outputStream().use { output ->
+                                        val buffer = ByteArray(262144)
+                                        var done = 0L
+                                        while (true) {
+                                            val n = input.read(buffer)
+                                            if (n < 0) break
+                                            done += n
+                                            if (done > max) throw java.io.IOException("File too large")
+                                            output.write(buffer, 0, n)
+                                        }
                                     }
                                 }
+                            } finally {
+                                conn.disconnect()
                             }
-                        } finally {
-                            conn.disconnect()
                         }
+                        d
                     }
+                    destFile = dest
+                    bookRepository.addBook(
+                        Book(
+                            title = classic.title,
+                            author = classic.author,
+                            filePath = dest.absolutePath,
+                            language = "en",
+                        ),
+                    )
                 }
-                bookRepository.addBook(
-                    Book(
-                        title = classic.title,
-                        author = classic.author,
-                        filePath = dest.absolutePath,
-                        language = "en",
-                    ),
-                )
                 destFile = null // 成功入库后文件交 deleteBook 生命周期接管
                 refreshDueTimestamp()
                 setResultMessage("已加入书库：${classic.title}")

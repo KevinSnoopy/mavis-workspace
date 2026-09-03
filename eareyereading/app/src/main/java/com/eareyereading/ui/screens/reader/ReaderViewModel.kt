@@ -296,6 +296,7 @@ class ReaderViewModel @Inject constructor(
             // 注意：embeddedEngine.downloadProgress 现在是 sealed Progress，不是 Float?；
             // 我们把 fraction 和 stage 都映射进 uiState 让 UI 既能画进度条又能显示阶段文案。
             var lastEmittedPct = -999
+            var lastEmittedStage: String? = null
             val progressJob = launch {
                 embeddedEngine.downloadProgress.collect { progress ->
                     val (frac, stage) = when (progress) {
@@ -339,8 +340,13 @@ class ReaderViewModel @Inject constructor(
                         com.eareyereading.tts.EmbeddedTtsEngine.Progress.Completed -> null
                         else -> frac
                     }
-                    if (pctInt != lastEmittedPct || fracOut != _uiState.value.embeddedDownloadProgress) {
+                    // 去重只看整百分比与阶段文案：旧条件里
+                    // `fracOut != _uiState.value.embeddedDownloadProgress` 拿原始
+                    // 浮点比较，下载期间进度小数每 100ms 都在变 → 条件恒真，
+                    // 阅读页（整本书的渲染列表）每秒重组 10 次，肉眼可见掉帧
+                    if (pctInt != lastEmittedPct || stage != lastEmittedStage) {
                         lastEmittedPct = pctInt
+                        lastEmittedStage = stage
                         _uiState.update {
                             it.copy(
                                 embeddedDownloadProgress = fracOut,

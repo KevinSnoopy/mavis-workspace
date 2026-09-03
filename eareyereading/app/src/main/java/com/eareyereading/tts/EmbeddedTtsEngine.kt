@@ -1412,7 +1412,9 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
         return try {
             conn.inputStream.use { input ->
                 java.io.FileOutputStream(target, /* append = */ true).use { output ->
-                    val buffer = ByteArray(8192)
+                    // 256KB 缓冲：66MB 模型 tarball 旧 8KB 缓冲要 8000+ 次
+                    // read/write 系统调用 + 8000+ 次进度回调闭包，纯 CPU 浪费
+                    val buffer = ByteArray(262144)
                     var sinceCheck = 0
                     var totalRead = existingLen
                     while (true) {
@@ -1448,7 +1450,8 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
             Log.i(TAG, "fullStream: opening input stream from $conn")
             conn.inputStream.use { input ->
                 java.io.FileOutputStream(target, /* append = */ false).use { output ->
-                    val buffer = ByteArray(8192)
+                    // 256KB 缓冲：与 appendStream 同款，理由见彼处注释
+                    val buffer = ByteArray(262144)
                     var totalRead = 0L
                     var sinceCheck = 0L
                     var lastTraceMs = 0L

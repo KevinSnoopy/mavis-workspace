@@ -129,29 +129,29 @@ class BookRepositoryImpl @Inject constructor(
 
         // 单趟统计：一次遍历段落同时完成分词与 CJK 计数。
         // 旧实现 join 全文 → split（数十万 String）→ count 再扫一遍全文，
-        // 大书导入瞬时内存峰值约为正文的 3~4 倍
-        val tokens = ArrayList<String>(paragraphs.size * 64)
+        // 大书导入瞬时内存峰值约为正文的 3~4 倍。
+        // 2.0：词数只做计数不物化 token 字符串——一部长篇 ~10 万词，
+        // 旧写法每本导入白造 10 万个 String（几 MB 分配），批量下载多本书时
+        // 触发 GC 风暴拖慢全进程（含 UI 线程）
+        var tokenCount = 0
         var cjkChars = 0
         for (paragraph in paragraphs) {
-            var start = -1
+            var inWord = false
             for (i in paragraph.indices) {
                 val c = paragraph[i]
                 if (c in '\u4E00'..'\u9FFF') cjkChars++
                 val isWhitespace = c == ' ' || c == '\t' || c == '\n' || c == '\r'
                 if (isWhitespace) {
-                    if (start >= 0) {
-                        tokens.add(paragraph.substring(start, i))
-                        start = -1
-                    }
-                } else if (start < 0) {
-                    start = i
+                    inWord = false
+                } else if (!inWord) {
+                    inWord = true
+                    tokenCount++
                 }
             }
-            if (start >= 0) tokens.add(paragraph.substring(start))
         }
         // 中文等无空白语言按空白切分只得 1 个"词"：此时按 CJK 字符数计词，
         // 避免"少数派"类中文文章整书报 1 词
-        val totalWords = if (cjkChars > tokens.size) cjkChars else tokens.size
+        val totalWords = if (cjkChars > tokenCount) cjkChars else tokenCount
 
         val contentToSave = if (book.content.isNotBlank()) book.content
             else paragraphs.joinToString("\n\n")
