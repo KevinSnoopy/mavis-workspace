@@ -3,6 +3,7 @@ package com.eareyereading.ui.screens.library
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -12,8 +13,10 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.outlined.MenuBook
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -27,9 +30,14 @@ import com.eareyereading.domain.model.ArticleSource
 import com.eareyereading.domain.model.Book
 import com.eareyereading.domain.model.ClassicBook
 import com.eareyereading.util.RssParser
+import com.eareyereading.ui.components.BookCover
+import com.eareyereading.ui.components.EmptyState
+import com.eareyereading.ui.components.StatCard
+import com.eareyereading.ui.components.shimmer
 import com.eareyereading.ui.theme.*
+import kotlinx.coroutines.launch
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun LibraryScreen(
     onBookClick: (Long) -> Unit,
@@ -40,6 +48,7 @@ fun LibraryScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
 
     // 导入的最终结果（成功/失败）用 Snackbar 呈现：loadingMessage 原先只在
     // isLoading 为 true 的转圈分支里渲染，加载结束后设置的成功/失败消息
@@ -101,16 +110,21 @@ fun LibraryScreen(
                 .background(MaterialTheme.colorScheme.background)
                 .padding(padding),
         ) {
-            // 搜索栏：用 M3 OutlinedTextField 默认样式（可见描边、涟漪、
-            // 主题色令牌）。原实现抹掉边框做成无边胶囊搜索框，是 web 风格
-            OutlinedTextField(
-                value = uiState.searchQuery,
-                onValueChange = viewModel::onSearchQueryChange,
+            // M3 SearchBar（Google 式收起/展开）：收起时是常驻药丸输入框，
+            // 点击展开后接管全屏，content 内渲染实时过滤结果。
+            // 替代原先的 OutlinedTextField（web 风格输入框）
+            var searchActive by rememberSaveable { mutableStateOf(false) }
+            SearchBar(
+                query = uiState.searchQuery,
+                onQueryChange = viewModel::onSearchQueryChange,
+                onSearch = { searchActive = false },
+                active = searchActive,
+                onActiveChange = { searchActive = it },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
                 placeholder = {
-                    Text("搜索书籍...", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("搜索书籍 / 作者...", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 },
                 leadingIcon = {
                     Icon(
@@ -125,10 +139,54 @@ fun LibraryScreen(
                         IconButton(onClick = { viewModel.onSearchQueryChange("") }) {
                             Icon(Icons.Default.Clear, "清除", modifier = Modifier.size(18.dp))
                         }
+                    } else if (searchActive) {
+                        IconButton(onClick = { searchActive = false }) {
+                            Icon(Icons.Default.Close, "收起", modifier = Modifier.size(18.dp))
+                        }
                     }
                 },
-                singleLine = true,
-            )
+            ) {
+                // 展开态：实时搜索结果（uiState.books 已按 searchQuery 过滤）
+                if (uiState.books.isEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 48.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            if (uiState.searchQuery.isBlank()) "输入关键词搜索书架"
+                            else "没有匹配「${uiState.searchQuery}」的书籍",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                } else {
+                    LazyColumn(
+                        contentPadding = PaddingValues(vertical = 8.dp),
+                    ) {
+                        items(uiState.books, key = { it.id }) { book ->
+                            ListItem(
+                                headlineContent = {
+                                    Text(book.title, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                },
+                                supportingContent = {
+                                    Text(book.author, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                },
+                                leadingContent = {
+                                    BookCover(
+                                        title = book.title,
+                                        coverPath = book.coverPath,
+                                        modifier = Modifier.size(38.dp, 52.dp),
+                                        cornerRadius = 6.dp,
+                                    )
+                                },
+                                modifier = Modifier.clickable { onBookClick(book.id) },
+                            )
+                        }
+                    }
+                }
+            }
 
             // Tab 切换：标准 M3 TabRow（下划线指示器 + 分隔线）。
             // 原实现抹掉指示器/分隔线做成透明胶囊，是 iOS/web 分段控件风格
@@ -168,21 +226,24 @@ fun LibraryScreen(
                         ) {
                             StatCard(
                                 icon = Icons.Default.Timer,
-                                value = "${stats.todayMinutes}",
-                                label = "今日阅读(min)",
+                                value = stats.todayMinutes,
+                                unit = "min",
+                                label = "今日阅读",
                                 color = Primary,
                                 modifier = Modifier.weight(1f),
                             )
                             StatCard(
                                 icon = Icons.Default.LocalFireDepartment,
-                                value = "${stats.streakDays}",
-                                label = "连续打卡(天)",
+                                value = stats.streakDays,
+                                unit = "天",
+                                label = "连续打卡",
                                 color = Warning,
+                                pulse = stats.streakDays > 0,
                                 modifier = Modifier.weight(1f),
                             )
                             StatCard(
-                                icon = Icons.Default.MenuBook,
-                                value = "${stats.totalBooks}",
+                                icon = Icons.Outlined.MenuBook,
+                                value = stats.totalBooks,
                                 label = "累计书籍",
                                 color = Primary,
                                 modifier = Modifier.weight(1f),
@@ -196,18 +257,17 @@ fun LibraryScreen(
                     }
 
                     if (uiState.isLoading) {
-                        item {
-                            Box(
-                                modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp),
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                    CircularProgressIndicator(color = Primary)
-                                    if (uiState.loadingMessage.isNotBlank()) {
-                                        Spacer(modifier = Modifier.height(12.dp))
-                                        Text(uiState.loadingMessage, style = MaterialTheme.typography.bodyMedium)
-                                    }
-                                }
+                        // 骨架屏：与 BookCard 同构的占位 + 微光扫过，
+                        // 替代居中转圈（感知加载速度更快）
+                        items(3, key = { "skeleton_$it" }) { BookCardSkeleton() }
+                        if (uiState.loadingMessage.isNotBlank()) {
+                            item {
+                                Text(
+                                    uiState.loadingMessage,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(vertical = 8.dp),
+                                )
                             }
                         }
                     } else if (uiState.books.isEmpty()) {
@@ -216,18 +276,10 @@ fun LibraryScreen(
                                 modifier = Modifier.fillMaxWidth().padding(vertical = 20.dp),
                                 horizontalAlignment = Alignment.CenterHorizontally,
                             ) {
-                                Text("📚", style = MaterialTheme.typography.displaySmall)
-                                Spacer(modifier = Modifier.height(8.dp))
-                                Text(
-                                    "书架为空",
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.Bold,
-                                )
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text(
-                                    "导入 EPUB/TXT，或从下方一键下载英文经典名著",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                EmptyState(
+                                    icon = Icons.Outlined.MenuBook,
+                                    title = "书架为空",
+                                    subtitle = "导入 EPUB/TXT，或从下方一键下载英文经典名著",
                                 )
                                 Spacer(modifier = Modifier.height(16.dp))
                                 Button(
@@ -254,7 +306,22 @@ fun LibraryScreen(
                                 book = book,
                                 onClick = { onBookClick(book.id) },
                                 onDelete = { viewModel.deleteBook(book.id) },
-                                onArchive = { viewModel.archiveBook(book.id) },
+                                onArchive = {
+                                    // 滑动/菜单归档统一走"可撤销"入口：
+                                    // 归档目前没有浏览/恢复列表，误触必须能一键还原
+                                    viewModel.archiveBook(book.id)
+                                    scope.launch {
+                                        val result = snackbarHostState.showSnackbar(
+                                            message = "已归档《${book.title.take(12)}》",
+                                            actionLabel = "撤销",
+                                            duration = SnackbarDuration.Short,
+                                        )
+                                        if (result == SnackbarResult.ActionPerformed) {
+                                            viewModel.unarchiveBook(book.id)
+                                        }
+                                    }
+                                },
+                                modifier = Modifier.animateItemPlacement(),
                             )
                         }
                     }
@@ -334,46 +401,81 @@ fun LibraryScreen(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun BookCard(
     book: Book,
     onClick: () -> Unit,
     onDelete: () -> Unit,
     onArchive: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     var showMenu by remember { mutableStateOf(false) }
     // 删除是永久操作（级联清书签/高亮/进度/统计）：二次确认防误触
     var showDeleteConfirm by remember { mutableStateOf(false) }
 
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+    // 滑动归档（Gmail 式）：左右滑均可归档，动作走可撤销入口（调用方配 Snackbar 撤销）。
+    // confirmValueChange 返回 false 让卡片弹回原位——真正的移除由数据流刷新驱动
+    val dismissState = rememberDismissState(
+        confirmValueChange = { value ->
+            if (value != DismissValue.Default) {
+                onArchive()
+            }
+            false
+        },
+    )
 
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(18.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            // 封面占位
+    SwipeToDismiss(
+        state = dismissState,
+        background = {
+            // 滑动背景：品牌绿 + 归档图标（两个方向共用同一动作）
+            val direction = dismissState.dismissDirection
+            val alignment = if (direction == DismissDirection.StartToEnd) {
+                Alignment.CenterStart
+            } else {
+                Alignment.CenterEnd
+            }
             Box(
                 modifier = Modifier
-                    .size(60.dp, 80.dp)
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(Primary),
-                contentAlignment = Alignment.Center,
+                    .fillMaxSize()
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(Success.copy(alpha = 0.18f))
+                    .padding(horizontal = 24.dp),
+                contentAlignment = alignment,
             ) {
-                Text(
-                    text = book.title.take(2).uppercase(),
-                    style = MaterialTheme.typography.titleMedium,
-                    color = Color.White,
-                    fontWeight = FontWeight.Bold,
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        Icons.Default.Archive,
+                        contentDescription = "归档",
+                        tint = Success,
+                        modifier = Modifier.size(20.dp),
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("归档", color = Success, style = MaterialTheme.typography.labelLarge)
+                }
             }
+        },
+        dismissContent = {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onClick),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(18.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                // 封面：EPUB 内嵌封面优先，缺失时用书名哈希生成的渐变封面
+                BookCover(
+                    title = book.title,
+                    coverPath = book.coverPath,
+                    modifier = Modifier.size(60.dp, 80.dp),
+                )
 
             Spacer(modifier = Modifier.width(16.dp))
 
@@ -462,7 +564,9 @@ fun BookCard(
                 }
             }
         }
+        }
     }
+    ) // 关闭 SwipeToDismiss
 
     if (showDeleteConfirm) {
         AlertDialog(
@@ -557,36 +661,86 @@ fun ClassicBookRow(
     }
 }
 
-// ── 统计卡片组件 ──────────────────────────────────
+// ── 骨架屏组件（加载态占位，与真实卡片同构） ──────────
 @Composable
-private fun StatCard(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    value: String,
-    label: String,
-    color: Color,
-    modifier: Modifier = Modifier,
-) {
-    Surface(
-        modifier = modifier,
-        shape = RoundedCornerShape(14.dp),
-        color = color.copy(alpha = 0.1f),
+private fun BookCardSkeleton() {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
     ) {
-        Column(
-            modifier = Modifier.padding(14.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(18.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Icon(icon, label, tint = color, modifier = Modifier.size(22.dp))
-            Spacer(modifier = Modifier.height(6.dp))
-            Text(
-                text = value,
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold,
-                color = color,
+            Box(
+                modifier = Modifier
+                    .size(60.dp, 80.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .shimmer(),
             )
-            Text(
-                text = label,
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            Spacer(modifier = Modifier.width(16.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth(0.65f)
+                        .height(18.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .shimmer(),
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth(0.4f)
+                        .height(14.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .shimmer(),
+                )
+                Spacer(modifier = Modifier.height(14.dp))
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(6.dp)
+                        .clip(RoundedCornerShape(3.dp))
+                        .shimmer(),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ArticleItemSkeleton() {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+    ) {
+        Column(modifier = Modifier.padding(18.dp)) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(0.3f)
+                    .height(12.dp)
+                    .clip(RoundedCornerShape(4.dp))
+                    .shimmer(),
+            )
+            Spacer(modifier = Modifier.height(10.dp))
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(0.9f)
+                    .height(18.dp)
+                    .clip(RoundedCornerShape(4.dp))
+                    .shimmer(),
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(0.7f)
+                    .height(14.dp)
+                    .clip(RoundedCornerShape(4.dp))
+                    .shimmer(),
             )
         }
     }
@@ -628,14 +782,12 @@ fun ArticleSquareScreen(
             Spacer(modifier = Modifier.height(8.dp))
 
             when {
-                articlesLoading -> Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        CircularProgressIndicator(color = Primary)
-                        Spacer(modifier = Modifier.height(12.dp))
-                        Text("正在加载文章...", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                articlesLoading -> Column(modifier = Modifier.fillMaxSize()) {
+                    // 骨架屏占位，替代居中转圈
+                    Spacer(modifier = Modifier.height(8.dp))
+                    repeat(4) {
+                        ArticleItemSkeleton()
+                        Spacer(modifier = Modifier.height(14.dp))
                     }
                 }
                 articlesError != null -> Box(

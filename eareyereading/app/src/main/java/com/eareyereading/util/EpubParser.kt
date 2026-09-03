@@ -94,6 +94,9 @@ class EpubParser @Inject constructor() {
 
         /** resolveEntry 无精确命中时的兜底后缀匹配次数上限（issue 10.3）。 */
         private const val MAX_SUFFIX_PROBES = 200
+
+        /** 封面图片字节上限：超过则放弃真实封面，回退生成式封面（防炸弹）。 */
+        private const val MAX_COVER_BYTES = 5L * 1024 * 1024
     }
 
     /** 非正文页面黑名单：版权页/封面/目录/扉页/出版信息（issue 9.4）。 */
@@ -101,6 +104,9 @@ class EpubParser @Inject constructor() {
         "/(cover|nav|toc|title[_-]?page|copyright|colophon|imprint)\\.x?html?$",
         RegexOption.IGNORE_CASE,
     )
+
+    /** 封面图片扩展名（兜底匹配 manifest 条目用）。 */
+    private val imgExtRegex = Regex("\\.(jpe?g|png|webp|gif|bmp)$", RegexOption.IGNORE_CASE)
 
     /**
      * 解析 EPUB 文件。
@@ -164,6 +170,91 @@ class EpubParser @Inject constructor() {
             return parseFromInputStream(input, sourceUri)
         }
         throw EpubParseException.Empty()
+    }
+
+    /**
+     * 提取 EPUB 内嵌封面图片字节（导入时调用，落盘为书籍封面文件）。
+     * 查找顺序（与主流阅读器一致）：
+     * 1. OPF manifest 中 properties="cover-image" 的条目（EPUB 3 标准）；
+     * 2. `<meta name="cover" content="id">` 指向的 manifest 条目（EPUB 2 常见）；
+     * 3. 兜底：manifest 中 id/href 含 "cover" 的图片条目。
+     * 找不到、读取失败或超过 5MB 上限时返回 null，调用方回退生成式封面。
+     */
+    fun extractCoverImage(filePath: String): ByteArray? {
+        val file = File(filePath)
+        if (!file.exists() || file.length() == 0L) return null
+        return try {
+            ZipFile(file).use { zip ->
+                val entryNames = zip.entries().toList()
+                if (entryNames.size > MAX_ZIP_ENTRIES) return null
+                val opfEntry = findOpfEntry(entryNames, zip) ?: return null
+                val opfContent = readEntryTextCapped(zip.getInputStream(opfEntry), MAX_DOC_CHARS)
+                val manifestItems = extractManifestItems(opfContent)
+                val opfDir = opfEntry.name.substringBeforeLast('/', "")
+
+                fun hrefToEntry(href: String): ZipEntry? {
+                    val clean = href.substringBefore('#')
+                    if (clean.isBlank()) return null
+                    val decoded = decodeHref(clean)
+                    return resolveEntry(zip, opfDir, decoded, entryNames)
+                        ?: if (decoded != clean) resolveEntry(zip, opfDir, clean, entryNames) else null
+                }
+
+                // 1) EPUB 3：properties="cover-image"（先抓整个 item 标签再取 href，属性顺序无关）
+                val coverHref = Regex(
+                    "<item\\b[^>]*properties\\s*=\\s*[\"'][^\"']*cover-image[^\"']*[\"'][^>]*>",
+                    RegexOption.IGNORE_CASE,
+                ).findAll(opfContent)
+                    .mapNotNull { tag ->
+                        Regex("\\bhref\\s*=\\s*[\"']([^\"']+)[\"']", RegexOption.IGNORE_CASE)
+                            .find(tag.value)?.groupValues?.get(1)
+                    }
+                    .firstOrNull()
+
+                // 2) EPUB 2：<meta name="cover" content="cover-id" />
+                val metaCoverId = Regex(
+                    "<meta\\b[^>]*name\\s*=\\s*[\"']cover[\"'][^>]*>",
+                    RegexOption.IGNORE_CASE,
+                ).findAll(opfContent)
+                    .mapNotNull { tag ->
+                        Regex("content\\s*=\\s*[\"']([^\"']+)[\"']", RegexOption.IGNORE_CASE)
+                            .find(tag.value)?.groupValues?.get(1)
+                    }
+                    .firstOrNull()
+
+                // 3) 兜底：id/href 含 "cover" 的图片条目
+                val targetEntry = coverHref?.let { hrefToEntry(it) }
+                    ?: metaCoverId?.let { manifestItems[it] }?.let { hrefToEntry(it) }
+                    ?: manifestItems.entries.firstOrNull { (id, href) ->
+                        (id.contains("cover", ignoreCase = true) ||
+                            href.contains("cover", ignoreCase = true)) &&
+                            imgExtRegex.containsMatchIn(href)
+                    }?.value?.let { hrefToEntry(it) }
+
+                targetEntry?.let { entry -> readCoverCapped(zip.getInputStream(entry)) }
+            }
+        } catch (e: Exception) {
+            // 封面提取失败不影响导入主流程：静默回退生成式封面
+            android.util.Log.w("EpubParser", "extract cover failed: $filePath", e)
+            null
+        }
+    }
+
+    /** 带上限读取封面字节：zip 条目 size 可能未知（-1），不能信头部声明。 */
+    private fun readCoverCapped(input: java.io.InputStream): ByteArray? {
+        input.use { ins ->
+            val out = java.io.ByteArrayOutputStream()
+            val buf = ByteArray(8192)
+            var total = 0L
+            while (true) {
+                val n = ins.read(buf)
+                if (n < 0) break
+                total += n
+                if (total > MAX_COVER_BYTES) return null
+                out.write(buf, 0, n)
+            }
+            return if (total in 1..MAX_COVER_BYTES) out.toByteArray() else null
+        }
     }
 
     /**

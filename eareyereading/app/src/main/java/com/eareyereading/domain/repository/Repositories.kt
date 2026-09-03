@@ -70,6 +70,10 @@ interface SettingsRepository {
     fun getCollinsHighlight(): Flow<Boolean>
     /** TTS 语速倍率（0.5 - 2.0），用于内置/系统 TTS 的 speak 调用 */
     fun getTtsSpeed(): Flow<Float>
+    /** 阅读器正文字体：true=衬线（FontFamily.Serif），false=默认无衬线 */
+    fun getSerifFont(): Flow<Boolean>
+    /** Material You 动态取色（Android 12+ 跟随壁纸取色），默认关闭保留品牌色 */
+    fun getDynamicColor(): Flow<Boolean>
     suspend fun setRsvpSpeed(speed: Int)
     suspend fun setFontSize(size: Int)
     suspend fun setTheme(theme: ReadingTheme)
@@ -81,5 +85,7 @@ interface SettingsRepository {
     suspend fun setNotificationDownloadComplete(enabled: Boolean)
     suspend fun setCollinsHighlight(enabled: Boolean)
     suspend fun setTtsSpeed(speed: Float)
+    suspend fun setSerifFont(enabled: Boolean)
+    suspend fun setDynamicColor(enabled: Boolean)
     suspend fun clearAll()
 }

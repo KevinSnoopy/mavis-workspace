@@ -148,6 +148,24 @@ class BookRepositoryImpl @Inject constructor(
         )
         val bookId = bookDao.insert(entity)
 
+        // EPUB 内嵌封面提取：落盘 covers/{bookId}，coverPath 入库供书库/首页渲染。
+        // 失败静默回退生成式封面（BookCover 的渐变占位），绝不阻断导入主流程
+        if (book.filePath.isNotBlank() && parsedMetadata != null) {
+            try {
+                val coverBytes = epubParser.extractCoverImage(book.filePath)
+                if (coverBytes != null && coverBytes.isNotEmpty()) {
+                    val coverDir = File(context.filesDir, "covers").apply { mkdirs() }
+                    val coverFile = File(coverDir, "$bookId")
+                    coverFile.writeBytes(coverBytes)
+                    bookDao.getBookById(bookId)?.let { saved ->
+                        bookDao.update(saved.copy(coverPath = coverFile.absolutePath))
+                    }
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("BookRepository", "extract cover failed for $bookId", e)
+            }
+        }
+
         // 词频统计此前只有删没有写：word_frequencies 永远是空表，
         // getTopFrequencies 永远不出数据（issue 12.2）
         val frequencies = wordAnalyzer.calculateWordFrequencies(joined)
@@ -246,6 +264,13 @@ class BookRepositoryImpl @Inject constructor(
                     }
                 } catch (e: Exception) {
                     android.util.Log.w("BookRepository", "Failed to delete book file", e)
+                }
+
+                // 封面文件随书删除（covers/{bookId}，导入时提取的 EPUB 内嵌封面）
+                try {
+                    File(context.filesDir, "covers/$bookId").delete()
+                } catch (e: Exception) {
+                    android.util.Log.w("BookRepository", "Failed to delete cover file", e)
                 }
             }
         }

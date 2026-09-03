@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">听阅</string>
+    <string name="widget_review_desc">待复习词数与连续打卡速览，点击进入听阅</string>
 </resources>

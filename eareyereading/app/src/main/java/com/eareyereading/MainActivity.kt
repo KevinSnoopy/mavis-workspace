@@ -45,6 +45,7 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             val theme by settingsRepository.getTheme().collectAsState(initial = com.eareyereading.domain.model.ReadingTheme.LIGHT)
+            val dynamicColor by settingsRepository.getDynamicColor().collectAsState(initial = false)
             val navController = rememberNavController()
 
             // issue 5.1：首次启动展示轻量通知引导页（SharedPreferences 记一次，简单不引入 DataStore）
@@ -66,10 +67,13 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
-            // issue 4.1：App 主题完全由阅读主题（ReadingTheme）控制，不再读 darkMode。
-            // 移除"外观->深色模式"开关后全局恒为浅色；阅读页内由 ReaderScreen 按书主题渲染，
-            // 深浅色由各阅读主题（LIGHT/DARK/SEPIA）自己决定。
-            EareyeReadingTheme(readingTheme = theme, darkTheme = false) {
+            // 全局深色跟随系统（Android 14+ 用户预期）；阅读主题（LIGHT/DARK/SEPIA）
+            // 继续决定阅读页内的纸面配色。动态取色（Material You）可在设置中开启。
+            EareyeReadingTheme(
+                readingTheme = theme,
+                darkTheme = androidx.compose.foundation.isSystemInDarkTheme(),
+                dynamicColor = dynamicColor,
+            ) {
                 Surface(modifier = Modifier.fillMaxSize()) {
                     // issue 5.1：首启引导页（单次）在上层，之后进主界面
                     if (showOnboarding) {
@@ -87,6 +91,12 @@ class MainActivity : ComponentActivity() {
         setIntent(intent)
         // issue 9.10：运行中再次选择"打开方式"（singleTop 复用本 Activity）
         handleViewIntent(intent)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // 桌面小组件数据刷新：回到前台时拉齐最新待复习数/打卡天数
+        com.eareyereading.receiver.ReviewWidgetProvider.triggerUpdate(this)
     }
 
     /** 处理 ACTION_VIEW 的 content:// EPUB URI：持久化读权限 + 投递给书库导入流程。 */

@@ -33,6 +33,10 @@ class SettingsRepositoryImpl @Inject constructor(
         val NOTIFICATION_DOWNLOAD_COMPLETE = booleanPreferencesKey("notification_download_complete")
         val COLLINS_HIGHLIGHT = booleanPreferencesKey("collins_highlight")
         val TTS_SPEED = floatPreferencesKey("tts_speed")
+        // 阅读器正文字体：true=衬线（FontFamily.Serif），false=默认无衬线
+        val SERIF_FONT = booleanPreferencesKey("serif_font")
+        // Material You 动态取色（Android 12+ 跟随壁纸）
+        val DYNAMIC_COLOR = booleanPreferencesKey("dynamic_color")
     }
 
     override fun getRsvpSpeed(): Flow<Int> =
@@ -93,6 +97,20 @@ class SettingsRepositoryImpl @Inject constructor(
 
     override fun getTtsSpeed(): Flow<Float> =
         dataStore.data.map { it[TTS_SPEED] ?: 1.0f }
+
+    override fun getSerifFont(): Flow<Boolean> =
+        dataStore.data.map { it[SERIF_FONT] ?: false }
+
+    override fun getDynamicColor(): Flow<Boolean> =
+        dataStore.data.map { it[DYNAMIC_COLOR] ?: false }
+
+    override suspend fun setSerifFont(enabled: Boolean) {
+        dataStore.edit { it[SERIF_FONT] = enabled }
+    }
+
+    override suspend fun setDynamicColor(enabled: Boolean) {
+        dataStore.edit { it[DYNAMIC_COLOR] = enabled }
+    }
 
     override suspend fun setDarkMode(enabled: Boolean) {
         dataStore.edit { it[DARK_MODE] = enabled }

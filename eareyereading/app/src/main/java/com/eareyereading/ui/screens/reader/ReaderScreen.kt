@@ -39,6 +39,7 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
@@ -50,6 +51,7 @@ import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.eareyereading.domain.model.ReadingMode
 import com.eareyereading.domain.model.ReadingTheme
+import com.eareyereading.ui.components.shimmer
 import com.eareyereading.ui.theme.*
 import com.eareyereading.util.ClozeWord
 import com.eareyereading.util.CollinsClassifier
@@ -57,6 +59,25 @@ import com.eareyereading.util.PosTagger
 import com.eareyereading.util.PosTag
 import com.eareyereading.util.WordAnalyzer
 import com.eareyereading.util.CollinsClassifier.WordLevel
+
+/**
+ * 阅读器正文字体（衬线切换）：ReaderScreen 顶层 provide，
+ * 所有阅读模式视图经 [readerParagraphStyle] 消费，一处切换全局生效。
+ */
+private val LocalReaderFontFamily = androidx.compose.runtime.staticCompositionLocalOf {
+    FontFamily.Default
+}
+
+/**
+ * 段落正文样式统一入口：字号 + 行高（倍数）+ 可选衬线。
+ * 保证普通/分栏/回译/成分分析等渲染视图的字形一致切换。
+ */
+@Composable
+private fun readerParagraphStyle(fontSize: Int, lineMultiplier: Float = 1.8f): TextStyle = TextStyle(
+    fontSize = fontSize.sp,
+    lineHeight = (fontSize * lineMultiplier).sp,
+    fontFamily = LocalReaderFontFamily.current,
+)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -193,6 +214,10 @@ fun ReaderScreen(
         }
     }
 
+    // 衬线字体注入：uiState.serifFont 驱动全阅读器正文字形
+    androidx.compose.runtime.CompositionLocalProvider(
+        LocalReaderFontFamily provides if (uiState.serifFont) FontFamily.Serif else FontFamily.Default,
+    ) {
     Scaffold(
         // issue 3.8（地基）：正文占满物理边缘，不再被根 Scaffold 额外预留系统栏。
         contentWindowInsets = WindowInsets(0),
@@ -358,6 +383,9 @@ fun ReaderScreen(
                 onNext = viewModel::nextParagraph,
                 onSeek = viewModel::goToParagraph,
                 textColor = textColor,
+                onFontDelta = viewModel::adjustFontSize,
+                onCycleTheme = viewModel::cycleReadingTheme,
+                onToggleSerif = viewModel::toggleSerifFont,
             )
             }
         },
@@ -378,7 +406,24 @@ fun ReaderScreen(
                 .padding(horizontal = 20.dp),
         ) {
             if (uiState.isLoading) {
-                CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+                // 骨架屏：按正文排版预演段落形状（Spotify 式微光），
+                // 替代居中转圈，感知加载更快
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(vertical = 24.dp),
+                ) {
+                    repeat(9) { i ->
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth(if (i % 4 == 3) 0.62f else 1f)
+                                .height(18.dp)
+                                .clip(RoundedCornerShape(4.dp))
+                                .shimmer(),
+                        )
+                        Spacer(modifier = Modifier.height(14.dp))
+                    }
+                }
             } else {
                 when (uiState.readingMode) {
                     ReadingMode.NORMAL -> NormalReadingView(
@@ -486,6 +531,7 @@ fun ReaderScreen(
             }
         }
     }
+    } // 关闭 CompositionLocalProvider(衬线字体)
 
     // 模式选择弹窗
     if (uiState.showModeSelector) {
@@ -853,10 +899,7 @@ fun NormalReadingView(
                             onWordClick = onWordClick,
                             onSentenceDoubleTap = onSentenceDoubleTap,
                             modifier = Modifier.padding(vertical = 4.dp, horizontal = 4.dp),
-                            style = TextStyle(
-                                fontSize = fontSize.sp,
-                                lineHeight = (fontSize * 1.8).sp,
-                            ),
+                            style = readerParagraphStyle(fontSize),
                         )
                     }
                 }
@@ -899,10 +942,7 @@ fun NormalReadingView(
                         onWordClick = onWordClick,
                         onSentenceDoubleTap = onSentenceDoubleTap,
                         modifier = Modifier.padding(vertical = 6.dp),
-                        style = TextStyle(
-                            fontSize = fontSize.sp,
-                            lineHeight = (fontSize * 1.8).sp,
-                        ),
+                        style = readerParagraphStyle(fontSize),
                     )
                 } else if (showKnownWordsHighlight && knownWords.isNotEmpty()) {
                     // 生词本高亮模式（Collins 关）
@@ -934,10 +974,7 @@ fun NormalReadingView(
                         onWordClick = onWordClick,
                         onSentenceDoubleTap = onSentenceDoubleTap,
                         modifier = Modifier.padding(vertical = 6.dp),
-                        style = TextStyle(
-                            fontSize = fontSize.sp,
-                            lineHeight = (fontSize * 1.8).sp,
-                        ),
+                        style = readerParagraphStyle(fontSize),
                     )
                 } else {
                     // 普通模式 + 高亮渲染
@@ -982,10 +1019,7 @@ fun NormalReadingView(
                         onWordClick = onWordClick,
                         onSentenceDoubleTap = onSentenceDoubleTap,
                         modifier = Modifier.padding(vertical = 6.dp),
-                        style = TextStyle(
-                            fontSize = fontSize.sp,
-                            lineHeight = (fontSize * 1.8).sp,
-                        ),
+                        style = readerParagraphStyle(fontSize),
                     )
                 }
             }
@@ -998,10 +1032,8 @@ fun NormalReadingView(
                     Text(
                         text = translation,
                         modifier = Modifier.padding(vertical = 2.dp),
-                        style = TextStyle(
-                            fontSize = (fontSize - 2).sp,
+                        style = readerParagraphStyle(fontSize - 2, 1.5f).copy(
                             color = Primary.copy(alpha = alpha * translationAlpha),
-                            lineHeight = (fontSize * 1.5).sp,
                         ),
                     )
                     // 只有实际有译文才留间距：原实现把 Spacer 放在判空之外，
@@ -1370,10 +1402,8 @@ fun SplitReadingView(
                     modifier = Modifier
                         .weight(1f)
                         .padding(vertical = 4.dp),
-                    style = TextStyle(
-                        fontSize = fontSize.sp,
+                    style = readerParagraphStyle(fontSize).copy(
                         color = textColor.copy(alpha = alpha),
-                        lineHeight = (fontSize * 1.8).sp,
                     ),
                 )
                 Text(
@@ -1381,14 +1411,12 @@ fun SplitReadingView(
                     modifier = Modifier
                         .weight(1f)
                         .padding(vertical = 4.dp),
-                    style = TextStyle(
-                        fontSize = fontSize.sp,
+                    style = readerParagraphStyle(fontSize).copy(
                         color = if (translation != null) {
                             Primary.copy(alpha = alpha * translationAlpha)
                         } else {
                             textColor.copy(alpha = alpha * 0.4f)
                         },
-                        lineHeight = (fontSize * 1.8).sp,
                     ),
                 )
             }
@@ -1476,7 +1504,7 @@ fun PosAnalysisView(
                 onWordClick = onWordClick,
                 onSentenceDoubleTap = {},
                 modifier = Modifier.padding(vertical = 6.dp, horizontal = 4.dp),
-                style = TextStyle(fontSize = fontSize.sp, lineHeight = (fontSize * 1.8).sp),
+                style = readerParagraphStyle(fontSize),
             )
 
             if (index < paragraphs.lastIndex) {
@@ -1737,10 +1765,8 @@ fun BackTranslationView(
                         modifier = Modifier
                             .weight(1f)
                             .padding(vertical = 6.dp),
-                        style = TextStyle(
-                            fontSize = fontSize.sp,
+                        style = readerParagraphStyle(fontSize).copy(
                             color = primaryColor.copy(alpha = alpha * translationAlpha),
-                            lineHeight = (fontSize * 1.8).sp,
                         ),
                     )
                     Text(
@@ -1750,10 +1776,8 @@ fun BackTranslationView(
                             .padding(vertical = 6.dp)
                             // 揭示后或译文还没加载完（没东西可挡）时不模糊
                             .blur(if (revealed || !hasTranslation) 0.dp else 6.dp),
-                        style = TextStyle(
-                            fontSize = fontSize.sp,
+                        style = readerParagraphStyle(fontSize).copy(
                             color = textColor.copy(alpha = if (revealed) alpha else alpha * 0.4f),
-                            lineHeight = (fontSize * 1.8).sp,
                         ),
                     )
                 }
@@ -1842,7 +1866,7 @@ fun DictationReadingView(
                         }
                     }
                 },
-                style = TextStyle(fontSize = fontSize.sp, lineHeight = (fontSize * 2).sp),
+                style = readerParagraphStyle(fontSize, 2f),
             )
             Spacer(modifier = Modifier.height(24.dp))
 
@@ -1899,12 +1923,74 @@ fun ReadingBottomBar(
     onNext: () -> Unit,
     onSeek: (Int) -> Unit,
     textColor: Color,
+    onFontDelta: (Int) -> Unit = {},
+    onCycleTheme: () -> Unit = {},
+    onToggleSerif: () -> Unit = {},
 ) {
     Surface(
         shadowElevation = 4.dp,
         color = MaterialTheme.colorScheme.surface,
     ) {
-        Column(modifier = Modifier.padding(8.dp)) {
+        Column(modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp)) {
+            // 快捷设置行（微信读书式）：字号 ±、主题循环、衬线切换。
+            // 沉浸阅读最高频的三个调整一步直达，不再进设置弹窗
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Surface(
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(horizontal = 4.dp),
+                    ) {
+                        IconButton(onClick = { onFontDelta(-1) }, modifier = Modifier.size(36.dp)) {
+                            Icon(
+                                Icons.Default.TextDecrease,
+                                contentDescription = "减小字号",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(20.dp),
+                            )
+                        }
+                        Text(
+                            "${uiState.fontSize}sp",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        IconButton(onClick = { onFontDelta(1) }, modifier = Modifier.size(36.dp)) {
+                            Icon(
+                                Icons.Default.TextIncrease,
+                                contentDescription = "增大字号",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(20.dp),
+                            )
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.width(12.dp))
+                IconButton(onClick = onCycleTheme) {
+                    Icon(
+                        when (uiState.theme) {
+                            ReadingTheme.LIGHT -> Icons.Default.LightMode
+                            ReadingTheme.SEPIA -> Icons.Default.Contrast
+                            ReadingTheme.DARK -> Icons.Default.DarkMode
+                        },
+                        contentDescription = "切换阅读主题（当前：${uiState.theme.displayName}）",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                IconButton(onClick = onToggleSerif) {
+                    Icon(
+                        if (uiState.serifFont) Icons.Default.TextFields else Icons.Default.FormatSize,
+                        contentDescription = if (uiState.serifFont) "衬线字体（开）" else "衬线字体（关）",
+                        tint = if (uiState.serifFont) Primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+
             // 进度条：拖动期间只更新本地值，松手才提交。
             // 原实现逐像素调 goToParagraph：每像素都触发 stopAllPlayback +
             // saveProgress，挖空/模糊模式下还会逐像素重生成整段词序列
@@ -1945,35 +2031,43 @@ fun ReadingBottomBar(
     }
 }
 
-// ── 模式选择对话框 ─────────────────────────────
+// ── 模式选择（底部抽屉：M3 规范的拇指可达区弹层） ────────
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ModeSelectorDialog(
     currentMode: ReadingMode,
     onSelect: (ReadingMode) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    AlertDialog(
+    ModalBottomSheet(
         onDismissRequest = onDismiss,
-        title = { Text("选择阅读模式") },
-        text = {
-            Column {
-                ReadingMode.entries.forEach { mode ->
-                    ListItem(
-                        headlineContent = { Text(mode.displayName) },
-                        supportingContent = { Text(getModeDescription(mode)) },
-                        leadingContent = {
-                            RadioButton(
-                                selected = mode == currentMode,
-                                onClick = { onSelect(mode) },
-                            )
-                        },
-                        modifier = Modifier.clickable { onSelect(mode) },
-                    )
-                }
+        containerColor = MaterialTheme.colorScheme.surface,
+    ) {
+        Text(
+            "选择阅读模式",
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+        )
+        LazyColumn(
+            modifier = Modifier.heightIn(max = 480.dp),
+            contentPadding = PaddingValues(bottom = 24.dp),
+        ) {
+            itemsIndexed(ReadingMode.entries) { _, mode ->
+                ListItem(
+                    headlineContent = { Text(mode.displayName) },
+                    supportingContent = { Text(getModeDescription(mode)) },
+                    leadingContent = {
+                        RadioButton(
+                            selected = mode == currentMode,
+                            onClick = { onSelect(mode) },
+                        )
+                    },
+                    modifier = Modifier.clickable { onSelect(mode) },
+                )
             }
-        },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("关闭") } },
-    )
+        }
+    }
 }
 
 private fun getModeDescription(mode: ReadingMode): String = when (mode) {
@@ -1993,6 +2087,7 @@ private fun getModeDescription(mode: ReadingMode): String = when (mode) {
 // 设置弹窗文案表：提到顶层，避免每次重组都重新分配
 private val RSVP_STRENGTH_LABELS = listOf("30%", "40%", "50%", "60%", "70%")
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ReaderSettingsDialog(
     fontSize: Int,
@@ -2009,100 +2104,111 @@ fun ReaderSettingsDialog(
     onKnownWordsHighlightToggle: () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    AlertDialog(
+    ModalBottomSheet(
         onDismissRequest = onDismiss,
-        title = { Text("阅读设置") },
-        text = {
-            Column {
-                // 这些值来自 DataStore 持久化，历史版本可能写入越界值；
-                // Slider 要求 value 在 valueRange 内，列表索引也要收敛，否则弹窗一开就崩
-                Text("字体大小: ${fontSize}sp")
-                Slider(
-                    value = fontSize.toFloat().coerceIn(12f, 32f),
-                    onValueChange = { onFontSizeChange(it.toInt()) },
-                    valueRange = 12f..32f,
-                    steps = 19,
+        containerColor = MaterialTheme.colorScheme.surface,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp)
+                .verticalScroll(rememberScrollState()),
+        ) {
+            Text(
+                "阅读设置",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(vertical = 8.dp),
+            )
+            // 这些值来自 DataStore 持久化，历史版本可能写入越界值；
+            // Slider 要求 value 在 valueRange 内，列表索引也要收敛，否则抽屉一开就崩
+            Text("字体大小: ${fontSize}sp")
+            Slider(
+                value = fontSize.toFloat().coerceIn(12f, 32f),
+                onValueChange = { onFontSizeChange(it.toInt()) },
+                valueRange = 12f..32f,
+                steps = 19,
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            Text("RSVP 速度: ${rsvpSpeed} 字/分钟")
+            Slider(
+                value = rsvpSpeed.toFloat().coerceIn(100f, 800f),
+                onValueChange = { onSpeedChange(it.toInt()) },
+                valueRange = 100f..800f,
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Text("仿生阅读强度: $rsvpStrength（加粗占比 ${RSVP_STRENGTH_LABELS[rsvpStrength.coerceIn(1, 5) - 1]}）")
+            Slider(
+                value = rsvpStrength.toFloat().coerceIn(1f, 5f),
+                onValueChange = { onStrengthChange(it.toInt()) },
+                valueRange = 1f..5f,
+                steps = 3,
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Text("翻译透明度: ${(translationAlpha * 100).toInt()}%")
+            Slider(
+                value = translationAlpha,
+                onValueChange = onTranslationAlphaChange,
+                valueRange = 0.3f..1f,
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("Collins 词频色彩", style = MaterialTheme.typography.bodyMedium)
+                Switch(
+                    checked = showWordLevelColors,
+                    onCheckedChange = { onWordLevelColorsToggle() },
                 )
-                Spacer(modifier = Modifier.height(12.dp))
-                Text("RSVP 速度: ${rsvpSpeed} 字/分钟")
-                Slider(
-                    value = rsvpSpeed.toFloat().coerceIn(100f, 800f),
-                    onValueChange = { onSpeedChange(it.toInt()) },
-                    valueRange = 100f..800f,
+            }
+            Spacer(modifier = Modifier.height(4.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("生词高亮", style = MaterialTheme.typography.bodyMedium)
+                Switch(
+                    checked = showKnownWordsHighlight,
+                    onCheckedChange = { onKnownWordsHighlightToggle() },
                 )
-                Spacer(modifier = Modifier.height(8.dp))
-                Text("仿生阅读强度: $rsvpStrength（加粗占比 ${RSVP_STRENGTH_LABELS[rsvpStrength.coerceIn(1, 5) - 1]}）")
-                Slider(
-                    value = rsvpStrength.toFloat().coerceIn(1f, 5f),
-                    onValueChange = { onStrengthChange(it.toInt()) },
-                    valueRange = 1f..5f,
-                    steps = 3,
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                Text("翻译透明度: ${(translationAlpha * 100).toInt()}%")
-                Slider(
-                    value = translationAlpha,
-                    onValueChange = onTranslationAlphaChange,
-                    valueRange = 0.3f..1f,
-                )
-                Spacer(modifier = Modifier.height(8.dp))
+            }
+            Spacer(modifier = Modifier.height(4.dp))
+            // Collins 词级颜色图例
+            if (showWordLevelColors) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
-                    Text("Collins 词频色彩", style = MaterialTheme.typography.bodyMedium)
-                    Switch(
-                        checked = showWordLevelColors,
-                        onCheckedChange = { onWordLevelColorsToggle() },
-                    )
-                }
-                Spacer(modifier = Modifier.height(4.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text("生词高亮", style = MaterialTheme.typography.bodyMedium)
-                    Switch(
-                        checked = showKnownWordsHighlight,
-                        onCheckedChange = { onKnownWordsHighlightToggle() },
-                    )
-                }
-                Spacer(modifier = Modifier.height(4.dp))
-                // Collins 词级颜色图例
-                if (showWordLevelColors) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                    ) {
-                        listOf(
-                            WordLevelCore to "核心",
-                            WordLevelIntmd to "进阶",
-                            WordLevelUpper to "提高",
-                            WordLevelAdv to "高阶",
-                            WordLevelRare to "学术",
-                        ).forEach { (color, label) ->
-                            AssistChip(
-                                onClick = {},
-                                label = { Text(label, style = MaterialTheme.typography.labelSmall) },
-                                colors = AssistChipDefaults.assistChipColors(
-                                    containerColor = color.copy(alpha = 0.15f),
-                                    labelColor = color,
-                                ),
-                                border = null,
-                                modifier = Modifier.weight(1f),
-                            )
-                        }
+                    listOf(
+                        WordLevelCore to "核心",
+                        WordLevelIntmd to "进阶",
+                        WordLevelUpper to "提高",
+                        WordLevelAdv to "高阶",
+                        WordLevelRare to "学术",
+                    ).forEach { (color, label) ->
+                        AssistChip(
+                            onClick = {},
+                            label = { Text(label, style = MaterialTheme.typography.labelSmall) },
+                            colors = AssistChipDefaults.assistChipColors(
+                                containerColor = color.copy(alpha = 0.15f),
+                                labelColor = color,
+                            ),
+                            border = null,
+                            modifier = Modifier.weight(1f),
+                        )
                     }
                 }
             }
-        },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("完成") } },
-    )
+            Spacer(modifier = Modifier.height(28.dp))
+        }
+    }
 }
 
-// ── 单词详情对话框 ─────────────────────────────
+// ── 单词详情（底部抽屉：点词查义高频操作，拇指可达） ────────
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun WordDetailDialog(
     word: String,
@@ -2112,84 +2218,82 @@ fun WordDetailDialog(
     onSpeak: () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    AlertDialog(
+    ModalBottomSheet(
         onDismissRequest = onDismiss,
-        title = {
-            Column {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Text(word, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                    Spacer(modifier = Modifier.width(2.dp))
-                    IconButton(onClick = onSpeak) {
-                        Icon(Icons.Default.PlayCircleFilled, "播放发音", tint = Primary)
-                    }
-                    if (wordLevel != WordLevel.UNKNOWN) {
-                        val badgeColor = when (wordLevel) {
-                            WordLevel.CORE -> WordLevelCore
-                            WordLevel.INTERMEDIATE -> WordLevelIntmd
-                            WordLevel.UPPER_INTERMEDIATE -> WordLevelUpper
-                            WordLevel.ADVANCED -> WordLevelAdv
-                            WordLevel.RARE -> WordLevelRare
-                            WordLevel.UNKNOWN -> Color.Gray
-                        }
-                        AssistChip(
-                            onClick = {},
-                            label = {
-                                Text(
-                                    wordLevel.displayName,
-                                    style = MaterialTheme.typography.labelSmall,
-                                )
-                            },
-                            colors = AssistChipDefaults.assistChipColors(
-                                containerColor = badgeColor.copy(alpha = 0.15f),
-                                labelColor = badgeColor,
-                            ),
-                            border = null,
-                        )
-                    }
+        containerColor = MaterialTheme.colorScheme.surface,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 28.dp),
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(word, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                IconButton(onClick = onSpeak) {
+                    Icon(Icons.Default.PlayCircleFilled, "播放发音", tint = Primary)
                 }
-                Text(
-                    text = definition ?: "未找到释义",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        },
-        text = {
-            Column {
-                Text(
-                    text = "点击下方按钮添加到生词本，方便复习。",
-                    style = MaterialTheme.typography.bodySmall,
-                )
                 if (wordLevel != WordLevel.UNKNOWN) {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = wordLevel.description,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    val badgeColor = when (wordLevel) {
+                        WordLevel.CORE -> WordLevelCore
+                        WordLevel.INTERMEDIATE -> WordLevelIntmd
+                        WordLevel.UPPER_INTERMEDIATE -> WordLevelUpper
+                        WordLevel.ADVANCED -> WordLevelAdv
+                        WordLevel.RARE -> WordLevelRare
+                        WordLevel.UNKNOWN -> Color.Gray
+                    }
+                    AssistChip(
+                        onClick = {},
+                        label = {
+                            Text(
+                                wordLevel.displayName,
+                                style = MaterialTheme.typography.labelSmall,
+                            )
+                        },
+                        colors = AssistChipDefaults.assistChipColors(
+                            containerColor = badgeColor.copy(alpha = 0.15f),
+                            labelColor = badgeColor,
+                        ),
+                        border = null,
                     )
                 }
             }
-        },
-        confirmButton = {
-            TextButton(onClick = {
-                onAddToVocabulary()
-                onDismiss()
-            }) {
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = definition ?: "未找到释义",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (wordLevel != WordLevel.UNKNOWN) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = wordLevel.description,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Spacer(modifier = Modifier.height(20.dp))
+            Button(
+                onClick = {
+                    onAddToVocabulary()
+                    onDismiss()
+                },
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+            ) {
                 Icon(Icons.Default.Add, null)
                 Spacer(modifier = Modifier.width(4.dp))
                 Text("加入生词本")
             }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("关闭") }
-        },
-    )
+        }
+    }
 }
 
-// ── 章节目录导航对话框 ─────────────────────────
+// ── 章节目录导航（底部抽屉：长列表在抽屉里更接近拇指） ────────
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ChapterNavDialog(
     paragraphs: List<String>,
@@ -2202,48 +2306,54 @@ fun ChapterNavDialog(
     LaunchedEffect(Unit) {
         listState.scrollToItem(currentIndex)
     }
-    AlertDialog(
+    ModalBottomSheet(
         onDismissRequest = onDismiss,
-        title = { Text("目录导航") },
-        text = {
-            LazyColumn(
-                state = listState,
-                modifier = Modifier.heightIn(max = 400.dp),
-            ) {
-                itemsIndexed(paragraphs) { idx, para ->
-                    // 显示段落前60字预览
-                    val preview = para.take(60).replace("\n", " ") +
-                        if (para.length > 60) "…" else ""
-                    ListItem(
-                        headlineContent = {
-                            Text(
-                                preview,
-                                maxLines = 1,
-                                style = MaterialTheme.typography.bodyMedium,
-                            )
-                        },
-                        trailingContent = {
-                            if (idx == currentIndex) {
-                                Icon(Icons.Default.PlayArrow, "当前", tint = Primary)
-                            }
-                        },
-                        modifier = Modifier.clickable {
-                            onSelect(idx)
-                            onDismiss()
-                        },
-                        colors = ListItemDefaults.colors(
-                            containerColor = if (idx == currentIndex)
-                                Primary.copy(alpha = 0.1f) else Color.Transparent,
-                        ),
-                    )
-                }
+        containerColor = MaterialTheme.colorScheme.surface,
+    ) {
+        Text(
+            "目录导航",
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+        )
+        LazyColumn(
+            state = listState,
+            modifier = Modifier.heightIn(max = 480.dp),
+            contentPadding = PaddingValues(bottom = 24.dp),
+        ) {
+            itemsIndexed(paragraphs) { idx, para ->
+                // 显示段落前60字预览
+                val preview = para.take(60).replace("\n", " ") +
+                    if (para.length > 60) "…" else ""
+                ListItem(
+                    headlineContent = {
+                        Text(
+                            preview,
+                            maxLines = 1,
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                    },
+                    trailingContent = {
+                        if (idx == currentIndex) {
+                            Icon(Icons.Default.PlayArrow, "当前", tint = Primary)
+                        }
+                    },
+                    modifier = Modifier.clickable {
+                        onSelect(idx)
+                        onDismiss()
+                    },
+                    colors = ListItemDefaults.colors(
+                        containerColor = if (idx == currentIndex)
+                            Primary.copy(alpha = 0.1f) else Color.Transparent,
+                    ),
+                )
             }
-        },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("关闭") } },
-    )
+        }
+    }
 }
 
-// ── 选句翻译对话框 ──────────────────────────────
+// ── 选句翻译（底部抽屉） ─────────────────────────
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SentenceTranslationDialog(
     sentence: String,
@@ -2252,55 +2362,56 @@ fun SentenceTranslationDialog(
     onSpeak: () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    AlertDialog(
+    ModalBottomSheet(
         onDismissRequest = onDismiss,
-        title = {
+        containerColor = MaterialTheme.colorScheme.surface,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 28.dp),
+        ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("句子翻译", style = MaterialTheme.typography.titleLarge)
+                Text("句子翻译", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                 Spacer(modifier = Modifier.weight(1f))
                 IconButton(onClick = onSpeak) {
                     Icon(Icons.Default.PlayCircleFilled, "播放朗读", tint = Primary)
                 }
             }
-        },
-        text = {
-            Column {
-                Text(
-                    text = sentence,
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Medium,
-                )
-                Spacer(modifier = Modifier.height(12.dp))
-                if (isLoading) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.Center,
-                    ) {
-                        CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("翻译中...")
-                    }
-                } else if (!translation.isNullOrBlank()) {
-                    Text(
-                        text = translation,
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = Primary,
-                    )
-                } else {
-                    // issue 8.9：null 语义是"词典/模型都没翻出来"，
-                    // 与"请求出错"区分开，避免误导用户以为网络故障
-                    Text(
-                        text = "句子未翻译",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.error,
-                    )
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = sentence,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Medium,
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            if (isLoading) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.Center,
+                ) {
+                    CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("翻译中...")
                 }
+            } else if (!translation.isNullOrBlank()) {
+                Text(
+                    text = translation,
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = Primary,
+                )
+            } else {
+                // issue 8.9：null 语义是"词典/模型都没翻出来"，
+                // 与"请求出错"区分开，避免误导用户以为网络故障
+                Text(
+                    text = "句子未翻译",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.error,
+                )
             }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) { Text("关闭") }
-        },
-    )
+        }
+    }
 }
 
 // ── 段落点击辅助：把点击位置解析为单词 / 句子 ──────────────

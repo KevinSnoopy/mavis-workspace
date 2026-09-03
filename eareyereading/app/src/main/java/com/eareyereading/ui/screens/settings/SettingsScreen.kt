@@ -53,6 +53,10 @@ data class SettingsUiState(
     val streakDays: Int = 0,
     val totalWords: Int = 0,
     val darkMode: Boolean = false,
+    // Material You 动态取色（Android 12+）
+    val dynamicColor: Boolean = false,
+    // 阅读器正文字体：true=衬线
+    val serifFont: Boolean = false,
     val notifications: Boolean = true,
     val notificationDownloadProgress: Boolean = true,
     val notificationDownloadComplete: Boolean = true,
@@ -174,6 +178,30 @@ class SettingsViewModel @Inject constructor(
                 throw e
             } catch (e: Exception) {
                 android.util.Log.e("SettingsViewModel", "settings combine failed", e)
+            }
+        }
+
+        viewModelScope.launch {
+            try {
+                settingsRepository.getSerifFont().collect { serifFont ->
+                    _uiState.update { it.copy(serifFont = serifFont) }
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                android.util.Log.e("SettingsViewModel", "serif collect failed", e)
+            }
+        }
+
+        viewModelScope.launch {
+            try {
+                settingsRepository.getDynamicColor().collect { dynamicColor ->
+                    _uiState.update { it.copy(dynamicColor = dynamicColor) }
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                android.util.Log.e("SettingsViewModel", "dynamic color collect failed", e)
             }
         }
 
@@ -440,6 +468,34 @@ class SettingsViewModel @Inject constructor(
 
     fun setTheme(theme: ReadingTheme) {
         viewModelScope.launch { settingsRepository.setTheme(theme) }
+    }
+
+    /** Material You 动态取色开关（Android 12+）。 */
+    fun setDynamicColor(enabled: Boolean) {
+        viewModelScope.launch {
+            try {
+                settingsRepository.setDynamicColor(enabled)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                android.util.Log.e("SettingsViewModel", "setDynamicColor failed", e)
+                _uiState.update { it.copy(snackbarMessage = "设置保存失败") }
+            }
+        }
+    }
+
+    /** 阅读器衬线字体开关。 */
+    fun setSerifFont(enabled: Boolean) {
+        viewModelScope.launch {
+            try {
+                settingsRepository.setSerifFont(enabled)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                android.util.Log.e("SettingsViewModel", "setSerifFont failed", e)
+                _uiState.update { it.copy(snackbarMessage = "设置保存失败") }
+            }
+        }
     }
 
     fun setDarkMode(enabled: Boolean) {
@@ -837,6 +893,37 @@ fun SettingsScreen(
                     totalWords = uiState.totalWords,
                 )
                 Spacer(modifier = Modifier.height(28.dp))
+            }
+
+            // ── 外观 ──────────────────────────────────
+            item {
+                SettingsSectionTitle("外观")
+            }
+            item {
+                SettingsListCard {
+                    SettingRowToggle(
+                        icon = Icons.Default.Palette,
+                        iconBg = PrimaryLight,
+                        iconColor = Accent,
+                        title = "动态取色",
+                        subtitle = "Material You · Android 12+ 跟随壁纸配色",
+                        checked = uiState.dynamicColor,
+                        onCheckedChange = viewModel::setDynamicColor,
+                    )
+
+                    Divider(modifier = Modifier.padding(horizontal = 20.dp))
+
+                    SettingRowToggle(
+                        icon = Icons.Default.TextFields,
+                        iconBg = PrimaryLight,
+                        iconColor = Primary,
+                        title = "衬线阅读字体",
+                        subtitle = "阅读器正文使用衬线字体（宋体风）",
+                        checked = uiState.serifFont,
+                        onCheckedChange = viewModel::setSerifFont,
+                    )
+                }
+                Spacer(modifier = Modifier.height(20.dp))
             }
 
             // ── 阅读 ──────────────────────────────────
@@ -1366,6 +1453,7 @@ private fun SettingRowToggle(
     title: String,
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
+    subtitle: String = "",
 ) {
     Row(
         modifier = Modifier
@@ -1383,12 +1471,20 @@ private fun SettingRowToggle(
             }
         }
         Spacer(modifier = Modifier.width(14.dp))
-        Text(
-            title,
-            style = MaterialTheme.typography.bodyLarge,
-            fontWeight = FontWeight.Medium,
-            modifier = Modifier.weight(1f),
-        )
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                title,
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.Medium,
+            )
+            if (subtitle.isNotBlank()) {
+                Text(
+                    subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
         Switch(
             checked = checked,
             onCheckedChange = onCheckedChange,

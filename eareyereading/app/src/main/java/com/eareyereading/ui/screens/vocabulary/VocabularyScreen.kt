@@ -11,6 +11,7 @@ import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -58,13 +59,17 @@ fun VocabularyScreen(
                 .background(MaterialTheme.colorScheme.background)
                 .padding(padding),
         ) {
-            // 搜索：M3 OutlinedTextField 默认样式（可见描边），不再做无边胶囊
-            OutlinedTextField(
-                value = uiState.searchQuery,
-                onValueChange = viewModel::onSearch,
+            // 搜索：M3 SearchBar（与书库一致的收起/展开交互）
+            var searchActive by rememberSaveable { mutableStateOf(false) }
+            SearchBar(
+                query = uiState.searchQuery,
+                onQueryChange = viewModel::onSearch,
+                onSearch = { searchActive = false },
+                active = searchActive,
+                onActiveChange = { searchActive = it },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
                 placeholder = {
                     Text("搜索单词...", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 },
@@ -76,8 +81,47 @@ fun VocabularyScreen(
                         modifier = Modifier.size(20.dp),
                     )
                 },
-                singleLine = true,
-            )
+                trailingIcon = {
+                    if (uiState.searchQuery.isNotEmpty()) {
+                        IconButton(onClick = { viewModel.onSearch("") }) {
+                            Icon(Icons.Default.Clear, "清除", modifier = Modifier.size(18.dp))
+                        }
+                    } else if (searchActive) {
+                        IconButton(onClick = { searchActive = false }) {
+                            Icon(Icons.Default.Close, "收起", modifier = Modifier.size(18.dp))
+                        }
+                    }
+                },
+            ) {
+                // 展开态：实时匹配结果（复用下方列表的过滤数据）
+                if (uiState.filteredWords.isEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 48.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            if (uiState.searchQuery.isBlank()) "输入关键词搜索单词"
+                            else "没有匹配「${uiState.searchQuery}」的单词",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                } else {
+                    LazyColumn(contentPadding = PaddingValues(vertical = 8.dp)) {
+                        items(uiState.filteredWords, key = { it.id }) { word ->
+                            ListItem(
+                                headlineContent = { Text(word.word) },
+                                supportingContent = {
+                                    Text(word.definition ?: "", maxLines = 1)
+                                },
+                                modifier = Modifier.clickable { searchActive = false },
+                            )
+                        }
+                    }
+                }
+            }
 
             Spacer(modifier = Modifier.height(8.dp))
 

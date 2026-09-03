@@ -26,6 +26,8 @@ data class HomeUiState(
     val dueReviewCount: Int = 0,
     val recentBooks: List<Book> = emptyList(),
     val weeklyData: List<DayReadingData> = emptyList(),
+    /** 近 12 周学习热力图：按周一开头逐日排列（最旧在前），未来日期为 -1。 */
+    val heatmapData: List<Int> = emptyList(),
     val isLoading: Boolean = true,
 )
 
@@ -129,6 +131,10 @@ class HomeViewModel @Inject constructor(
                 // 周数据（最近7天）
                 val weeklyData = loadWeeklyData(dateFormat)
                 _uiState.update { it.copy(weeklyData = weeklyData) }
+
+                // 近 12 周热力图数据（allStats 已在上面取过，直接聚合）
+                val heatmapData = buildHeatmapData(allStats, dateFormat)
+                _uiState.update { it.copy(heatmapData = heatmapData) }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -152,6 +158,41 @@ class HomeViewModel @Inject constructor(
                 dayLabel = dayLabels[dayOfWeek],
                 minutes = minutes,
             )
+        }
+    }
+
+    /**
+     * 近 12 周热力图数据：以"11 周前的周一"为起点逐日推进到今天，
+     * 每天的分钟数从全量统计按日期聚合（一天读多本书时相加）。
+     * 今天之后的格子（本周未来几天）用 -1 标记，UI 渲染为透明占位。
+     */
+    private fun buildHeatmapData(
+        allStats: List<com.eareyereading.data.local.entity.ReadingStatsEntity>,
+        dateFormat: SimpleDateFormat,
+    ): List<Int> {
+        val minutesByDate = HashMap<String, Int>(allStats.size)
+        allStats.forEach { s ->
+            // HashMap.merge 比分组再求和少一轮遍历；readingMinutes 均非负
+            minutesByDate.merge(s.date, s.readingMinutes, Int::plus)
+        }
+        val cal = Calendar.getInstance().apply {
+            firstDayOfWeek = Calendar.MONDAY
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+            // 先回到本周，再定位到周一（firstDayOfWeek=MONDAY 时 set 不会跨周）；
+            // 回退 11 周用天数差而不是 WEEK_OF_YEAR（年初跨年时周字段语义不稳）
+            set(Calendar.DAY_OF_WEEK, Calendar.MONDAY)
+            add(Calendar.DAY_OF_YEAR, -77)
+        }
+        val today = dateFormat.format(Date())
+        return buildList {
+            repeat(84) {
+                val dateStr = dateFormat.format(cal.time)
+                add(if (dateStr > today) -1 else (minutesByDate[dateStr] ?: 0))
+                cal.add(Calendar.DAY_OF_YEAR, 1)
+            }
         }
     }
 

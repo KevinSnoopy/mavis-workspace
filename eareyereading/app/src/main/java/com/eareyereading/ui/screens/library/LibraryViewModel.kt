@@ -503,6 +503,19 @@ class LibraryViewModel @Inject constructor(
         }
     }
 
+    /** Snackbar"撤销"入口：滑动归档可一键还原（归档目前无浏览入口，必须可撤销）。 */
+    fun unarchiveBook(bookId: Long) {
+        viewModelScope.launch {
+            try {
+                bookRepository.setArchived(bookId, false)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                android.util.Log.e("LibraryVM", "unarchiveBook failed", e)
+            }
+        }
+    }
+
     fun dismissLoadingMessage() {
         _uiState.update { it.copy(loadingMessage = "") }
     }

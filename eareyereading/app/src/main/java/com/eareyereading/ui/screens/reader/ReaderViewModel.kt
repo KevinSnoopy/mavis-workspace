@@ -98,6 +98,8 @@ data class ReaderUiState(
     val rsvpStrength: Int = 3,    // 1-5，影响加粗字母占比
     val fontSize: Int = 18,
     val theme: ReadingTheme = ReadingTheme.LIGHT,
+    // 正文字体：true=衬线（阅读 App 的灵魂配置，Kindle/微信读书标配）
+    val serifFont: Boolean = false,
     val isPlaying: Boolean = false,
     val isTtsPlaying: Boolean = false,
     val ttsInitialized: Boolean = false,
@@ -166,6 +168,7 @@ private data class ReadingSettings(
     val alpha: Float,
     val strength: Int = 3,
     val collinsHighlight: Boolean = false,
+    val serifFont: Boolean = false,
 )
 
 @HiltViewModel
@@ -526,6 +529,7 @@ class ReaderViewModel @Inject constructor(
                     settingsRepository.getTheme(),
                     settingsRepository.getTranslationAlpha(),
                     settingsRepository.getCollinsHighlight(),
+                    settingsRepository.getSerifFont(),
                 ) { values ->
                     // P1 修复: 用 as? 安全转换 + 默认值,避免 DataStore 旧版本数据 schema
                     // 不匹配时 ClassCastException 直接死掉 init block(整个 Reader 屏开不起来)。
@@ -542,7 +546,9 @@ class ReaderViewModel @Inject constructor(
                     val alpha = values[4] as? Float ?: 0.85f
                     @Suppress("UNCHECKED_CAST")
                     val collinsHighlight = values[5] as? Boolean ?: false
-                    ReadingSettings(speed, fontSize, theme, alpha, strength, collinsHighlight)
+                    @Suppress("UNCHECKED_CAST")
+                    val serifFont = values[6] as? Boolean ?: false
+                    ReadingSettings(speed, fontSize, theme, alpha, strength, collinsHighlight, serifFont)
                 }.collect { s ->
                     _uiState.update {
                         it.copy(
@@ -554,6 +560,7 @@ class ReaderViewModel @Inject constructor(
                             theme = s.theme,
                             translationAlpha = s.alpha,
                             showWordLevelColors = s.collinsHighlight,
+                            serifFont = s.serifFont,
                         )
                     }
                 }
@@ -1407,6 +1414,48 @@ class ReaderViewModel @Inject constructor(
         val coerced = size.coerceIn(12, 32)
         _uiState.update { it.copy(fontSize = coerced) }
         persistSettingDebounced("fontSize") { settingsRepository.setFontSize(coerced) }
+    }
+
+    /** 底部栏快捷字号调节（A- / A+ 按钮）：±1sp 步进，复用 setFontSize 的收敛与防抖。 */
+    fun adjustFontSize(delta: Int) {
+        setFontSize(_uiState.value.fontSize + delta)
+    }
+
+    /**
+     * 阅读主题循环切换（明亮 → 护眼 → 暗黑 → 明亮），供底部栏快捷胶囊使用。
+     * 主题本身是全局设置：写 DataStore 后设置流会回填 uiState.theme。
+     */
+    fun cycleReadingTheme() {
+        val next = when (_uiState.value.theme) {
+            ReadingTheme.LIGHT -> ReadingTheme.SEPIA
+            ReadingTheme.SEPIA -> ReadingTheme.DARK
+            ReadingTheme.DARK -> ReadingTheme.LIGHT
+        }
+        _uiState.update { it.copy(theme = next) }
+        viewModelScope.launch {
+            try {
+                settingsRepository.setTheme(next)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                android.util.Log.e("ReaderViewModel", "setTheme failed", e)
+            }
+        }
+    }
+
+    /** 衬线字体切换（阅读器正文字体，全局设置持久化）。 */
+    fun toggleSerifFont() {
+        val next = !_uiState.value.serifFont
+        _uiState.update { it.copy(serifFont = next) }
+        viewModelScope.launch {
+            try {
+                settingsRepository.setSerifFont(next)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                android.util.Log.e("ReaderViewModel", "setSerifFont failed", e)
+            }
+        }
     }
 
     fun setRsvpSpeed(speed: Int) {

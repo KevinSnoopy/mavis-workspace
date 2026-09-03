@@ -1,12 +1,14 @@
 package com.eareyereading.ui.theme
 
 import android.app.Activity
+import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
 import com.eareyereading.domain.model.ReadingTheme
@@ -69,32 +71,40 @@ private val DarkColorScheme = darkColorScheme(
 fun EareyeReadingTheme(
     readingTheme: ReadingTheme = ReadingTheme.LIGHT,
     darkTheme: Boolean = isSystemInDarkTheme(),
+    dynamicColor: Boolean = false,
     content: @Composable () -> Unit,
 ) {
-    // 深色模式覆盖 readingTheme 的颜色方案
-    val effectiveTheme = if (darkTheme) ReadingTheme.DARK else readingTheme
-    val colorScheme = when (effectiveTheme) {
-        ReadingTheme.DARK -> DarkColorScheme.copy(
-            background = DarkBg,
-            surface = Color(0xFF252540),
-        )
-        ReadingTheme.LIGHT -> LightColorScheme
-        ReadingTheme.SEPIA -> LightColorScheme.copy(
-            background = SepiaBg,
-            surface = Color(0xFFF5E6C8),
-            onBackground = SepiaText,
-            onSurface = SepiaText,
-        )
+    // 动态取色（Material You）：Android 12+ 跟随壁纸生成整套配色，
+    // 品牌暖棕让位给系统色。低于 12 或未开启时保持品牌色不变。
+    val context = LocalContext.current
+    val colorScheme = if (dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+    } else {
+        // 深色模式覆盖 readingTheme 的颜色方案
+        val effectiveTheme = if (darkTheme) ReadingTheme.DARK else readingTheme
+        when (effectiveTheme) {
+            ReadingTheme.DARK -> DarkColorScheme.copy(
+                background = DarkBg,
+                surface = Color(0xFF252540),
+            )
+            ReadingTheme.LIGHT -> LightColorScheme
+            ReadingTheme.SEPIA -> LightColorScheme.copy(
+                background = SepiaBg,
+                surface = Color(0xFFF5E6C8),
+                onBackground = SepiaText,
+                onSurface = SepiaText,
+            )
+        }
     }
+    val isDark = darkTheme || colorScheme == DarkColorScheme
 
     val view = LocalView.current
     if (!view.isInEditMode) {
         SideEffect {
             val window = (view.context as Activity).window
             window.statusBarColor = colorScheme.background.toArgb()
-            // DARK 主题强制深色状态栏；LIGHT / SEPIA 强制浅色状态栏
-            WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars =
-                effectiveTheme != ReadingTheme.DARK
+            // 深色主题强制深色状态栏；浅色 / SEPIA 强制浅色状态栏
+            WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = !isDark
         }
     }
 

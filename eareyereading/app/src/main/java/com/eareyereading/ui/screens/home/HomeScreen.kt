@@ -9,9 +9,26 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.filled.MenuBook
+import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.Replay
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.outlined.LocalFireDepartment
-import androidx.compose.material3.*
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -22,6 +39,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.eareyereading.domain.model.Book
+import com.eareyereading.ui.components.BookCover
+import com.eareyereading.ui.components.ReadingHeatmap
+import com.eareyereading.ui.components.StatCard
+import com.eareyereading.ui.components.rememberPlayOnceAnimation
 import com.eareyereading.ui.theme.*
 import com.eareyereading.util.notificationPermissionGranted
 import com.eareyereading.util.rememberNotificationPermissionRequester
@@ -101,23 +122,25 @@ fun HomeScreen(
                 ) {
                     StatCard(
                         icon = Icons.Default.Timer,
-                        value = "${uiState.todayMinutes}",
+                        value = uiState.todayMinutes,
                         unit = "min",
                         label = "今日阅读",
                         color = Primary,
                         modifier = Modifier.weight(1f),
                     )
+                    // 连续打卡：火焰呼吸脉动 + Count-up（多邻国式的存活暗示）
                     StatCard(
                         icon = Icons.Outlined.LocalFireDepartment,
-                        value = "${uiState.streakDays}",
+                        value = uiState.streakDays,
                         unit = "天",
                         label = "连续打卡",
                         color = Warning,
+                        pulse = uiState.streakDays > 0,
                         modifier = Modifier.weight(1f),
                     )
                     StatCard(
                         icon = Icons.Default.MenuBook,
-                        value = "${uiState.totalVocabulary}",
+                        value = uiState.totalVocabulary,
                         unit = "词",
                         label = "生词本",
                         color = Accent,
@@ -159,6 +182,19 @@ fun HomeScreen(
                 )
             }
 
+            // 学习热力图（GitHub contributions 式打卡墙）
+            if (uiState.heatmapData.isNotEmpty()) {
+                item {
+                    Spacer(modifier = Modifier.height(16.dp))
+                    ReadingHeatmap(
+                        dailyMinutes = uiState.heatmapData,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp),
+                    )
+                }
+            }
+
             // 最近阅读
             if (uiState.recentBooks.isNotEmpty()) {
                 item {
@@ -195,51 +231,6 @@ fun HomeScreen(
             // 快捷入口已移除：与底部导航完全重复的 web 仪表盘式链接区。
             // 书库/生词本/复习都在底部导航栏一步直达
             item { Spacer(modifier = Modifier.height(20.dp)) }
-        }
-    }
-}
-
-// ── 统计卡片 ─────────────────────────────────────
-@Composable
-private fun StatCard(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    value: String,
-    unit: String,
-    label: String,
-    color: Color,
-    modifier: Modifier = Modifier,
-) {
-    Surface(
-        modifier = modifier,
-        shape = RoundedCornerShape(16.dp),
-        color = color.copy(alpha = 0.1f),
-    ) {
-        Column(
-            modifier = Modifier.padding(14.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            Icon(icon, label, tint = color, modifier = Modifier.size(22.dp))
-            Spacer(modifier = Modifier.height(6.dp))
-            Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.Center) {
-                Text(
-                    text = value,
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold,
-                    color = color,
-                )
-                Spacer(modifier = Modifier.width(2.dp))
-                Text(
-                    text = unit,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = color.copy(alpha = 0.7f),
-                    modifier = Modifier.padding(bottom = 2.dp),
-                )
-            }
-            Text(
-                text = label,
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
         }
     }
 }
@@ -331,6 +322,9 @@ private fun WeeklyChart(
     val maxMinutes = data.maxOfOrNull { it.minutes }?.coerceAtLeast(1) ?: 1
     val barColor = Primary
 
+    // 进入页面时柱状图从 0 生长到目标高度（图表生长动画，0f→1f 单次推进）
+    val growProgress = rememberPlayOnceAnimation(durationMillis = 750)
+
     Surface(
         modifier = modifier,
         shape = RoundedCornerShape(16.dp),
@@ -363,7 +357,9 @@ private fun WeeklyChart(
                     Box(
                         modifier = Modifier
                             .fillMaxWidth(0.5f)
-                            .fillMaxHeight(heightRatio.coerceAtLeast(0.03f))
+                            .fillMaxHeight(
+                                (heightRatio * growProgress).coerceAtLeast(0.03f),
+                            )
                             .clip(RoundedCornerShape(topStart = 4.dp, topEnd = 4.dp))
                             .background(barColor.copy(alpha = if (heightRatio > 0) 0.85f else 0.15f)),
                     )
@@ -394,21 +390,13 @@ private fun RecentBookCard(
 
     ) {
         Column(modifier = Modifier.padding(14.dp)) {
-            Box(
+            BookCover(
+                title = book.title,
+                coverPath = book.coverPath,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(80.dp)
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(Primary),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    text = book.title.take(2).uppercase(),
-                    style = MaterialTheme.typography.titleLarge,
-                    color = Color.White,
-                    fontWeight = FontWeight.Bold,
-                )
-            }
+                    .height(80.dp),
+            )
             Spacer(modifier = Modifier.height(10.dp))
             Text(
                 text = book.title,
@@ -436,5 +424,3 @@ private fun RecentBookCard(
         }
     }
 }
-
-

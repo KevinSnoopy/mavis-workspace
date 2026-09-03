@@ -79,6 +79,19 @@
             </intent-filter>
         </receiver>
 
+        <!-- 复习速览桌面小组件：待复习词数 + 连续打卡 -->
+        <receiver
+            android:name=".receiver.ReviewWidgetProvider"
+            android:exported="false"
+            android:label="复习速览">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/review_widget_info" />
+        </receiver>
+
     </application>
 
 </manifest>
