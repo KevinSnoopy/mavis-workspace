@@ -12,7 +12,7 @@
 #
 set -euo pipefail
 
-SHERPA_ONNX_VERSION="${1:-1.10.30}"
+SHERPA_ONNX_VERSION="${1:-1.13.7}"
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 JNI_DIR="$REPO_ROOT/app/src/main/jniLibs"
 SRC_DIR="$REPO_ROOT/app/src/main/java/com/k2fsa/sherpa/onnx"
@@ -46,8 +46,13 @@ for abi in "${ABIS[@]}"; do
 done
 
 echo "==> 拷贝 Tts.kt 到暂存区并校验"
-TTS_KT_URL="https://raw.githubusercontent.com/k2-fsa/sherpa-onnx/v${SHERPA_ONNX_VERSION}/android/SherpaOnnxTts/app/src/main/java/com/k2fsa/sherpa/onnx/Tts.kt"
-curl -fsSL -o "$TMP_DIR/Tts.kt" "$TTS_KT_URL"
+# v1.13.x 起 android demo 里的 Tts.kt 是指向 kotlin-api 的符号链接文件，
+# 真实源码在 sherpa-onnx/kotlin-api/Tts.kt；先试新路径，旧版本回退老路径
+TTS_KT_URL="https://raw.githubusercontent.com/k2-fsa/sherpa-onnx/v${SHERPA_ONNX_VERSION}/sherpa-onnx/kotlin-api/Tts.kt"
+curl -fsSL -o "$TMP_DIR/Tts.kt" "$TTS_KT_URL" || {
+  TTS_KT_URL="https://raw.githubusercontent.com/k2-fsa/sherpa-onnx/v${SHERPA_ONNX_VERSION}/android/SherpaOnnxTts/app/src/main/java/com/k2fsa/sherpa/onnx/Tts.kt"
+  curl -fsSL -o "$TMP_DIR/Tts.kt" "$TTS_KT_URL"
+}
 # 版本不存在时 raw.githubusercontent 返回 "404: Not Found" 文本；
 # --fail 已拦截绝大多数情况，这里再验内容，防止把错误页提交进源码树
 grep -q "^package com.k2fsa.sherpa.onnx" "$TMP_DIR/Tts.kt" || {

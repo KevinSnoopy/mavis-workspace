@@ -75,6 +75,13 @@ data class SettingsUiState(
     // 防止 progress 置空后 UI 翻回未下载态诱导并发下载
     val embeddedInitializing: Boolean = false,
     val embeddedReady: Boolean = false,         // 引擎已加载就绪
+    // ── 语音模型 / 音色选择（Kokoro 多音色）──
+    /** 可选模型列表（含各自的下载状态），模型选择弹窗用 */
+    val embeddedModels: List<EmbeddedModelUi> = emptyList(),
+    /** 当前选中模型是否为 Kokoro（决定是否展示音色行） */
+    val embeddedSelectedModelIsKokoro: Boolean = false,
+    /** 当前选中音色展示名（如 "zf_001 · 中文女声"）；非 Kokoro 为空 */
+    val embeddedVoiceDisplay: String = "",
     // ── AI 翻译（LLM 通道）──
     val llmTranslateEnabled: Boolean = false,
     val llmApiKey: String = "",
@@ -90,6 +97,15 @@ private data class LlmSettingsSnapshot(
     val apiKey: String,
     val baseUrl: String,
     val model: String,
+)
+
+/** 模型选择弹窗的单个模型条目。 */
+data class EmbeddedModelUi(
+    val id: String,
+    val displayName: String,
+    val sizeText: String,
+    val downloaded: Boolean,
+    val selected: Boolean,
 )
 
 @HiltViewModel
@@ -332,19 +348,95 @@ class SettingsViewModel @Inject constructor(
 
     private fun refreshEmbeddedStatus() {
         viewModelScope.launch {
-            val model = embeddedTts.getCurrentModelInfo()
+            val selected = embeddedTts.getCurrentModelInfo()
             // isModelDownloaded 做多文件存在性检查（含 .complete 标记），
             // 属于磁盘遍历：不得在 Main 调度器上跑
-            val downloaded = withContext(Dispatchers.IO) {
-                embeddedTts.isModelDownloaded(model)
+            val models = withContext(Dispatchers.IO) {
+                EmbeddedTtsEngine.AVAILABLE_MODELS.map { m ->
+                    EmbeddedModelUi(
+                        id = m.id,
+                        displayName = m.displayName,
+                        sizeText = formatBytes(m.sizeBytes),
+                        downloaded = embeddedTts.isModelDownloaded(m),
+                        selected = m.id == selected.id,
+                    )
+                }
             }
+            val selectedDownloaded = models.firstOrNull { it.selected }?.downloaded ?: false
+            val voice = embeddedTts.getSelectedVoice()
             _uiState.update {
                 it.copy(
-                    embeddedModelName = model.displayName,
-                    embeddedModelSizeText = formatBytes(model.sizeBytes),
-                    embeddedModelDownloaded = downloaded,
+                    embeddedModelName = selected.displayName,
+                    embeddedModelSizeText = formatBytes(selected.sizeBytes),
+                    embeddedModelDownloaded = selectedDownloaded,
+                    embeddedModels = models,
+                    embeddedSelectedModelIsKokoro = selected.isKokoro,
+                    embeddedVoiceDisplay = voice?.displayName ?: "",
                 )
             }
+        }
+    }
+
+    /**
+     * 切换内置语音模型。已下载的模型立即换引擎（朗读即时生效）；
+     * 未下载的只记住选择，由现有"下载内置语音模型"按钮引导下载。
+     */
+    fun setEmbeddedModel(id: String) {
+        viewModelScope.launch {
+            if (id == embeddedTts.getSelectedModelId()) return@launch
+            embeddedTts.setSelectedModelId(id)
+            val model = embeddedTts.getCurrentModelInfo()
+            val downloaded = withContext(Dispatchers.IO) { embeddedTts.isModelDownloaded(model) }
+            if (downloaded) {
+                // 已下载：立即初始化换引擎（构造在锁外、替换在锁内，朗读不受影响）
+                val ok = embeddedTts.initialize(model)
+                _uiState.update {
+                    it.copy(
+                        embeddedReady = ok,
+                        snackbarMessage = if (ok) "已切换到 ${model.displayName}" else "切换失败：模型初始化异常",
+                    )
+                }
+            } else {
+                _uiState.update {
+                    it.copy(
+                        snackbarMessage = "已选择 ${model.displayName}，请先下载模型",
+                    )
+                }
+            }
+            refreshEmbeddedStatus()
+        }
+    }
+
+    /**
+     * 选择 Kokoro 音色（sid）并立即试听一句。
+     * 引擎未就绪/加载的仍是其他模型时先尝试初始化（模型已下载则换引擎）；
+     * 未下载时只保存选择。
+     */
+    fun selectEmbeddedVoice(sid: Int) {
+        viewModelScope.launch {
+            val model = embeddedTts.getCurrentModelInfo()
+            embeddedTts.setSelectedSid(model.id, sid)
+            _uiState.update {
+                it.copy(embeddedVoiceDisplay = EmbeddedTtsEngine.KOKORO_VOICES.getOrNull(sid)?.displayName ?: "")
+            }
+            // 引擎未就绪、或加载的还是别的模型（如用户刚从 Piper 切过来）：
+            // 先初始化把引擎换到选中的 Kokoro，否则试听会落在英文声上
+            val engineReady = embeddedTts.state.value is EmbeddedTtsEngine.EngineState.READY
+            if (!engineReady || !embeddedTts.isKokoroActive) {
+                val ok = embeddedTts.initialize(model)
+                if (!ok) {
+                    _uiState.update { it.copy(snackbarMessage = "已保存音色，下载并启用模型后生效") }
+                    return@launch
+                }
+            }
+            // 试听：停掉正在播的（含上一次试听），再读一句中英混合样例
+            embeddedTts.stop()
+            val previewText = when {
+                sid >= 58 -> "你好，这是中文男声音色试听。Hello!"
+                sid >= 3 -> "你好，这是中文女声音色试听。Hello!"
+                else -> "Hello, this is a voice preview. 你好！"
+            }
+            embeddedTts.speak(previewText, speed = 1.0f)
         }
     }
 
@@ -1117,14 +1209,32 @@ fun SettingsScreen(
                 SettingsSectionTitle("语音")
             }
             item {
+                var showTtsModelDialog by remember { mutableStateOf(false) }
+                var showTtsVoiceDialog by remember { mutableStateOf(false) }
+
                 SettingsListCard {
-                    SettingRow(
+                    SettingRowClickable(
                         icon = Icons.Default.RecordVoiceOver,
                         iconBg = PrimaryLight,
                         iconColor = Primary,
-                        title = "内置语音引擎",
+                        title = "语音模型",
                         subtitle = uiState.embeddedModelName,
+                        onClick = { showTtsModelDialog = true },
                     )
+
+                    if (uiState.embeddedSelectedModelIsKokoro) {
+                        Divider(modifier = Modifier.padding(horizontal = 20.dp))
+                        SettingRowClickable(
+                            icon = Icons.Default.GraphicEq,
+                            iconBg = PrimaryLight,
+                            iconColor = Primary,
+                            title = "音色",
+                            subtitle = uiState.embeddedVoiceDisplay.ifEmpty { "默认音色" } +
+                                if (uiState.embeddedReady) " · 点击切换并试听" else "",
+                            onClick = { showTtsVoiceDialog = true },
+                        )
+                    }
+
                     Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp)) {
                         when {
                             uiState.embeddedDownloading || uiState.embeddedInitializing -> {
@@ -1210,6 +1320,115 @@ fun SettingsScreen(
                     }
                 }
                 Spacer(modifier = Modifier.height(20.dp))
+
+                // 模型选择弹窗：Piper 轻量英文 / Kokoro 中英多音色
+                if (showTtsModelDialog) {
+                    AlertDialog(
+                        onDismissRequest = { showTtsModelDialog = false },
+                        title = { Text("语音模型") },
+                        text = {
+                            Column {
+                                uiState.embeddedModels.forEach { m ->
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clickable {
+                                                viewModel.setEmbeddedModel(m.id)
+                                                showTtsModelDialog = false
+                                            }
+                                            .padding(vertical = 10.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        RadioButton(
+                                            selected = m.selected,
+                                            onClick = {
+                                                viewModel.setEmbeddedModel(m.id)
+                                                showTtsModelDialog = false
+                                            },
+                                        )
+                                        Column {
+                                            Text(
+                                                text = m.displayName,
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                fontWeight = if (m.selected) FontWeight.Bold else FontWeight.Normal,
+                                            )
+                                            Text(
+                                                text = if (m.downloaded) "已下载" else "未下载",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        confirmButton = {
+                            TextButton(onClick = { showTtsModelDialog = false }) { Text("关闭") }
+                        },
+                    )
+                }
+
+                // 音色选择弹窗（仅 Kokoro）：103 个音色按性别/口音分组，点击即试听。
+                // LazyColumn：103 行的 Column 会超出弹窗高度且无法滚动
+                if (showTtsVoiceDialog) {
+                    AlertDialog(
+                        onDismissRequest = { showTtsVoiceDialog = false },
+                        title = { Text("选择音色") },
+                        text = {
+                            LazyColumn(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(max = 420.dp),
+                            ) {
+                                item {
+                                    Text(
+                                        text = "所有音色均支持中英混读，点击即切换并试听",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                                // 按类别分组展示：美式女声 / 英式女声 / 中文女声 / 中文男声
+                                EmbeddedTtsEngine.KOKORO_VOICES
+                                    .groupBy { it.category }
+                                    .forEach { (category, voices) ->
+                                        item(key = "header_$category") {
+                                            Text(
+                                                text = category,
+                                                style = MaterialTheme.typography.labelMedium,
+                                                color = Primary,
+                                                modifier = Modifier.padding(top = 12.dp, bottom = 2.dp),
+                                            )
+                                        }
+                                        voices.forEach { v ->
+                                            item(key = v.name) {
+                                                val selected = uiState.embeddedVoiceDisplay == v.displayName
+                                                Row(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .clickable { viewModel.selectEmbeddedVoice(v.sid) }
+                                                        .padding(vertical = 2.dp),
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                ) {
+                                                    RadioButton(
+                                                        selected = selected,
+                                                        onClick = { viewModel.selectEmbeddedVoice(v.sid) },
+                                                    )
+                                                    Text(
+                                                        text = v.displayName,
+                                                        style = MaterialTheme.typography.bodyMedium,
+                                                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                            }
+                        },
+                        confirmButton = {
+                            TextButton(onClick = { showTtsVoiceDialog = false }) { Text("关闭") }
+                        },
+                    )
+                }
             }
 
             // ── 通知偏好 ────────────────────────────────

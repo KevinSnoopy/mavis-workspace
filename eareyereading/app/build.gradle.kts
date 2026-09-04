@@ -159,8 +159,9 @@ dependencies {
     // 集成方式：sherpa-onnx 不发布 Maven/JitPack AAR。我们采用官方推荐方式：
     //   1. Kotlin 源码（com.k2fsa.sherpa.onnx.Tts 等）直接拷贝到 app/src/main/java 下
     //   2. 预编译 .so（libsherpa-onnx-jni.so + libonnxruntime.so）放到 app/src/main/jniLibs
-    //   3. .so 来自 https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.10.30/sherpa-onnx-v1.10.30-android.tar.bz2
-    // 升级时更新 SHERPA_ONNX_VERSION 并重新下载 .so + 源码。详见 scripts/download-sherpa-onnx.sh
+    //   3. .so 来自 https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.7/sherpa-onnx-v1.13.7-android.tar.bz2
+    //      （v1.13.7 起支持 Kokoro 多音色模型：OfflineTtsKokoroModelConfig + generate(sid)）
+    // 升级时更新脚本版本号并重新下载 .so + 源码。详见 scripts/download-sherpa-onnx.sh
 
     // Testing
     testImplementation("junit:junit:4.13.2")

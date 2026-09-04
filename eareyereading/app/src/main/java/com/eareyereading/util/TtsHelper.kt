@@ -21,12 +21,13 @@ import javax.inject.Singleton
 /**
  * TTS 协调器。
  *
- * 自 2026-08-30 起，**只走内置 sherpa-onnx (Piper) 模式**——系统 TextToSpeech
+ * 自 2026-08-30 起，**只走内置 sherpa-onnx 模式**——系统 TextToSpeech
  * 完全下线。理由：
  *   1) 国内 ROM（MIUI/HyperOS）系统 TTS 服务拒绝 bind 给第三方 app（OS 层限制）
  *   2) 即便绑定成功，系统 TTS 自带的中文 OEM 引擎会把英文内容里的数字 /
  *      缩写成普通话风格（"2026" 读成"二零二六"），与英文阅读产品定位冲突
- *   3) Piper lessac-medium 是纯英文声 + 完整 lexicon，朗读稳定性高于系统 TTS
+ *   3) 内置模型（Piper 英文 / Kokoro 中英多音色，2026-09 起双模型可选）
+ *      带完整词典，朗读稳定性高于系统 TTS
  *
  * 公共 API（保留原签名以兼容 ReaderViewModel / ReaderScreen 调用方）：
  *   - initialize / initializeEmbeddedForced
@@ -212,12 +213,13 @@ class TtsHelper @Inject constructor(
     fun isSpeaking(): Boolean = embeddedTts.isPlaying()
 
     /**
-     * 切换内置 TTS 模型以匹配新书语言（跨语言换书时调用，避免英文声读中文静默）。
-     * 当前只有一个 Piper 英文模型，多语言切换本质上无操作——保留方法签名
-     * 以兼容调用方。未来若加回 MeloTTS-zh_en 时再扩展开关逻辑。
+     * 切换内置 TTS 模型以匹配新书语言（跨语言换书时调用）。
+     * 2026-09 起双模型：模型选择以用户在设置页的显式选择为准（用户意图 >
+     * 语言启发式），引擎内 getCurrentModelInfo 已按选择路由，此方法保留为
+     * 兼容调用方的 no-op。
      */
     suspend fun switchEmbeddedModelIfNeeded(language: String?) {
-        android.util.Log.d(TAG, "switchEmbeddedModelIfNeeded($language): no-op (single Piper model)")
+        android.util.Log.d(TAG, "switchEmbeddedModelIfNeeded($language): no-op (user-selected model wins)")
     }
 
     /**

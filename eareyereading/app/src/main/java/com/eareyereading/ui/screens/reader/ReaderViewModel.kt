@@ -975,22 +975,23 @@ class ReaderViewModel @Inject constructor(
 
     /**
      * 内置音色与本书语言不匹配时给一次性提示（会话内只提示一次）：
-     * 英文书落在中文声 → 口音重、数字带中文音；
-     * 中文书落在英文声 → 中文字读不出（静音）。都引导去设置下载对应模型。
+     * 英文书落在纯中文声 → 口音重、数字带中文音；
+     * 中文书落在纯英文声 → 中文字读不出（静音）。都引导去设置切换模型。
      *
-     * 2026-08-30: 现内置只 Piper 英文声，此函数不再能产生 mismatch 分支，
-     * 保留为 no-op 直到新增多语种模型为止。调用点保留兼容。
+     * 2026-09-04: 双模型时代重写判定——ModelInfo.language 现在是逗号分隔的
+     * 支持语言集合（Kokoro = "zh,en"），按"本书语言是否在模型支持集合里"判断；
+     * 双语模型读任何书都不算 mismatch。
      */
     private var embeddedVoiceMismatchHintShown = false
     private fun hintEmbeddedVoiceMismatchIfNeeded() {
         if (embeddedVoiceMismatchHintShown) return
         if (ttsHelper.ttsMode != TtsHelper.TtsMode.EMBEDDED) return
         val model = ttsHelper.getEmbeddedEngine().getCurrentModelInfo()
-        // 现在只有 Piper 英文声，不会出现 wantsEnglish != modelIsEnglish
         embeddedVoiceMismatchHintShown = true
-        if (model.language != "en") {
-            // 防御性兜底：未来加回多语种时这条 toast 仍能起作用
-            showToast("当前内置音色（${model.displayName}）与本书语言不匹配")
+        val bookLanguage = (_uiState.value.book?.language ?: "en").lowercase()
+        val supported = model.language.split(",").map { it.trim().lowercase() }
+        if (bookLanguage !in supported) {
+            showToast("当前内置音色（${model.displayName}）不支持本书语言，建议在设置中切换语音模型")
         }
     }
 

@@ -8,6 +8,7 @@ import android.media.AudioTrack
 import android.util.Log
 import com.k2fsa.sherpa.onnx.OfflineTts
 import com.k2fsa.sherpa.onnx.OfflineTtsConfig
+import com.k2fsa.sherpa.onnx.OfflineTtsKokoroModelConfig
 import com.k2fsa.sherpa.onnx.OfflineTtsModelConfig
 import com.k2fsa.sherpa.onnx.OfflineTtsVitsModelConfig
 import com.eareyereading.util.NotificationService
@@ -45,12 +46,13 @@ import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
  * sherpa-onnx 是一个**完全自包含**的离线 TTS 库，把神经网络模型直接打包进 app，无需
  * 系统 TTS 服务，从根本上绕过了这个限制。
  *
- * **模型选择**：当前仅内置 Piper en_US-lessac-medium 英文男声（韵律自然，
- *   约 66MB）。原设计中由 resolveModelForLanguage 按书籍语言路由到不同模型
- *   （中文书用 MeloTTS-zh_en），但该模型在国内无可用镜像、下载链路不稳，
- *   且与产品当前的英文阅读主线不符——2026-08-30 起下线，全部归到 Piper。
+ * **模型选择**（2026-09-04 起双模型，设置页可切换）：
+ *   - Piper en_US-lessac-medium（默认，约 66MB）：英文男声，韵律自然，轻量。
+ *   - Kokoro int8 中英双语（约 205MB，解压后）：103 种音色（美式/英式女声、
+ *     中文女声/男声），情感表现力显著优于 Piper，且原生支持中英混读——
+ *     中文书朗读不再被预处理过滤成静音。音色通过 generate(sid) 切换。
  *
- * 模型文件从 CDN 下载到 app 的私有目录（首次约 66MB）。
+ * 模型文件从 CDN 下载到 app 的私有目录（Piper 约 66MB / Kokoro 约 147MB 压缩包）。
  */
 @Singleton
 class EmbeddedTtsEngine @Inject constructor(
@@ -61,6 +63,9 @@ class EmbeddedTtsEngine @Inject constructor(
     private var tts: OfflineTts? = null
     @Volatile
     private var currentModelName: String = ""
+    /** 当前已加载模型是否为 Kokoro（决定 generate 时是否传音色 sid） */
+    @Volatile
+    private var currentModelIsKokoro: Boolean = false
     @Volatile
     private var sampleRate: Int = 22050
 
@@ -229,6 +234,12 @@ class EmbeddedTtsEngine @Inject constructor(
          * 不用 lexicon。初始化时 dataDir 指向 espeak-ng-data 目录。
          */
         val usesEspeakNg: Boolean = false,
+        /**
+         * Kokoro 系模型（kokoro-multi-lang-v1_1）：初始化走
+         * OfflineTtsKokoroModelConfig（voices.bin + 双 lexicon + ruleFsts），
+         * generate() 时传 sid 选择 103 种音色之一。
+         */
+        val isKokoro: Boolean = false,
     ) {
         fun tarballAllUrls(): List<String> =
             (listOfNotNull(tarballUrl) + tarballMirrorUrls)
@@ -254,6 +265,8 @@ class EmbeddedTtsEngine @Inject constructor(
         private const val TAG = "EmbeddedTtsEngine"
         private const val MODELS_DIR_NAME = "sherpa_tts_models"
         private const val NUM_THREADS = 2
+        /** Kokoro（82M 参数）合成开销大，官方演示对带 voices 的模型用 4 线程 */
+        private const val NUM_THREADS_KOKORO = 4
         /** 文件完整下载标记后缀。存在表示该文件已完整下载，避免误用残缺文件。 */
         private const val COMPLETE_SUFFIX = ".complete"
         /**
@@ -271,16 +284,12 @@ class EmbeddedTtsEngine @Inject constructor(
         /**
          * 内置可用模型列表。
          *
-         * 默认内置模型 = Piper lessac-medium（见 DEFAULT_MODEL_ID）：
-         * 韵律自然、英文发音地道，G2P 走 espeak-ng（归档自带
-         * espeak-ng-data/），仅归档下载（文件是整目录树，无逐文件镜像）。
+         * 默认 = Piper lessac-medium（见 DEFAULT_MODEL_ID）：韵律自然、英文发音
+         * 地道、体积小；G2P 走 espeak-ng（归档自带 espeak-ng-data/）。
          *
-         * MeloTTS-zh_en 保留给中文书：它由 MeloTTS-Chinese 导出、只有 1 个
-         * 中文说话人（官方文档明确），读英文口音重、语调平、英文数字词
-         * 带中文音——语言路由只对非英文书使用它（见 resolveModelForLanguage）。
-         *
-         * 2026-08-30: 中文模型全部下线。AVAILABLE_MODELS 仅保留 Piper，
-         * 配套 modelForInitialize / resolveModelForLanguage 也不再按语言路由。
+         * Kokoro int8 中英双语（2026-09-04 新增）：103 种音色 + 原生中英混读。
+         * 归档含 jieba dict/、三个 ruleFst（phone/date/number-zh.fst，中文数字
+         * 日期归一化）与双 lexicon；官方 Android 演示同款配置。
          */
         val AVAILABLE_MODELS = listOf(
             ModelInfo(
@@ -306,14 +315,86 @@ class EmbeddedTtsEngine @Inject constructor(
                     ModelFile("vits-piper-en_US-lessac-medium/espeak-ng-data", url = ""),
                 ),
             ),
+            ModelInfo(
+                id = "kokoro-int8-multi-lang-v1_1",
+                displayName = "Kokoro 中英双语·多音色（约 205MB，103 种音色）",
+                language = "zh,en",
+                // 解压后总大小（model.int8.onnx 114MB + voices.bin 54MB + 词典/分词数据）。
+                // 下载进度分母优先用响应 Content-Length（压缩包 ~147MB），此处数值
+                // 仅作磁盘预检（×3）与解压估算的基准
+                sizeBytes = 205_000_000L,
+                tarballUrl = "https://ghfast.top/https%3A%2F%2Fgithub.com%2Fk2-fsa%2Fsherpa-onnx%2Freleases%2Fdownload%2Ftts-models%2Fkokoro-int8-multi-lang-v1_1.tar.bz2",
+                tarballMirrorUrls = listOf(
+                    "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-int8-multi-lang-v1_1.tar.bz2",
+                ),
+                usesEspeakNg = true,
+                isKokoro = true,
+                // URL 留空 = 仅归档下载：espeak-ng-data / dict 各含数百个小文件
+                files = listOf(
+                    ModelFile("kokoro-int8-multi-lang-v1_1/model.int8.onnx", url = ""),
+                    ModelFile("kokoro-int8-multi-lang-v1_1/voices.bin", url = ""),
+                    ModelFile("kokoro-int8-multi-lang-v1_1/tokens.txt", url = ""),
+                    ModelFile("kokoro-int8-multi-lang-v1_1/espeak-ng-data", url = ""),
+                    ModelFile("kokoro-int8-multi-lang-v1_1/dict", url = ""),
+                    ModelFile("kokoro-int8-multi-lang-v1_1/lexicon-us-en.txt", url = ""),
+                    ModelFile("kokoro-int8-multi-lang-v1_1/lexicon-zh.txt", url = ""),
+                    ModelFile("kokoro-int8-multi-lang-v1_1/lexicon-gb-en.txt", url = ""),
+                    ModelFile("kokoro-int8-multi-lang-v1_1/phone-zh.fst", url = ""),
+                    ModelFile("kokoro-int8-multi-lang-v1_1/date-zh.fst", url = ""),
+                    ModelFile("kokoro-int8-multi-lang-v1_1/number-zh.fst", url = ""),
+                ),
+            ),
         )
 
-        // 内置默认 = Piper 英文声
+        // 内置默认 = Piper 英文声（英文阅读主线；Kokoro 为用户可选升级）
         val DEFAULT_MODEL_ID = "vits-piper-en_US-lessac-medium"
 
         /** 用户当前选中的模型 ID（用 SharedPreferences 持久化） */
         private const val PREFS_NAME = "embedded_tts_prefs"
         private const val KEY_SELECTED_MODEL = "selected_model"
+
+        /** 用户选中的音色 sid，按模型分别持久化（Piper 无多音色，仅 Kokoro 使用） */
+        private const val KEY_SELECTED_VOICE_PREFIX = "selected_voice_"
+
+        /**
+         * Kokoro（kokoro-multi-lang-v1_1）的 103 个音色。
+         * sid→名称映射来自官方文档；前缀含义：af=美式女声 bf=英式女声
+         * zf=中文女声 zm=中文男声。所有音色均可中英混读，只是口音倾向不同。
+         */
+        data class VoiceInfo(val sid: Int, val name: String) {
+            val category: String
+                get() = when {
+                    name.startsWith("af") -> "美式女声"
+                    name.startsWith("bf") -> "英式女声"
+                    name.startsWith("zf") -> "中文女声"
+                    name.startsWith("zm") -> "中文男声"
+                    else -> "其他"
+                }
+            val displayName: String get() = "$name · $category"
+        }
+
+        private val KOKORO_VOICE_NAMES = listOf(
+            "af_maple", "af_sol", "bf_vale",
+            "zf_001", "zf_002", "zf_003", "zf_004", "zf_005", "zf_006", "zf_007",
+            "zf_008", "zf_017", "zf_018", "zf_019", "zf_021", "zf_022", "zf_023",
+            "zf_024", "zf_026", "zf_027", "zf_028", "zf_032", "zf_036", "zf_038",
+            "zf_039", "zf_040", "zf_042", "zf_043", "zf_044", "zf_046", "zf_047",
+            "zf_048", "zf_049", "zf_051", "zf_059", "zf_060", "zf_067", "zf_070",
+            "zf_071", "zf_072", "zf_073", "zf_074", "zf_075", "zf_076", "zf_077",
+            "zf_078", "zf_079", "zf_083", "zf_084", "zf_085", "zf_086", "zf_087",
+            "zf_088", "zf_090", "zf_092", "zf_093", "zf_094", "zf_099",
+            "zm_009", "zm_010", "zm_011", "zm_012", "zm_013", "zm_014", "zm_015",
+            "zm_016", "zm_020", "zm_025", "zm_029", "zm_030", "zm_031", "zm_033",
+            "zm_034", "zm_035", "zm_037", "zm_041", "zm_045", "zm_050", "zm_052",
+            "zm_053", "zm_054", "zm_055", "zm_056", "zm_057", "zm_058", "zm_061",
+            "zm_062", "zm_063", "zm_064", "zm_065", "zm_066", "zm_068", "zm_069",
+            "zm_080", "zm_081", "zm_082", "zm_089", "zm_091", "zm_095", "zm_096",
+            "zm_097", "zm_098", "zm_100",
+        )
+
+        /** Kokoro 音色目录（sid 顺序与官方 voices.bin 对齐） */
+        val KOKORO_VOICES: List<VoiceInfo> =
+            KOKORO_VOICE_NAMES.mapIndexed { sid, name -> VoiceInfo(sid, name) }
     }
 
 /**
@@ -566,6 +647,17 @@ private fun preprocessForTts(text: String): String {
 }
 
 /**
+ * Kokoro 双语模型的轻量预处理：仅合并空白。
+ *
+ * Kokoro 前端自带完整 G2P（espeak-ng 英文 + jieba/词典中文 + ruleFst 数字
+ * 归一化），数字、缩写、中英混排、全半角标点均可原生朗读。Piper 专用的
+ * 数字→英文单词、CJK→占位符、括号替换等操作在这里反而有害（把 "2026 年"
+ * 改成 "twenty twenty-six 年"、把中文整段替换成 "[Chinese text omitted]"）。
+ */
+private fun preprocessForTtsLight(text: String): String =
+    text.replace(TtsPreprocess.WHITESPACE, " ").trim()
+
+/**
  * 时区缩写歧义消解（2.10，词典白名单启发式）：
  * ET/CT/PT/MT 既是时区名也是通用缩写，不能无条件展开——
  * "CT scan"（计算机断层扫描）会被误读成 "Central Time scan"。
@@ -677,6 +769,30 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
         prefs.edit().putString(KEY_SELECTED_MODEL, id).apply()
     }
 
+    /** 当前模型下用户选中的音色 sid（仅 Kokoro 有意义；越界/未设置回退 0） */
+    fun getSelectedSid(model: ModelInfo = getCurrentModelInfo()): Int {
+        val saved = prefs.getInt(KEY_SELECTED_VOICE_PREFIX + model.id, 0)
+        return if (saved in 0 until KOKORO_VOICES.size) saved else 0
+    }
+
+    fun setSelectedSid(modelId: String, sid: Int) {
+        prefs.edit().putInt(KEY_SELECTED_VOICE_PREFIX + modelId, sid).apply()
+    }
+
+    /** 当前选中模型的音色信息（非 Kokoro 模型返回 null） */
+    fun getSelectedVoice(): VoiceInfo? {
+        val model = getCurrentModelInfo()
+        return if (model.isKokoro) KOKORO_VOICES.getOrNull(getSelectedSid(model)) else null
+    }
+
+    /**
+     * 引擎当前加载的是否为 Kokoro 模型（音色试听前的检查）：
+     * READY 但加载的是 Piper 时（用户已选中未下载的 Kokoro），试听会
+     * 落在英文声上——调用方应先 initialize(selected) 换引擎再试听。
+     */
+    val isKokoroActive: Boolean
+        get() = currentModelIsKokoro && tts != null
+
     fun getCurrentModelInfo(): ModelInfo {
         // firstOrNull 全程兜底：持久化的模型 id 可能已被新版本移除，
         // first{} 会直接抛 NoSuchElementException（且本方法会在 Compose 组合期被调用）
@@ -688,18 +804,17 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
     /**
      * 按书籍语言解析理想模型（不保证已下载）。
      *
-     * 当前内置只有 Piper 英文声，所以无论书籍语言如何都返回它。参数
-     * `language` 保留是为了不让外部调用方大改——它原本用来在英文和
-     * 中英双语间路由。当前阶段中文书会由英文声读出（音色偏英文口音），
-     * 但更糟的情况（无声）不会出现。
+     * 双模型时代（2026-09-04 起）：用户在设置页显式选择的模型优先——
+     * 英文主线默认 Piper，中文书/多音色需求由用户切到 Kokoro。
+     * `language` 参数保留兼容旧调用方，不再参与路由（用户意图 > 语言启发式）。
      */
     fun resolveModelForLanguage(@Suppress("UNUSED_PARAMETER") language: String?): ModelInfo {
         return getCurrentModelInfo()
     }
 
     /**
-     * 初始化时实际可加载的模型：唯一内置 Piper 已下载则用它；否则返回 null
-     * 由调用方引导用户下载。language 参数保留（兼容旧调用方），不再用于路由。
+     * 初始化时实际可加载的模型：用户选中的模型已下载则用它；否则返回 null
+     * 由调用方引导用户下载。language 参数保留（兼容旧调用方），不用于路由。
      */
     fun modelForInitialize(@Suppress("UNUSED_PARAMETER") language: String?): ModelInfo? {
         val ideal = getCurrentModelInfo()
@@ -1590,19 +1705,55 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
                     modelDir.absolutePath
                 }
 
-                // VITS 模型配置（使用构造参数，避免依赖 var 字段默认值）
-                val vitsConfig = OfflineTtsVitsModelConfig(
-                    model = modelPath,
-                    tokens = tokensPath,
-                    lexicon = lexiconPath ?: "",
-                    dataDir = dataDirPath,
-                    dictDir = dictDirPath ?: "",
-                )
-                val modelConfig = OfflineTtsModelConfig(
-                    vits = vitsConfig,
-                    numThreads = NUM_THREADS,
-                )
-                val config = OfflineTtsConfig(model = modelConfig)
+                // 配置构造：Kokoro 与 VITS 走不同的 ModelConfig 分支。
+                // Kokoro 官方 Android 演示配置（sherpa-onnx v1.13.7）：
+                //   model/voices/tokens/dataDir(espeak-ng-data) +
+                //   lexicon = "lexicon-us-en.txt,lexicon-zh.txt"（逗号分隔）+
+                //   ruleFsts = "phone-zh.fst,date-zh.fst,number-zh.fst"
+                //   （中文电话号/日期/数字归一化）。jieba dict/ 由 native 端
+                //   按模型目录自动加载，无需显式配置。
+                val modelConfig: OfflineTtsModelConfig
+                var ruleFsts = ""
+                if (modelInfo.isKokoro) {
+                    val voicesPath = findFile("voices.bin")
+                        ?: throw IllegalStateException("缺少 voices.bin")
+                    val lexicons = listOfNotNull(
+                        findFile("lexicon-us-en.txt"),
+                        findFile("lexicon-zh.txt"),
+                    ).joinToString(",")
+                    ruleFsts = listOfNotNull(
+                        findFile("phone-zh.fst"),
+                        findFile("date-zh.fst"),
+                        findFile("number-zh.fst"),
+                    ).joinToString(",")
+                    val kokoroConfig = OfflineTtsKokoroModelConfig(
+                        model = modelPath,
+                        voices = voicesPath,
+                        tokens = tokensPath,
+                        dataDir = dataDirPath,
+                        lexicon = lexicons,
+                    )
+                    // 官方 getOfflineTtsConfig 对带 voices 的模型（Kokoro/Kitten）
+                    // 推荐 4 线程：82M 参数模型合成开销远大于 Piper
+                    modelConfig = OfflineTtsModelConfig(
+                        kokoro = kokoroConfig,
+                        numThreads = NUM_THREADS_KOKORO,
+                    )
+                } else {
+                    // VITS 模型配置（使用构造参数，避免依赖 var 字段默认值）
+                    val vitsConfig = OfflineTtsVitsModelConfig(
+                        model = modelPath,
+                        tokens = tokensPath,
+                        lexicon = lexiconPath ?: "",
+                        dataDir = dataDirPath,
+                        dictDir = dictDirPath ?: "",
+                    )
+                    modelConfig = OfflineTtsModelConfig(
+                        vits = vitsConfig,
+                        numThreads = NUM_THREADS,
+                    )
+                }
+                val config = OfflineTtsConfig(model = modelConfig, ruleFsts = ruleFsts)
                 val newTts = OfflineTts(config = config)
                 // 关键：替换/释放旧 native 实例必须与 generate() 互斥。
                 // 只加 synchronized(this) 时，另一个协程可能正持有 speakMutex
@@ -1624,6 +1775,7 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
                                 tts = newTts
                                 assigned = true
                                 currentModelName = modelInfo.id
+                                currentModelIsKokoro = modelInfo.isKokoro
                                 sampleRate = newTts.sampleRate()
                             }
                             // 状态写入也进锁：出锁再写会与 release()（同锁内置
@@ -1719,15 +1871,26 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
 
         try {
             isPlaying.set(true)
-            // 先做文本预处理：把 sherpa-onnx MeloTTS 模型的 OOV 字符替换成可发音的等价物，
-            // 否则 chunks[0] 直接传给 generate() 时会触发 native 段错误 (SIGSEGV)。
-            // 已知 OOV: 'í' '—' '"' '(' ')' '65' '28' '2026' '10' '07' 等数字 + 标点。
-            val cleaned = preprocessForTts(text)
+            // 先做文本预处理：
+            // - Piper：把 OOV 字符替换成可发音等价物（数字→英文单词、CJK→占位符），
+            //   否则 chunks[0] 直接传给 generate() 会触发 native 段错误 (SIGSEGV)。
+            // - Kokoro：双语模型自带中英 G2P（espeak-ng + 中文词典 + ruleFst 数字
+            //   归一化），数字/缩写/CJK 均可原生朗读；只做空白归一化——
+            //   Piper 专用的数字→英文单词、CJK 过滤反而会破坏中文文本
+            val isKokoro = currentModelIsKokoro
+            val cleaned = if (isKokoro) preprocessForTtsLight(text) else preprocessForTts(text)
             // 逐句朗读：按句子边界切分，每句单独 generate+play。
             // 不累积多句成一个 chunk——累积会导致单次 generate 输入过长触发 native 空指针崩溃。
             // 每句通常 < 150 字符，是 sherpa-onnx VITS/MeloTTS 的安全区间。
             val sentences = splitSentences(cleaned)
-            Log.i(TAG, "Embedded TTS speak: inputLen=${text.length}, cleanedLen=${cleaned.length}, sentences=${sentences.size}")
+            // Kokoro 音色：用户在设置页选择的 sid（Piper 单说话人恒为 0）。
+            // 每次生成时读取偏好：朗读中途切换音色，下一句立即生效
+            val sid = if (isKokoro) getSelectedSid() else 0
+            Log.i(
+                TAG,
+                "Embedded TTS speak: inputLen=${text.length}, cleanedLen=${cleaned.length}, " +
+                    "sentences=${sentences.size}, sid=$sid",
+            )
             // 熔断器：模型损坏时每句都会抛异常，旧实现逐句"跳过"后照常返回成功，
             // 上层会"静音朗读"完整本书并推进进度。连续失败 3 句直接中止并报失败
             var consecutiveFailures = 0
@@ -1744,7 +1907,7 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
                 var anyOk = false
                 for (chunk in chunks) {
                     try {
-                        val audio = currentTts.generate(chunk, sid = 0, speed = speed)
+                        val audio = currentTts.generate(chunk, sid = sid, speed = speed)
                         val pcm = audio.samples
                         val sr = audio.sampleRate
                         Log.i(
@@ -1957,6 +2120,7 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
             synchronized(this) {
                 tts?.let { try { it.release() } catch (_: Exception) {} }
                 tts = null
+                currentModelIsKokoro = false
             }
         }
         // 状态流复位：旧实现释放后流里仍是 READY，设置页状态说谎
