@@ -167,6 +167,9 @@ dependencies {
     // XmlPullParser 实现：与 Android 的 KXmlParser 同源，保证单测解析行为一致
     testImplementation("net.sf.kxml:kxml2:2.3.0")
     testImplementation("xmlpull:xmlpull:1.1.3.1")
+    // org.json 实现：android.jar 在 JVM 单测里是桩（返回默认值不真解析），
+    // LlmTranslator 的请求体构造/响应解析需要真 JSON
+    testImplementation("org.json:json:20231013")
     androidTestImplementation("androidx.test.ext:junit:1.1.5")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.5.1")
     androidTestImplementation(platform("androidx.compose:compose-bom:2023.10.01"))

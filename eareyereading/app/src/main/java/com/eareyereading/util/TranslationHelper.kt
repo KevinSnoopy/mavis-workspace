@@ -13,6 +13,7 @@ import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
@@ -28,13 +29,15 @@ import kotlin.coroutines.resume
 
 /**
  * 翻译助手
- * 优先级：系统翻译(Android 14+) > ML Kit > 本地词典
+ * 优先级：AI 翻译（LLM，配置后）> 系统翻译(Android 14+) > ML Kit > 在线 HTTP > 本地词典
  * 懒加载，首次翻译时初始化
  */
 @Singleton
 class TranslationHelper @Inject constructor(
     private val dictionaryManager: DictionaryManager,
     private val onlineTranslator: OnlineTranslator,
+    private val llmTranslator: LlmTranslator,
+    private val settingsRepository: com.eareyereading.domain.repository.SettingsRepository,
 ) {
     @Volatile
     private var mlkitTranslator: com.google.mlkit.nl.translate.Translator? = null
@@ -75,6 +78,84 @@ class TranslationHelper @Inject constructor(
 
     private fun cacheKey(text: String, sourceLang: String, targetLang: String): String =
         "$sourceLang>$targetLang|$text"
+
+    // ── AI 翻译（LLM 通道）─────────────────────
+
+    /**
+     * 读取 LLM 翻译配置；[checkEnabled]=false 时只看 Key（设置页
+     * "测试翻译"在开关打开前就要能校验 Key 是否可用）。
+     * DataStore 首次加载后常驻内存，first() 每次调用开销可忽略。
+     */
+    private suspend fun readLlmConfig(checkEnabled: Boolean): LlmTranslator.Config? {
+        return try {
+            if (checkEnabled && !settingsRepository.getLlmTranslateEnabled().first()) return null
+            val apiKey = settingsRepository.getLlmApiKey().first()
+            if (apiKey.isBlank()) return null
+            LlmTranslator.Config(
+                baseUrl = settingsRepository.getLlmBaseUrl().first(),
+                apiKey = apiKey,
+                model = settingsRepository.getLlmModel().first(),
+            )
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            android.util.Log.d("TranslationHelper", "read llm config failed: ${e.message}")
+            null
+        }
+    }
+
+    private suspend fun llmConfigIfEnabled(): LlmTranslator.Config? = readLlmConfig(checkEnabled = true)
+
+    // ── LLM 熔断 ─────────────────────────────────
+    // 连续失败达阈值后进入冷却期，期间不再尝试 LLM（直接走机翻链）：
+    // 离线/端点故障时避免每段翻译都先等满 10s 连接超时才回退
+    @Volatile
+    private var llmConsecutiveFailures = 0
+
+    @Volatile
+    private var llmCooldownUntil = 0L
+
+    private fun llmCircuitOpen(): Boolean = SystemClock.elapsedRealtime() < llmCooldownUntil
+
+    /** 带熔断的 LLM 翻译尝试：成功/失败都维护熔断计数，失败返回 null 由调用方回退机翻。 */
+    private suspend fun tryLlmTranslate(text: String, sourceLang: String, targetLang: String): String? {
+        if (llmCircuitOpen()) return null
+        val config = readLlmConfig(checkEnabled = true) ?: return null
+        val result = llmTranslator.translate(text, sourceLang, targetLang, config)
+        if (result == null) {
+            llmConsecutiveFailures++
+            if (llmConsecutiveFailures >= LLM_FAILURE_THRESHOLD) {
+                llmCooldownUntil = SystemClock.elapsedRealtime() + LLM_COOLDOWN_MS
+                llmConsecutiveFailures = 0
+                android.util.Log.w(
+                    "TranslationHelper",
+                    "LLM failed $LLM_FAILURE_THRESHOLD times in a row, cooldown ${LLM_COOLDOWN_MS}ms",
+                )
+            }
+        } else {
+            llmConsecutiveFailures = 0
+        }
+        return result
+    }
+
+    /**
+     * 设置页"测试翻译"：无视开关，直接以当前 Key/端点/模型送翻一句样例，
+     * 用于配置期校验（非 null 即 Key 可用）。不走任何缓存与回退链。
+     */
+    suspend fun testLlmTranslation(
+        sample: String = "The old man sat by the harbor, watching the boats drift home as the sun melted into the sea.",
+    ): String? {
+        val config = readLlmConfig(checkEnabled = false) ?: return null
+        return llmTranslator.translate(sample, "en", "zh", config)
+    }
+
+    /**
+     * 译文 Room 缓存键分层：LLM 译文与机翻译文分开缓存。
+     * 旧书在开启 AI 翻译后重新打开时读 "#llm" 键（空），触发整本重翻，
+     * 不会一直展示启用前缓存的机械译文；关闭 AI 翻译则回到原键的机翻缓存。
+     */
+    suspend fun effectiveCacheLangPair(langPair: String): String =
+        if (llmConfigIfEnabled() != null) "$langPair#llm" else langPair
 
     // ── 懒加载初始化（线程安全）─────────────────────
     private suspend fun ensureInitialized() {
@@ -213,17 +294,64 @@ class TranslationHelper @Inject constructor(
         sourceLang: String,
         targetLang: String,
     ): String? {
-        // 默认方向（EN→ZH）：保留既有快路径（本地词典优先，少消耗 ML Kit）
+        // 默认方向（EN→ZH）：单词级输入先查本地词典——词典释义比任何机器
+        // 翻译都更适合查词场景，且零成本零延迟
+        if (sourceLang.equals("en", ignoreCase = true) && targetLang.equals("zh", ignoreCase = true) &&
+            text.length <= 20 && !text.contains(' ')
+        ) {
+            lookupLocalDict(text)?.let { return it }
+        }
+        // AI 翻译（LLM）优先：已配置时整句/整段带上下文成文，译文质量
+        // 显著优于下方机翻链；失败（网络/配额/Key 无效）回退机翻，不静默丢
+        tryLlmTranslate(text, sourceLang, targetLang)?.let { return it }
         if (sourceLang.equals("en", ignoreCase = true) && targetLang.equals("zh", ignoreCase = true)) {
-            // issue 8.7：单词级输入（≤20 字符且无空格）先查本地词典，命中即返回，
-            // 不消耗 ML Kit 配额/不联网；只有本地未命中才走 ML Kit 翻译
-            if (text.length <= 20 && !text.contains(' ')) {
-                lookupLocalDict(text)?.let { return it }
-            }
             ensureInitialized()  // 首次触发懒加载
             return translateViaMlKit(text)
         }
         return translateViaPair(text, sourceLang, targetLang)
+    }
+
+    /**
+     * 段落级翻译（全文翻译/分栏/回译视图的入口）：
+     * - LLM 可用：整段一次送翻——跨句上下文完整，代词衔接/语气连贯，
+     *   这是"文学化"与"逐句机翻拼接"的本质差距；
+     * - LLM 不可用：按句末标点切句逐句机翻再拼接（规避 ML Kit 长输入
+     *   截断与 4000 字符上限截尾），与 ReaderViewModel 旧行为一致。
+     * 结果走内存 LRU（"¶|" 前缀与句级缓存隔离）。
+     */
+    suspend fun translateParagraph(
+        paragraph: String,
+        sourceLang: String = "en",
+        targetLang: String = "zh",
+    ): String? {
+        if (paragraph.isBlank()) return null
+        if (sourceLang.equals(targetLang, ignoreCase = true)) return paragraph
+        val key = "¶|" + cacheKey(paragraph, sourceLang, targetLang)
+        memoryCache[key]?.let { return it }
+        val result = tryLlmTranslate(paragraph, sourceLang, targetLang)
+            ?: translateParagraphSentenceBySentence(paragraph, sourceLang, targetLang)
+        if (!result.isNullOrBlank()) memoryCache[key] = result
+        return result
+    }
+
+    /** 机翻兜底：逐句翻译拼接成段译文；任一句失败整段按失败处理（不缓存残缺）。 */
+    private suspend fun translateParagraphSentenceBySentence(
+        paragraph: String,
+        sourceLang: String,
+        targetLang: String,
+    ): String? {
+        val sentences = paragraph.split(SENTENCE_BOUNDARY_CJK)
+            .flatMap { it.split(SENTENCE_BOUNDARY) }
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+        if (sentences.isEmpty()) return null
+        val parts = ArrayList<String>(sentences.size)
+        for (sentence in sentences) {
+            val translated = translate(sentence.take(TRANSLATION_CHAR_LIMIT), sourceLang, targetLang)
+            if (translated.isNullOrBlank()) return null
+            parts.add(translated.trim())
+        }
+        return parts.joinToString("")
     }
 
     /**
@@ -469,6 +597,10 @@ class TranslationHelper @Inject constructor(
         // 初始化失败后的重试窗口（issue 8.2）
         const val INIT_RETRY_WINDOW_MS = 60_000L
 
+        // LLM 熔断：连续失败阈值与冷却时长（离线快速回退机翻）
+        const val LLM_FAILURE_THRESHOLD = 3
+        const val LLM_COOLDOWN_MS = 60_000L
+
         // 内存 LRU 缓存上限：段落级译文体量较大，512 条足够覆盖
         // 整本中小型书籍 + 常用句子/单词，超出按访问顺序驱逐
         const val MEMORY_CACHE_MAX_ENTRIES = 512
@@ -476,6 +608,13 @@ class TranslationHelper @Inject constructor(
         // 整书翻译并发上限：旧实现 200 段一次性 async 同时压 ML Kit
         //（各自还可能等模型就绪），限流后吞吐更高也更稳
         const val PARAGRAPH_CONCURRENCY = 6
+
+        // 句子边界（ASCII）：句末标点 + 空白 + 大写字母/引号/左括号
+        //（与 ReaderViewModel.splitSentencesCompat 同规则）
+        val SENTENCE_BOUNDARY = Regex("(?<=[.!?])\\s+(?=[A-Z\"\\(])")
+
+        // 句子边界（CJK）：全角句点 。！？；（允许尾随闭引号/括号）
+        val SENTENCE_BOUNDARY_CJK = Regex("(?<=[。！？；][”’」』]?)")
 
         // 本地词典查词的归一化正则（查词热路径预编译）
         val NON_ALPHA_REGEX = Regex("[^a-z]")

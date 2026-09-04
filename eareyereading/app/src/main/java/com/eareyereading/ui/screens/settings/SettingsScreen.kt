@@ -43,6 +43,12 @@ import java.io.File
 import java.util.*
 import javax.inject.Inject
 
+// ── AI 翻译服务商预设（OpenAI 兼容端点）──
+private const val LLM_PRESET_GLM_BASE = "https://open.bigmodel.cn/api/paas/v4"
+private const val LLM_PRESET_GLM_MODEL = "glm-4-flash"
+private const val LLM_PRESET_DEEPSEEK_BASE = "https://api.deepseek.com/v1"
+private const val LLM_PRESET_DEEPSEEK_MODEL = "deepseek-chat"
+
 data class SettingsUiState(
     val streakDays: Int = 0,
     val totalWords: Int = 0,
@@ -69,6 +75,21 @@ data class SettingsUiState(
     // 防止 progress 置空后 UI 翻回未下载态诱导并发下载
     val embeddedInitializing: Boolean = false,
     val embeddedReady: Boolean = false,         // 引擎已加载就绪
+    // ── AI 翻译（LLM 通道）──
+    val llmTranslateEnabled: Boolean = false,
+    val llmApiKey: String = "",
+    val llmBaseUrl: String = "",
+    val llmModel: String = "",
+    /** "测试翻译"进行中（防止连点并发请求） */
+    val llmTesting: Boolean = false,
+)
+
+/** AI 翻译配置快照（combine 中转，避免 Any 装箱后强转）。 */
+private data class LlmSettingsSnapshot(
+    val enabled: Boolean,
+    val apiKey: String,
+    val baseUrl: String,
+    val model: String,
 )
 
 @HiltViewModel
@@ -81,6 +102,7 @@ class SettingsViewModel @Inject constructor(
     private val embeddedTts: EmbeddedTtsEngine,
     private val ttsHelper: TtsHelper,
     private val notificationService: NotificationService,
+    private val translationHelper: com.eareyereading.util.TranslationHelper,
     @ApplicationContext private val context: Context,
 ) : ViewModel() {
 
@@ -143,6 +165,33 @@ class SettingsViewModel @Inject constructor(
                 throw e
             } catch (e: Exception) {
                 android.util.Log.e("SettingsViewModel", "download complete pref collect failed", e)
+            }
+        }
+
+        // AI 翻译（LLM 通道）配置：四项合成一个流，collect 一处更新
+        viewModelScope.launch {
+            try {
+                combine(
+                    settingsRepository.getLlmTranslateEnabled(),
+                    settingsRepository.getLlmApiKey(),
+                    settingsRepository.getLlmBaseUrl(),
+                    settingsRepository.getLlmModel(),
+                ) { enabled, apiKey, baseUrl, model ->
+                    LlmSettingsSnapshot(enabled, apiKey, baseUrl, model)
+                }.collect { s ->
+                    _uiState.update {
+                        it.copy(
+                            llmTranslateEnabled = s.enabled,
+                            llmApiKey = s.apiKey,
+                            llmBaseUrl = s.baseUrl,
+                            llmModel = s.model,
+                        )
+                    }
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                android.util.Log.e("SettingsViewModel", "llm settings collect failed", e)
             }
         }
 
@@ -414,6 +463,64 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             settingsRepository.setNotificationDownloadComplete(enabled)
             notificationService.rebuildTtsCompleteChannel(enabled)
+        }
+    }
+
+    // ── AI 翻译（LLM 通道）配置 ─────────────────────
+
+    fun setLlmTranslateEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            settingsRepository.setLlmTranslateEnabled(enabled)
+        }
+    }
+
+    fun setLlmApiKey(apiKey: String) {
+        viewModelScope.launch {
+            settingsRepository.setLlmApiKey(apiKey)
+        }
+    }
+
+    fun setLlmBaseUrl(baseUrl: String) {
+        viewModelScope.launch {
+            settingsRepository.setLlmBaseUrl(baseUrl)
+        }
+    }
+
+    fun setLlmModel(model: String) {
+        viewModelScope.launch {
+            settingsRepository.setLlmModel(model)
+        }
+    }
+
+    /** 应用服务商预设（端点 + 模型一键切换）。 */
+    fun applyLlmPreset(baseUrl: String, model: String) {
+        viewModelScope.launch {
+            settingsRepository.setLlmBaseUrl(baseUrl)
+            settingsRepository.setLlmModel(model)
+        }
+    }
+
+    /** 测试翻译：无视开关直接用当前 Key 送翻一句样例（配置期校验）。 */
+    fun testLlmTranslation() {
+        if (_uiState.value.llmTesting) return
+        if (_uiState.value.llmApiKey.isBlank()) {
+            showSnackbarMessage("请先配置 API Key")
+            return
+        }
+        viewModelScope.launch {
+            _uiState.update { it.copy(llmTesting = true) }
+            try {
+                val result = translationHelper.testLlmTranslation()
+                showSnackbarMessage(
+                    if (result != null) "测试成功：$result" else "测试失败：请检查 API Key、端点与网络",
+                )
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                showSnackbarMessage("测试失败: ${e.message ?: e.javaClass.simpleName}")
+            } finally {
+                _uiState.update { it.copy(llmTesting = false) }
+            }
         }
     }
 
@@ -827,6 +934,182 @@ fun SettingsScreen(
                 Spacer(modifier = Modifier.height(20.dp))
             }
 
+            // ── AI 翻译 ──────────────────────────────
+            // LLM 通道：配置 API Key 后整段带上下文文学化翻译，
+            // 未配置/请求失败时自动回退内置机翻链（ML Kit → 在线端点 → 词典）
+            item {
+                SettingsSectionTitle("AI 翻译")
+            }
+            item {
+                var showProviderDialog by remember { mutableStateOf(false) }
+                var showKeyDialog by remember { mutableStateOf(false) }
+                var showModelDialog by remember { mutableStateOf(false) }
+                var showUrlDialog by remember { mutableStateOf(false) }
+
+                val providerName = when (uiState.llmBaseUrl.removeSuffix("/")) {
+                    LLM_PRESET_GLM_BASE -> "智谱 GLM-4-Flash"
+                    LLM_PRESET_DEEPSEEK_BASE -> "DeepSeek"
+                    else -> "自定义"
+                }
+
+                SettingsListCard {
+                    SettingRowToggle(
+                        icon = Icons.Default.AutoAwesome,
+                        iconBg = PrimaryLight,
+                        iconColor = Accent,
+                        title = "AI 智能翻译",
+                        subtitle = if (uiState.llmApiKey.isNotBlank()) {
+                            "整段上下文成文，译文自然流畅（需联网）"
+                        } else {
+                            "未配置 API Key，当前使用内置机翻"
+                        },
+                        checked = uiState.llmTranslateEnabled,
+                        onCheckedChange = { enabled ->
+                            if (enabled && uiState.llmApiKey.isBlank()) {
+                                showKeyDialog = true
+                                scope.launch {
+                                    snackbarHostState.showSnackbar("先配置 API Key 再开启（GLM-4-Flash 免费）")
+                                }
+                            } else {
+                                viewModel.setLlmTranslateEnabled(enabled)
+                            }
+                        },
+                    )
+
+                    Divider(modifier = Modifier.padding(horizontal = 20.dp))
+
+                    SettingRowClickable(
+                        icon = Icons.Default.SmartToy,
+                        iconBg = PrimaryLight,
+                        iconColor = Primary,
+                        title = "服务商",
+                        subtitle = providerName,
+                        onClick = { showProviderDialog = true },
+                    )
+
+                    Divider(modifier = Modifier.padding(horizontal = 20.dp))
+
+                    SettingRowClickable(
+                        icon = Icons.Default.Key,
+                        iconBg = PrimaryLight,
+                        iconColor = Primary,
+                        title = "API Key",
+                        subtitle = if (uiState.llmApiKey.isBlank()) "未配置"
+                        else "已配置（···${uiState.llmApiKey.takeLast(4)}）",
+                        onClick = { showKeyDialog = true },
+                    )
+
+                    Divider(modifier = Modifier.padding(horizontal = 20.dp))
+
+                    SettingRowClickable(
+                        icon = Icons.Default.TextFields,
+                        iconBg = PrimaryLight,
+                        iconColor = Primary,
+                        title = "模型",
+                        subtitle = uiState.llmModel,
+                        onClick = { showModelDialog = true },
+                    )
+
+                    Divider(modifier = Modifier.padding(horizontal = 20.dp))
+
+                    SettingRowClickable(
+                        icon = Icons.Default.Link,
+                        iconBg = SurfaceSecondary,
+                        iconColor = OnSurfaceTertiary,
+                        title = "接口地址",
+                        subtitle = uiState.llmBaseUrl,
+                        onClick = { showUrlDialog = true },
+                    )
+
+                    Divider(modifier = Modifier.padding(horizontal = 20.dp))
+
+                    SettingRowClickable(
+                        icon = Icons.Default.Science,
+                        iconBg = SuccessBg,
+                        iconColor = Accent,
+                        title = if (uiState.llmTesting) "正在测试..." else "测试翻译",
+                        subtitle = "送翻一句样例，验证 Key 与端点可用",
+                        onClick = { viewModel.testLlmTranslation() },
+                    )
+                }
+                Spacer(modifier = Modifier.height(20.dp))
+
+                if (showProviderDialog) {
+                    AlertDialog(
+                        onDismissRequest = { showProviderDialog = false },
+                        title = { Text("选择服务商") },
+                        text = {
+                            Column {
+                                LlmPresetOption(
+                                    name = "智谱 GLM-4-Flash",
+                                    note = "免费额度 · 国内直连",
+                                    selected = providerName == "智谱 GLM-4-Flash",
+                                ) {
+                                    viewModel.applyLlmPreset(LLM_PRESET_GLM_BASE, LLM_PRESET_GLM_MODEL)
+                                    showProviderDialog = false
+                                }
+                                LlmPresetOption(
+                                    name = "DeepSeek",
+                                    note = "低价高质量",
+                                    selected = providerName == "DeepSeek",
+                                ) {
+                                    viewModel.applyLlmPreset(LLM_PRESET_DEEPSEEK_BASE, LLM_PRESET_DEEPSEEK_MODEL)
+                                    showProviderDialog = false
+                                }
+                                LlmPresetOption(
+                                    name = "自定义",
+                                    note = "任意 OpenAI 兼容端点，手动填地址与模型",
+                                    selected = providerName == "自定义",
+                                ) { showProviderDialog = false }
+                            }
+                        },
+                        confirmButton = {
+                            TextButton(onClick = { showProviderDialog = false }) { Text("关闭") }
+                        },
+                    )
+                }
+                if (showKeyDialog) {
+                    LlmTextFieldDialog(
+                        title = "API Key",
+                        initialValue = uiState.llmApiKey,
+                        label = "API Key",
+                        helperText = "智谱开放平台 open.bigmodel.cn「API Keys」页创建；GLM-4-Flash 免费",
+                        mask = true,
+                        onConfirm = {
+                            viewModel.setLlmApiKey(it)
+                            showKeyDialog = false
+                        },
+                        onDismiss = { showKeyDialog = false },
+                    )
+                }
+                if (showModelDialog) {
+                    LlmTextFieldDialog(
+                        title = "模型名称",
+                        initialValue = uiState.llmModel,
+                        label = "模型",
+                        helperText = "如 glm-4-flash / deepseek-chat / glm-4-air",
+                        onConfirm = {
+                            viewModel.setLlmModel(it)
+                            showModelDialog = false
+                        },
+                        onDismiss = { showModelDialog = false },
+                    )
+                }
+                if (showUrlDialog) {
+                    LlmTextFieldDialog(
+                        title = "接口地址（Base URL）",
+                        initialValue = uiState.llmBaseUrl,
+                        label = "Base URL",
+                        helperText = "OpenAI 兼容端点，实际请求 {地址}/chat/completions",
+                        onConfirm = {
+                            viewModel.setLlmBaseUrl(it)
+                            showUrlDialog = false
+                        },
+                        onDismiss = { showUrlDialog = false },
+                    )
+                }
+            }
+
             // ── 语音 ──────────────────────────────────
             // 内置 TTS（sherpa-onnx）下载/管理入口。
             // 国产手机系统 TTS 不可用时，这是唯一可用路径，必须在设置里暴露独立入口。
@@ -1193,6 +1476,81 @@ private fun ProfileCard(
             }
         }
     }
+}
+
+/** 服务商预设选项行（单选样式）。 */
+@Composable
+private fun LlmPresetOption(
+    name: String,
+    note: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .clickable(onClick = onClick)
+            .padding(vertical = 10.dp, horizontal = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        RadioButton(selected = selected, onClick = onClick)
+        Column {
+            Text(name, style = MaterialTheme.typography.bodyLarge)
+            Text(
+                note,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+/** AI 翻译配置的单字段输入弹窗（Key/模型/接口地址共用）。 */
+@Composable
+private fun LlmTextFieldDialog(
+    title: String,
+    initialValue: String,
+    label: String,
+    helperText: String = "",
+    mask: Boolean = false,
+    onConfirm: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var value by remember { mutableStateOf(initialValue) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            Column {
+                OutlinedTextField(
+                    value = value,
+                    onValueChange = { value = it },
+                    singleLine = true,
+                    label = { Text(label) },
+                    visualTransformation = if (mask) {
+                        androidx.compose.ui.text.input.PasswordVisualTransformation()
+                    } else {
+                        androidx.compose.ui.text.input.VisualTransformation.None
+                    },
+                )
+                if (helperText.isNotBlank()) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        helperText,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(value.trim()) }) { Text("保存") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("取消") }
+        },
+    )
 }
 
 @Composable

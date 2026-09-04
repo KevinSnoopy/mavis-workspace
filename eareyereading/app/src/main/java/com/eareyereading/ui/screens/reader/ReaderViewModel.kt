@@ -470,9 +470,6 @@ class ReaderViewModel @Inject constructor(
 
         private const val SETTINGS_PERSIST_DEBOUNCE_MS = 300L
 
-        // 单段翻译字符上限（与 TranslationHelper 侧一致，避免超出 ML Kit 请求限制）
-        private const val TRANSLATION_CHAR_LIMIT = 4000
-
         // 整书翻译并发上限：几百段一次性 async 同时压 ML Kit（各自还可能
         // 等模型就绪/触发下载限流），限流后吞吐更高也更稳
         private const val TRANSLATION_CONCURRENCY = 6
@@ -503,30 +500,14 @@ class ReaderViewModel @Inject constructor(
             .filter { it.isNotBlank() }
 
     /**
-     * 段落按句翻译：先按句末标点（.!?。！？；）切句，逐句过翻译器再拼接成段译文。
-     * - 整段一次翻译在 ML Kit 侧会被长输入截断/降质，超过 TRANSLATION_CHAR_LIMIT
-     *   的段落此前直接被 take() 砍掉尾巴；逐句输入天然规避两类截断；
-     * - 每句独立走 TranslationHelper 的内存 LRU——书中重复出现的句式/对白
-     *   直接命中缓存，重开翻译开关的开销显著降低；
-     * - 任一句失败则整段按失败处理（不写显示/不落缓存），与原段落级语义一致。
+     * 段落翻译入口：委托 TranslationHelper.translateParagraph——
+     * LLM 已配置时整段带上下文一次成文（文学化译文），否则按句切分
+     * 逐句机翻拼接（规避 ML Kit 长输入截断）。
      */
     private suspend fun translateParagraphBySentences(
         paragraph: String,
         sourceLang: String,
-    ): String? {
-        val sentences = splitSentencesCompat(paragraph)
-        if (sentences.isEmpty()) return null
-        val parts = ArrayList<String>(sentences.size)
-        for (sentence in sentences) {
-            val translated = translationHelper.translate(
-                sentence.take(TRANSLATION_CHAR_LIMIT),
-                sourceLang,
-            )
-            if (translated.isNullOrBlank()) return null
-            parts.add(translated.trim())
-        }
-        return parts.joinToString("")
-    }
+    ): String? = translationHelper.translateParagraph(paragraph, sourceLang)
     // 本次阅读会话的统计（用于 saveProgress/cleanup 时写入 DB）
     private var sessionCharsRead: Long = 0L
     private var lastRecordedParagraphIndex: Int = -1
@@ -765,7 +746,11 @@ class ReaderViewModel @Inject constructor(
                 // 重开书直接展示已缓存的译文，不再重跑整本翻译；翻译结果首次落地后
                 // 由 translateAllParagraphs 写入缓存表
                 val bookLang = book.language.takeIf { it.isNotBlank() } ?: "en"
-                val cachedTranslations = readingRepository.getTranslations(bookId, "$bookLang>zh")
+                // 缓存键分层（LLM/机翻分开缓存）：见 TranslationHelper.effectiveCacheLangPair
+                val cachedTranslations = readingRepository.getTranslations(
+                    bookId,
+                    translationHelper.effectiveCacheLangPair("$bookLang>zh"),
+                )
 
                 _uiState.update {
                     it.copy(
@@ -1765,8 +1750,10 @@ class ReaderViewModel @Inject constructor(
         // 新书加载之后——所有 uiState 写入与 toast 都要先核对当前书
         val myBookId = currentBookId
         val sourceLang = _uiState.value.book?.language?.takeIf { it.isNotBlank() } ?: "en"
-        val langPair = "$sourceLang>zh"
         translationJob = viewModelScope.launch {
+            // 缓存键分层（LLM/机翻分开缓存）：开启 AI 翻译后旧书的机翻缓存
+            // 不会被命中，整本按 LLM 重新翻译落库（挂起读取需在协程内）
+            val langPair = translationHelper.effectiveCacheLangPair("$sourceLang>zh")
             _uiState.update { it.copy(isTranslating = true) }
             try {
                 val paragraphs = _uiState.value.paragraphs

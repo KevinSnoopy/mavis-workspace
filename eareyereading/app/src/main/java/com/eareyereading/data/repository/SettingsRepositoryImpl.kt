@@ -39,6 +39,15 @@ class SettingsRepositoryImpl @Inject constructor(
         val READING_PAGE_MODE = booleanPreferencesKey("reading_page_mode")
         // Material You 动态取色（Android 12+ 跟随壁纸）
         val DYNAMIC_COLOR = booleanPreferencesKey("dynamic_color")
+        // ── AI 翻译（LLM 通道）配置 ──
+        val LLM_TRANSLATE_ENABLED = booleanPreferencesKey("llm_translate_enabled")
+        val LLM_API_KEY = stringPreferencesKey("llm_api_key")
+        val LLM_BASE_URL = stringPreferencesKey("llm_base_url")
+        val LLM_MODEL = stringPreferencesKey("llm_model")
+
+        /** AI 翻译默认端点/模型：智谱 GLM-4-Flash（免费额度，质量远超机翻） */
+        const val LLM_DEFAULT_BASE_URL = "https://open.bigmodel.cn/api/paas/v4"
+        const val LLM_DEFAULT_MODEL = "glm-4-flash"
     }
 
     override fun getRsvpSpeed(): Flow<Int> =
@@ -109,6 +118,18 @@ class SettingsRepositoryImpl @Inject constructor(
     override fun getDynamicColor(): Flow<Boolean> =
         dataStore.data.map { it[DYNAMIC_COLOR] ?: false }
 
+    override fun getLlmTranslateEnabled(): Flow<Boolean> =
+        dataStore.data.map { it[LLM_TRANSLATE_ENABLED] ?: false }
+
+    override fun getLlmApiKey(): Flow<String> =
+        dataStore.data.map { it[LLM_API_KEY] ?: "" }
+
+    override fun getLlmBaseUrl(): Flow<String> =
+        dataStore.data.map { it[LLM_BASE_URL] ?: LLM_DEFAULT_BASE_URL }
+
+    override fun getLlmModel(): Flow<String> =
+        dataStore.data.map { it[LLM_MODEL] ?: LLM_DEFAULT_MODEL }
+
     override suspend fun setSerifFont(enabled: Boolean) {
         dataStore.edit { it[SERIF_FONT] = enabled }
     }
@@ -119,6 +140,23 @@ class SettingsRepositoryImpl @Inject constructor(
 
     override suspend fun setDynamicColor(enabled: Boolean) {
         dataStore.edit { it[DYNAMIC_COLOR] = enabled }
+    }
+
+    override suspend fun setLlmTranslateEnabled(enabled: Boolean) {
+        dataStore.edit { it[LLM_TRANSLATE_ENABLED] = enabled }
+    }
+
+    override suspend fun setLlmApiKey(apiKey: String) {
+        dataStore.edit { it[LLM_API_KEY] = apiKey.trim() }
+    }
+
+    override suspend fun setLlmBaseUrl(baseUrl: String) {
+        val url = baseUrl.trim().removeSuffix("/")
+        dataStore.edit { it[LLM_BASE_URL] = url.ifEmpty { LLM_DEFAULT_BASE_URL } }
+    }
+
+    override suspend fun setLlmModel(model: String) {
+        dataStore.edit { it[LLM_MODEL] = model.trim().ifEmpty { LLM_DEFAULT_MODEL } }
     }
 
     override suspend fun setDarkMode(enabled: Boolean) {

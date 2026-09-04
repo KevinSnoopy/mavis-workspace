@@ -76,6 +76,16 @@ interface SettingsRepository {
     fun getReadingPageMode(): Flow<Boolean>
     /** Material You 动态取色（Android 12+ 跟随壁纸取色），默认关闭保留品牌色 */
     fun getDynamicColor(): Flow<Boolean>
+
+    // ── AI 翻译（LLM 通道）：配置后整段带上下文文学化翻译 ──
+    /** AI 翻译开关（API Key 已配置时才有实际效果） */
+    fun getLlmTranslateEnabled(): Flow<Boolean>
+    /** AI 翻译 API Key（OpenAI 兼容 Bearer Token） */
+    fun getLlmApiKey(): Flow<String>
+    /** AI 翻译接口基地址（如 https://open.bigmodel.cn/api/paas/v4） */
+    fun getLlmBaseUrl(): Flow<String>
+    /** AI 翻译模型名（如 glm-4-flash / deepseek-chat） */
+    fun getLlmModel(): Flow<String>
     suspend fun setRsvpSpeed(speed: Int)
     suspend fun setFontSize(size: Int)
     suspend fun setTheme(theme: ReadingTheme)
@@ -90,5 +100,9 @@ interface SettingsRepository {
     suspend fun setSerifFont(enabled: Boolean)
     suspend fun setReadingPageMode(enabled: Boolean)
     suspend fun setDynamicColor(enabled: Boolean)
+    suspend fun setLlmTranslateEnabled(enabled: Boolean)
+    suspend fun setLlmApiKey(apiKey: String)
+    suspend fun setLlmBaseUrl(baseUrl: String)
+    suspend fun setLlmModel(model: String)
     suspend fun clearAll()
 }
