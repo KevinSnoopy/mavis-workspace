@@ -15,10 +15,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import java.io.File
 
 /** 生成封面用的暖调渐变库：按书名哈希稳定取色，同一本书永远是同一张"伪封面"。 */
@@ -64,8 +66,17 @@ fun BookCover(
         contentAlignment = Alignment.Center,
     ) {
         if (coverPath != null) {
+            // allowHardware(false)：MIUI/HyperOS 硬件位图渲染路径原生
+            // AImageDecoder_Create 返回 "unimplemented"，导致 HWUI 上传
+            // GPU 纹理失败。软件位图绕开该路径。
+            val context = LocalContext.current
             AsyncImage(
-                model = File(coverPath),
+                model = remember(coverPath) {
+                    ImageRequest.Builder(context)
+                        .data(File(coverPath))
+                        .allowHardware(false)
+                        .build()
+                },
                 contentDescription = title,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize(),

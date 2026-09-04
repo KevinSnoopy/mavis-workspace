@@ -310,6 +310,12 @@ class BookRepositoryImpl @Inject constructor(
                     if (bytes.isEmpty()) return@forEachIndexed
                     if (decodeAndSaveImage(bytes, BookImages.localImageFile(context, bookId, index))) {
                         saved++
+                    } else {
+                        android.util.Log.w(
+                            "BookRepository",
+                            "extractBookImages: skipped index=$index entry=$entryName " +
+                                "size=${bytes.size}B — img_$index.jpg NOT created (reader will show \"图片加载失败\")",
+                        )
                     }
                 } catch (e: Exception) {
                     android.util.Log.w("BookRepository", "save image $entryName failed", e)
@@ -323,7 +329,14 @@ class BookRepositoryImpl @Inject constructor(
     private fun decodeAndSaveImage(bytes: ByteArray, outFile: File): Boolean {
         val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
         android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
-        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return false
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
+            android.util.Log.w(
+                "BookRepository",
+                "decodeAndSaveImage: invalid bounds ${bounds.outWidth}x${bounds.outHeight} " +
+                    "mime=${bounds.outMimeType} bytes=${bytes.size}B outFile=${outFile.name}",
+            )
+            return false
+        }
         var sample = 1
         var w = bounds.outWidth
         var h = bounds.outHeight
@@ -334,7 +347,15 @@ class BookRepositoryImpl @Inject constructor(
         }
         val opts = android.graphics.BitmapFactory.Options().apply { inSampleSize = sample }
         val bitmap = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
-            ?: return false
+            ?: run {
+                android.util.Log.w(
+                    "BookRepository",
+                    "decodeAndSaveImage: decodeByteArray null " +
+                        "mime=${bounds.outMimeType} ${bounds.outWidth}x${bounds.outHeight} " +
+                        "bytes=${bytes.size}B outFile=${outFile.name}",
+                )
+                return false
+            }
         return try {
             outFile.outputStream().use { out ->
                 bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, IMAGE_JPEG_QUALITY, out)

@@ -1004,12 +1004,26 @@ private fun ReaderImageBlock(
             model = ImageRequest.Builder(context)
                 .data(model)
                 .size(720)
+                // MIUI/HyperOS HWUI image decoder 原生 AImageDecoder_Create 返回
+                // "unimplemented"，硬件位图（Bitmap.Config.HARDWARE）虽解码成功但
+                // RenderThread 无法上传 GPU 纹理 → 空白/报错。allowHardware(false)
+                // 强制软件位图（ARGB_8888），绕开该原生路径。
+                .allowHardware(false)
                 .memoryCacheKey("reader_img_${bookId}_${ref.takeLast(64)}")
                 .crossfade(180)
                 .build(),
             contentDescription = "插图",
             contentScale = ContentScale.Fit,
-            onState = { imageState = it },
+            onState = { state ->
+                if (state is AsyncImagePainter.State.Error) {
+                    android.util.Log.e(
+                        "ReaderImage",
+                        "image load failed: ref=$ref model=$model",
+                        state.result.throwable,
+                    )
+                }
+                imageState = state
+            },
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(8.dp)),
