@@ -86,6 +86,20 @@ class BookImagesTest {
         assertEquals("", out)
     }
 
+    @Test
+    fun `replaceImgTagsWithMarkers drops JS lazy-load placeholder src`() {
+        // Modern sites emit <img src="undefined"> or src="#" server-side; the real
+        // URL is written by client JS into data-src. These must not become markers.
+        val html = "<img src=\"undefined\"/>" +
+            "<img src=\"null\"/>" +
+            "<img src=\"#\"/>" +
+            "<img src=\"about:blank\"/>" +
+            "<img src=\"javascript:void(0)\"/>" +
+            "<img src=\"https://cdn.example.com/real.jpg\"/>"
+        val out = BookImages.replaceImgTagsWithMarkers(html, baseUrl = "https://www.npr.org/2026/09/04/story")
+        assertEquals("\n\n[[IMG:https://cdn.example.com/real.jpg]]\n\n", out)
+    }
+
     // ── EpubParser：<img> → 标记 + zip 条目登记 ─────────────
 
     private fun writeEpub(file: File, entries: Map<String, String>) {

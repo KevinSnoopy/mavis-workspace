@@ -42,6 +42,17 @@ object BookImages {
         RegexOption.IGNORE_CASE,
     )
 
+    /**
+     * JavaScript 懒加载残留的占位 src：服务端 HTML 里 `<img src="undefined">`、
+     * `src="#"` 等——真实 URL 由客户端 JS 写入 data-src，服务端抓取时拿不到。
+     * 这些值经 URI.resolve 会拼出假 URL（如 …/article/undefined），Coil 拉回
+     * HTML 错误页 → BitmapFactory 返回 null → "图片加载失败"。
+     */
+    private val IMG_PLACEHOLDER_SRC = setOf(
+        "", "undefined", "null", "[object object]",
+        "about:blank", "#", "javascript:void(0)", "javascript:void(0);",
+    )
+
     /** Coil 未含 svg 模块，svg 源直接跳过。 */
     private val IMG_SKIP_EXT = Regex("\\.svg(\\?|#|$)", RegexOption.IGNORE_CASE)
 
@@ -58,6 +69,7 @@ object BookImages {
             val src = m.groupValues[1].trim()
             val absolute = when {
                 src.isBlank() || src.startsWith("data:", ignoreCase = true) -> null
+                IMG_PLACEHOLDER_SRC.contains(src.lowercase()) -> null     // JS 懒加载占位 src
                 IMG_SKIP_EXT.containsMatchIn(src) -> null
                 IMG_NOISE_SRC.containsMatchIn(src) -> null
                 src.startsWith("http://") || src.startsWith("https://") -> src
