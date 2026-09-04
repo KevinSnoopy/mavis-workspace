@@ -63,11 +63,26 @@ class OnlineTranslator @Inject constructor() {
         private val BING_HOSTS = listOf("https://cn.bing.com", "https://www.bing.com")
 
         private const val ENDPOINT_COUNT = 3
+
+        /**
+         * 长文本分片上限：三端点单次请求最小有效上限是 3500（gtx/Bing），
+         * 取 3000 留余量。超过就按句子边界切分，逐片翻译后拼接
+         * （此前 3500~4000 字符的段落会被所有端点拒绝，整段翻译失败）。
+         */
+        private const val CHUNK_MAX_CHARS = 3000
+
+        /** 句子边界：句末标点 + 后续空白处切分（保留句子完整性）。 */
+        private val SENTENCE_BOUNDARY = Regex("(?<=[.!?;。！？；…])\\s+")
     }
 
-    /** 端点序号（粘性偏好的起始索引）。 */
+    /**
+     * 端点序号（粘性偏好的起始索引）。
+     * 默认 1 = Bing：gtx 在国内网络不可达，Bing（cn.bing.com）全球可达；
+     * 首批请求不必先在 gtx 上耗尽 8s 建连超时才轮换。成功后自动粘住，
+     * 失败自动轮换，初始值只影响第一批请求。
+     */
     @Volatile
-    private var preferredEndpoint = 0
+    private var preferredEndpoint = 1
 
     // ── Bing 会话配置（多请求共享，TTL 过期或 401 时单飞刷新） ──
     private val bingMutex = Mutex()
@@ -84,25 +99,72 @@ class OnlineTranslator @Inject constructor() {
     @Volatile
     private var bingConfig: BingConfig? = null
 
-    /** 入口：按粘性顺序尝试各端点，任一成功即返回译文。 */
+    /** 入口：长文本先分片再逐片翻译拼接；单片走端点轮换。 */
     suspend fun translate(text: String, sourceLang: String, targetLang: String): String? {
         val trimmed = text.trim()
         if (trimmed.isEmpty()) return null
         if (sourceLang.equals(targetLang, ignoreCase = true)) return text
         return withContext(Dispatchers.IO) {
-            withTimeoutOrNull(ENDPOINT_TIMEOUT_MS * ENDPOINT_COUNT) {
-                val start = preferredEndpoint
-                for (i in 0 until ENDPOINT_COUNT) {
-                    val idx = (start + i) % ENDPOINT_COUNT
-                    val result = tryEndpoint(idx, trimmed, sourceLang, targetLang)
-                    if (result != null) {
-                        preferredEndpoint = idx
-                        return@withTimeoutOrNull result
+            withTimeoutOrNull(ENDPOINT_TIMEOUT_MS * ENDPOINT_COUNT * chunksOf(trimmed).size.toLong()) {
+                if (trimmed.length <= CHUNK_MAX_CHARS) {
+                    translateWhole(trimmed, sourceLang, targetLang)
+                } else {
+                    // 长文本分片：任一片失败则整体失败（不缓存残缺译文，
+                    // 失败段落下次可重试）
+                    val joiner = if (targetLang.lowercase().startsWith("zh")) "" else " "
+                    val parts = mutableListOf<String>()
+                    for (chunk in chunksOf(trimmed)) {
+                        val piece = translateWhole(chunk, sourceLang, targetLang) ?: return@withTimeoutOrNull null
+                        parts.add(piece)
                     }
+                    parts.joinToString(joiner).ifEmpty { null }
                 }
-                null
             }
         }
+    }
+
+    /** 单次请求内的文本（≤ CHUNK_MAX_CHARS）按粘性顺序尝试各端点。 */
+    private suspend fun translateWhole(text: String, sourceLang: String, targetLang: String): String? {
+        val start = preferredEndpoint
+        for (i in 0 until ENDPOINT_COUNT) {
+            val idx = (start + i) % ENDPOINT_COUNT
+            val result = tryEndpoint(idx, text, sourceLang, targetLang)
+            if (result != null) {
+                preferredEndpoint = idx
+                return result
+            }
+        }
+        return null
+    }
+
+    /** 按句子边界把长文本切成 ≤ [CHUNK_MAX_CHARS] 的片段；无句读的硬切（internal 供单测）。 */
+    internal fun chunksOf(text: String): List<String> {
+        if (text.length <= CHUNK_MAX_CHARS) return listOf(text)
+        val chunks = mutableListOf<String>()
+        val sb = StringBuilder()
+        for (sentence in SENTENCE_BOUNDARY.split(text)) {
+            // split 消耗了句子间的空白：分片内重新补一个空格，
+            // 否则句子粘连（"one.Two"），送翻的句子边界会失真
+            val projected = sb.length + (if (sb.isEmpty()) 0 else 1) + sentence.length
+            if (sb.isNotEmpty() && projected > CHUNK_MAX_CHARS) {
+                chunks.add(sb.toString())
+                sb.setLength(0)
+            }
+            if (sentence.length > CHUNK_MAX_CHARS) {
+                // 超长无句读句：按上限硬切
+                var i = 0
+                while (i < sentence.length) {
+                    val end = minOf(i + CHUNK_MAX_CHARS, sentence.length)
+                    chunks.add(sentence.substring(i, end))
+                    i = end
+                }
+            } else {
+                if (sb.isNotEmpty()) sb.append(' ')
+                sb.append(sentence)
+            }
+        }
+        if (sb.isNotEmpty()) chunks.add(sb.toString())
+        return chunks
     }
 
     private suspend fun tryEndpoint(index: Int, text: String, sourceLang: String, targetLang: String): String? =
