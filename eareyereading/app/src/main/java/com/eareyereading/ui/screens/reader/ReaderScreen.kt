@@ -959,6 +959,10 @@ private fun ReaderImageBlock(
     modifier: Modifier = Modifier,
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
+    // 旧导入数据可能残留 JS 占位 src（resolve 后变成 …/undefined），这些
+    // URL 拉回 HTML 错误页 → BitmapFactory null → "图片加载失败"。
+    // 渲染期兜底跳过，不渲染图片也不渲染标记文本。
+    if (!BookImages.isLoadableImageRef(ref)) return
     val model = remember(ref, bookId) {
         ref.toIntOrNull()
             ?.let { BookImages.localImageFile(context, bookId, it) }

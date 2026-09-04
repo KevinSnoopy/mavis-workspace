@@ -57,6 +57,27 @@ object BookImages {
     private val IMG_SKIP_EXT = Regex("\\.svg(\\?|#|$)", RegexOption.IGNORE_CASE)
 
     /**
+     * URL 路径最后一段的 JS 占位词：resolve("undefined") 后 URL 变成
+     * …/article/undefined，最后一段就是 "undefined"。用于渲染期兜底过滤
+     * 旧导入数据里残留的占位标记。
+     */
+    private val PLACEHOLDER_PATH_SEGMENTS = setOf("undefined", "null", "[object object]", "nan")
+
+    /**
+     * 标记引用是否指向一个实际可加载的图片源。
+     * 旧导入数据可能残留 JS 懒加载占位 src（resolve 后变成 …/undefined），
+     * 这些 URL 虽格式合法但拉回 HTML 错误页 → BitmapFactory 返回 null。
+     * EPUB 本地图序号始终有效；URL 检查最后一段是否是占位词。
+     */
+    fun isLoadableImageRef(ref: String): Boolean {
+        if (ref.toIntOrNull() != null) return true
+        val lastSegment = ref.substringAfterLast('/', "")
+            .substringBefore('?').substringBefore('#').lowercase()
+        if (lastSegment.isEmpty() || lastSegment in PLACEHOLDER_PATH_SEGMENTS) return false
+        return ref.startsWith("http://") || ref.startsWith("https://")
+    }
+
+    /**
      * 把 HTML 里的 `<img>` 替换为独立段落标记 `[[IMG:绝对URL]]`。
      * - 噪音图（追踪/徽章/svg/data URI）与无法解析成绝对 http(s) 的 src 直接丢弃；
      * - 相对 src 以 [baseUrl] 解析补全；

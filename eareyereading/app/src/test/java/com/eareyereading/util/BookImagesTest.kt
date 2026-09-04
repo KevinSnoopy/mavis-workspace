@@ -38,6 +38,23 @@ class BookImagesTest {
     }
 
     @Test
+    fun `isLoadableImageRef validates image references`() {
+        // EPUB 本地图序号：始终有效
+        assertTrue(BookImages.isLoadableImageRef("0"))
+        assertTrue(BookImages.isLoadableImageRef("42"))
+        // 正常 URL：有效
+        assertTrue(BookImages.isLoadableImageRef("https://cdn.example.com/photo.jpg"))
+        assertTrue(BookImages.isLoadableImageRef("http://example.com/img/abc.png?w=720"))
+        // JS 占位残留 URL（旧导入数据）：无效
+        assertFalse(BookImages.isLoadableImageRef("https://www.npr.org/2026/09/04/g-s1-141972/undefined"))
+        assertFalse(BookImages.isLoadableImageRef("https://example.com/article/null"))
+        assertFalse(BookImages.isLoadableImageRef("https://example.com/path/nan?x=1"))
+        // 非 http(s) 非 URL：无效
+        assertFalse(BookImages.isLoadableImageRef("not-a-url"))
+        assertFalse(BookImages.isLoadableImageRef(""))
+    }
+
+    @Test
     fun `inline markers are stripped from text`() {
         assertEquals("Text around.", BookImages.stripImageMarkers("Text [[IMG:0]] around."))
         assertEquals("Clean text only.", BookImages.stripImageMarkers("Clean text only."))
