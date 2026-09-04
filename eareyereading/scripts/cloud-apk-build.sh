@@ -1,9 +1,17 @@
 #!/usr/bin/env bash
 # EareyeReading 云端 APK 构建脚本
-# 用法：在 TraeWork 云端环境 install 字段里写一行 `bash eareyereading/scripts/cloud-apk-build.sh`
+# 用法：
+#   阶段 A（探测，~30s）: bash eareyereading/scripts/cloud-apk-build.sh --probe-only
+#   阶段 B（完整构建）:   bash eareyereading/scripts/cloud-apk-build.sh
 # 本脚本内部用变量拼接 URL，避免 TraeWork 输入框把 URL 字面量渲染成 Markdown 反引号包裹
 
 set -eu
+
+PROBE_ONLY=0
+if [ "${1:-}" = "--probe-only" ]; then
+    PROBE_ONLY=1
+    echo "==> [mode] PROBE-ONLY（只跑 [0]-[4]，不装 SDK、不构建）"
+fi
 
 # ---------- [0] 运行时拼接 URL（无任何完整 URL 字面量） ----------
 P='https'; P=$P'://'
@@ -47,6 +55,11 @@ echo "==> [4] disk and mem"
 df -h /
 free -h
 nproc
+
+if [ "$PROBE_ONLY" -eq 1 ]; then
+    echo "==> [probe done] 全部通过后再跑阶段 B: bash eareyereading/scripts/cloud-apk-build.sh"
+    exit 0
+fi
 
 # ---------- [5] 安装 Android SDK 34 ----------
 echo "==> [5] install Android SDK 34"
