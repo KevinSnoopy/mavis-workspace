@@ -16,6 +16,7 @@ import com.eareyereading.data.local.entity.BookEntity
 import com.eareyereading.data.local.entity.WordFrequencyEntity
 import com.eareyereading.domain.model.Book
 import com.eareyereading.domain.repository.BookRepository
+import com.eareyereading.util.BookImages
 import com.eareyereading.util.EpubParser
 import com.eareyereading.util.WordAnalyzer
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -52,6 +53,16 @@ class BookRepositoryImpl @Inject constructor(
         /** 入库时保留的词频条目上限：与 getTopFrequencies 的默认 limit 对齐，
          *  大书唯一词数可达数万，全量插入只有存储成本没有查询收益。 */
         const val TOP_FREQUENCY_WORDS = 100
+
+        /** 单张插图 zip 条目字节上限（防压缩炸弹，与封面上限同量级）。 */
+        const val MAX_IMAGE_ENTRY_BYTES = 5L * 1024 * 1024
+
+        /** 插图落盘目标边长（px）：统一降采样到该尺寸内再存 JPEG。
+         *  阅读展示允许略糊（用户确认），换取解码内存 ~≤3MB/张 + 秒级导入。 */
+        const val IMAGE_TARGET_DIM = 1000
+
+        /** 插图 JPEG 落盘质量。 */
+        const val IMAGE_JPEG_QUALITY = 75
     }
 
     override fun getAllBooks(): Flow<List<Book>> =
@@ -148,6 +159,8 @@ class BookRepositoryImpl @Inject constructor(
         var tokenCount = 0
         var cjkChars = 0
         for (paragraph in paragraphs) {
+            // 插图标记段不是正文文本：不计词频/字数
+            if (com.eareyereading.util.BookImages.isImageMarker(paragraph)) continue
             var inWord = false
             for (i in paragraph.indices) {
                 val c = paragraph[i]
@@ -204,11 +217,20 @@ class BookRepositoryImpl @Inject constructor(
             } catch (e: Exception) {
                 android.util.Log.w("BookRepository", "extract cover failed for $bookId", e)
             }
+            // EPUB 插图落盘：正文里的 [[IMG:n]] 标记 → 降采样 JPEG 文件，
+            // 阅读页按文件渲染（见 BookImages）；失败静默，不影响导入
+            try {
+                extractBookImages(bookId, book.filePath, parsedMetadata.imageEntryNames)
+            } catch (e: Exception) {
+                android.util.Log.w("BookRepository", "extract images failed for $bookId", e)
+            }
         }
 
         // 词频统计此前只有删没有写：word_frequencies 永远是空表，
         // getTopFrequencies 永远不出数据（issue 12.2）
-        val frequencies = wordAnalyzer.calculateWordFrequencies(paragraphs)
+        // 插图标记段不参与词频（否则 "IMG"/"jpg" 等标记碎片进 Top 榜）
+        val textParagraphs = paragraphs.filter { !BookImages.isImageMarker(it) }
+        val frequencies = wordAnalyzer.calculateWordFrequencies(textParagraphs)
             .entries
             .sortedByDescending { it.value }
             .take(TOP_FREQUENCY_WORDS)
@@ -250,6 +272,79 @@ class BookRepositoryImpl @Inject constructor(
         } catch (e: java.io.IOException) {
             android.util.Log.e("BookRepository", "Error reading plain text file", e)
             emptyList()
+        }
+    }
+
+    /**
+     * EPUB 插图落盘：zip 条目 → 降采样 JPEG（filesDir/book_images/<bookId>/img_n.jpg）。
+     *
+     * 性能策略（用户确认"展示可以模糊一些"）：
+     *  - 边界采样计算 inSampleSize，统一缩到 ≤[IMAGE_TARGET_DIM]px 再解码，
+     *    导入期一次重编码成 JPEG 75 —— 阅读时 Coil 解码的是小文件，
+     *    滚动加载大插图也不再有整页级位图进出内存；
+     *  - 单条目 5MB 上限（防压缩炸弹），解码/写盘失败静默跳过该图，
+     *    不阻断导入主流程。
+     */
+    private fun extractBookImages(bookId: Long, filePath: String, imageEntryNames: List<String>) {
+        if (imageEntryNames.isEmpty()) return
+        val file = File(filePath)
+        if (!file.exists() || file.length() == 0L) return
+        java.util.zip.ZipFile(file).use { zip ->
+            var saved = 0
+            imageEntryNames.forEachIndexed { index, entryName ->
+                try {
+                    val entry = zip.getEntry(entryName) ?: return@forEachIndexed
+                    if (entry.size > MAX_IMAGE_ENTRY_BYTES) return@forEachIndexed
+                    val bytes = zip.getInputStream(entry).use { input ->
+                        val out = java.io.ByteArrayOutputStream()
+                        val buf = ByteArray(8192)
+                        var total = 0L
+                        while (total <= MAX_IMAGE_ENTRY_BYTES) {
+                            val n = input.read(buf)
+                            if (n < 0) break
+                            total += n
+                            out.write(buf, 0, n)
+                        }
+                        out.toByteArray()
+                    }
+                    if (bytes.isEmpty()) return@forEachIndexed
+                    if (decodeAndSaveImage(bytes, BookImages.localImageFile(context, bookId, index))) {
+                        saved++
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.w("BookRepository", "save image $entryName failed", e)
+                }
+            }
+            android.util.Log.i("BookRepository", "extracted $saved/${imageEntryNames.size} images for book $bookId")
+        }
+    }
+
+    /** 解码 → inSampleSize 降采样 → JPEG 重编码落盘。 */
+    private fun decodeAndSaveImage(bytes: ByteArray, outFile: File): Boolean {
+        val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return false
+        var sample = 1
+        var w = bounds.outWidth
+        var h = bounds.outHeight
+        while (w / 2 >= IMAGE_TARGET_DIM || h / 2 >= IMAGE_TARGET_DIM) {
+            sample *= 2
+            w /= 2
+            h /= 2
+        }
+        val opts = android.graphics.BitmapFactory.Options().apply { inSampleSize = sample }
+        val bitmap = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
+            ?: return false
+        return try {
+            outFile.outputStream().use { out ->
+                bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, IMAGE_JPEG_QUALITY, out)
+            }
+            true
+        } catch (e: Exception) {
+            android.util.Log.w("BookRepository", "compress image failed: ${outFile.name}", e)
+            false
+        } finally {
+            bitmap.recycle()
         }
     }
 
@@ -312,6 +407,9 @@ class BookRepositoryImpl @Inject constructor(
                 } catch (e: Exception) {
                     android.util.Log.w("BookRepository", "Failed to delete cover file", e)
                 }
+
+                // 插图目录随书删除（book_images/{bookId}/，导入时提取的降采样插图）
+                BookImages.deleteBookImages(context, bookId)
             }
         }
     }

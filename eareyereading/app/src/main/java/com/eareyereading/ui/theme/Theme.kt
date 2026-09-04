@@ -83,6 +83,32 @@ private val SepiaColorScheme = LightColorScheme.copy(
     onSurface = SepiaText,
 )
 
+/**
+ * 阅读页专用：按（书内阅读主题 + 系统深色）推导整套 Material 配色。
+ * ReaderScreen 用它包一层 MaterialTheme 覆盖 App 级主题——
+ * 书内切换 DARK/SEPIA 时，弹窗/菜单/滑杆等组件颜色同步跟随，
+ * 不再出现"暗色纸面上弹出纯白对话框"的割裂。
+ */
+fun readingColorScheme(
+    readingTheme: ReadingTheme,
+    darkTheme: Boolean,
+): ColorScheme {
+    val effectiveTheme = if (darkTheme && readingTheme == ReadingTheme.LIGHT) ReadingTheme.DARK else readingTheme
+    return when (effectiveTheme) {
+        ReadingTheme.DARK -> DarkAppColorScheme
+        ReadingTheme.LIGHT -> LightColorScheme
+        ReadingTheme.SEPIA -> SepiaColorScheme
+    }
+}
+
+/**
+ * 阅读页正文的强调色（译文/高亮底/标签）：LIGHT/SEPIA 用暖棕 Primary，
+ * DARK 用更亮的赤陶 Accent——深底上 Primary(0xFF8B7355) 对比度只有
+ * ~2.4:1，译文几乎不可读。
+ */
+fun readerAccentColor(readingTheme: ReadingTheme, darkTheme: Boolean): Color =
+    if (darkTheme || readingTheme == ReadingTheme.DARK) Accent else Primary
+
 @Composable
 fun EareyeReadingTheme(
     readingTheme: ReadingTheme = ReadingTheme.LIGHT,

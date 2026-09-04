@@ -993,7 +993,8 @@ class ReaderViewModel @Inject constructor(
                 if (!_uiState.value.isAutoReading) break
 
                 val para = paragraphs[paraIdx]
-                if (para.isBlank()) {
+                // 空段/插图标记段无可读文本：推进索引与统计后跳过
+                if (para.isBlank() || BookImages.isImageMarker(para)) {
                     _uiState.update { it.copy(autoReadingParaIndex = paraIdx, currentParagraphIndex = paraIdx) }
                     recordParagraphVisit(paraIdx)  // issue 3.6
                     continue
@@ -1131,7 +1132,8 @@ class ReaderViewModel @Inject constructor(
         val paragraphs = _uiState.value.paragraphs
         val currentIdx = _uiState.value.currentParagraphIndex
         if (currentIdx < paragraphs.size) {
-            val text = paragraphs[currentIdx]
+            // 插图标记剔除后再生成（标记不是可挖空的文本）
+            val text = BookImages.stripImageMarkers(paragraphs[currentIdx])
             val clozeWords = wordAnalyzer.generateClozeText(text, ratio = CLOZE_RATIO)
             _uiState.update { it.copy(clozeWords = clozeWords, hiddenWordAnswer = null) }
         }
@@ -1141,7 +1143,8 @@ class ReaderViewModel @Inject constructor(
         val paragraphs = _uiState.value.paragraphs
         val currentIdx = _uiState.value.currentParagraphIndex
         if (currentIdx < paragraphs.size) {
-            val text = paragraphs[currentIdx]
+            // 插图标记剔除后再生成（标记不是可模糊的文本）
+            val text = BookImages.stripImageMarkers(paragraphs[currentIdx])
             val fuzzyWords = wordAnalyzer.generateFuzzyText(text, visibleRatio = FUZZY_VISIBLE_RATIO)
             _uiState.update { it.copy(fuzzyWords = fuzzyWords) }
         }
@@ -1265,6 +1268,9 @@ class ReaderViewModel @Inject constructor(
                 if (!_uiState.value.isPlaying) break
                 _uiState.update { it.copy(currentParagraphIndex = i) }
                 recordParagraphVisit(i)  // issue 3.6：速读逐段累计
+
+                // 插图标记段无文本：不驱动 TTS/句子高亮，直接滑过
+                if (BookImages.isImageMarker(paragraphs[i])) continue
 
                 // 按句切分（跟自动朗读/引擎侧用同一套切分，保证句边界一致；含中文标点）
                 val sentences = splitSentencesCompat(paragraphs[i])
@@ -1399,6 +1405,8 @@ class ReaderViewModel @Inject constructor(
 
     private fun doToggleTts() {
         val para = _uiState.value.paragraphs.getOrNull(_uiState.value.currentParagraphIndex) ?: return
+        // 插图标记段无文本可读：直接跳过，不进入 TTS 状态
+        if (BookImages.isImageMarker(para)) return
         _uiState.update { it.copy(isTtsPlaying = true) }
         ttsHelper.speak(para) {
             viewModelScope.launch {
@@ -1729,9 +1737,10 @@ class ReaderViewModel @Inject constructor(
                 if (merged.isNotEmpty() && currentBookId == myBookId) {
                     _uiState.update { it.copy(paragraphTranslations = merged.toMap()) }
                 }
-                // 需要翻译的段落：有源文、尚未缓存
+                // 需要翻译的段落：有源文、尚未缓存；插图标记段无文本不参与翻译
                 val missing = paragraphs.indices.filter { idx ->
-                    paragraphs[idx].isNotBlank() && !merged.containsKey(idx)
+                    paragraphs[idx].isNotBlank() && !merged.containsKey(idx) &&
+                        !BookImages.isImageMarker(paragraphs[idx])
                 }
                 if (missing.isNotEmpty()) {
                     // 逐段翻译 · 预翻译优先：从当前阅读位置向两侧扩散排序，
@@ -1983,7 +1992,8 @@ class ReaderViewModel @Inject constructor(
 
     private fun getCurrentParagraphWords(): List<String> {
         val para = _uiState.value.paragraphs.getOrNull(_uiState.value.currentParagraphIndex) ?: return emptyList()
-        return wordAnalyzer.extractWords(para)
+        // 插图标记段无词可读（RSVP 不闪 "[[IMG" 碎片）
+        return wordAnalyzer.extractWords(BookImages.stripImageMarkers(para))
     }
 
     /**
@@ -2228,7 +2238,8 @@ class ReaderViewModel @Inject constructor(
     // ── 听写练习 ─────────────────────────────
     fun startDictation(paragraphIndex: Int) {
         val para = _uiState.value.paragraphs.getOrNull(paragraphIndex) ?: return
-        val allWords = wordAnalyzer.extractWords(para)
+        // 插图标记不是可听写文本，剔除后再取词
+        val allWords = wordAnalyzer.extractWords(BookImages.stripImageMarkers(para))
         if (allWords.isEmpty()) return
         // 采样要听写的词（去重）后，复用 generateClozeText 生成**带分隔符**的
         // token 流：旧实现只放纯单词 token，渲染出来所有词连成一串没法读。

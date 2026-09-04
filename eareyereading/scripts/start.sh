@@ -46,6 +46,24 @@ echo "JAVA_HOME=$JAVA_HOME"
 which mise || true
 mise root 2>/dev/null || true
 
+# ---------- [1.5] 钉住 JDK 17（Gradle 8.2 / AGP 无法运行在 JDK 25 上） ----------
+# 全局 mise 默认 JDK 25 时 Gradle 8.2 直接以 "What went wrong: 25.0.2" 失败；
+# 项目 mise.toml 钉 17，这里显式切换（mise where 优先，常见路径兜底）
+JDK17=$(mise where java@17 2>/dev/null || true)
+if [ -z "$JDK17" ]; then
+    for j in /root/.local/share/mise/installs/java/17* /usr/lib/jvm/*17*; do
+        [ -x "$j/bin/java" ] && JDK17="$j" && break
+    done
+fi
+if [ -n "$JDK17" ] && [ -x "$JDK17/bin/java" ]; then
+    export JAVA_HOME="$JDK17"
+    export PATH="$JAVA_HOME/bin:$PATH"
+    echo "JAVA_HOME pinned to $JDK17"
+    java -version
+else
+    echo "WARN: JDK 17 not found, falling back to ambient JAVA_HOME"
+fi
+
 # ---------- [2] gradle wrapper 版本（读项目配置） ----------
 echo "==> [2] gradle wrapper (project config)"
 cat eareyereading/gradle/wrapper/gradle-wrapper.properties 2>/dev/null || echo "no wrapper props"
@@ -68,11 +86,10 @@ echo "==> [5] install Gradle $GRADLE_VER"
 if [ -x "$GRADLE_HOME/bin/gradle" ]; then
     echo "Gradle $GRADLE_VER cached at $GRADLE_HOME, skip."
 else
-    mkdir -p /opt/gradle-dist
-    cd /opt/gradle-dist
-    curl -fsSL -o gradle.zip "$GRADLE_DIST"
-    unzip -q gradle.zip
-    rm -f gradle.zip
+    rm -rf "$GRADLE_HOME"
+    curl -fsSL -o /tmp/gradle.zip "$GRADLE_DIST"
+    unzip -oq /tmp/gradle.zip -d /opt
+    rm -f /tmp/gradle.zip
     echo "Gradle $GRADLE_VER installed at $GRADLE_HOME"
 fi
 export PATH="$GRADLE_HOME/bin:$PATH"

@@ -43,14 +43,31 @@ class ArticleParser @Inject constructor() {
 
         // 性能：三种噪音剔除（issue 7.2 配对块 / 按 class 的容器 / 残标签）合并为
         // 单趟扫描。回溯引用改用命名组——组合后匿名组号会漂移，\1 会指错组
+        // 注意：figure 容器不整块删除（其内的 <img> 已被替换成 [[IMG:]] 标记，
+        // 整块删除会把插图一起吞掉）；仅去掉 figure 开闭标签本身 + 图注文字。
         private val NOISE_ALL_BLOCK = Regex(
-            "<(?<noiseTag>aside|nav|figure|figcaption|iframe|button|form|input|select|textarea|ins)\\b[^>]*>[\\s\\S]*?</\\k<noiseTag>" +
+            "<(?<noiseTag>aside|nav|iframe|button|form|select|textarea|ins)\\b[^>]*>[\\s\\S]*?</\\k<noiseTag>" +
+                "|<figcaption\\b[^>]*>[\\s\\S]*?</figcaption>" +
                 "|<\\s*(?<classTag>div|section)\\b[^>]*class\\s*=\\s*[\"'][^\"']*\\b" +
                 "(?:share|social|newsletter|subscribe|ad-|advert|promo|related|recommend|sidebar|breadcrumb|byline|author-bio|comments)" +
                 "\\b[^\"']*[\"'][^>]*>[\\s\\S]*?</\\k<classTag>" +
-                "|<(?:aside|nav|figure|figcaption|iframe|button|form|input|select|textarea|ins)\\b[^>]*/?>",
+                "|<(?:aside|nav|figcaption|iframe|button|form|input|select|textarea|ins)\\b[^>]*/?>",
+        )
+
+        // ── 插图提取：整段 <img> 标签（src 属性顺序无关）──
+        private val IMG_TAG_FULL = Regex(
+            "<img\\b[^>]*\\bsrc\\s*=\\s*[\"']([^\"']+)[\"'][^>]*>",
             RegexOption.IGNORE_CASE,
         )
+
+        /** 明显的装饰/追踪类小图：命中即丢弃（1x1 像素、分享徽章等）。 */
+        private val IMG_NOISE_SRC = Regex(
+            "(1x1|pixel|spacer|blank\\.gif|tracking|analytics|beacon|badge|icon|logo|avatar|emoji|smiley|sprite)",
+            RegexOption.IGNORE_CASE,
+        )
+
+        /** Coil 未含 svg 模块，svg 源直接跳过。 */
+        private val IMG_SKIP_EXT = Regex("\\.svg(\\?|#|$)", RegexOption.IGNORE_CASE)
 
         // ── 每次调用重新编译的正则全部提升为常量（文章解析路径高频）──
         private val EXCLUDE_LINK_PATTERN = Regex(
@@ -147,7 +164,7 @@ class ArticleParser @Inject constructor() {
                     return@withContext null
                 }
                 val html = readHtmlCapped(BufferedReader(InputStreamReader(conn.inputStream, charset)))
-                extractArticle(html)
+                extractArticle(html, urlStr)
             } finally {
                 conn.disconnect()
             }
@@ -314,12 +331,16 @@ class ArticleParser @Inject constructor() {
 
     /**
      * 从 HTML 中提取文章内容（internal 供单元测试直接覆盖，无需走网络）
+     * @param baseUrl 文章页 URL：插图 src 相对路径解析基准（测试直调时可空）
      */
-    internal fun extractArticle(html: String): ArticleResult {
+    internal fun extractArticle(html: String, baseUrl: String? = null): ArticleResult {
+        // 插图先行：<img> → [[IMG:绝对 URL]] 标记（必须在噪音剔除前替换，
+        // 且 figure 容器不再整块删除，否则正文插图会被一并清掉）
+        val withImages = replaceImgWithMarkers(html, baseUrl)
         // 清理脚本和样式 + issue 7.2 噪音元素（侧栏/导航/图注/iframe/按钮/
         // 表单/按 class 名的分享·订阅·广告·相关推荐容器）——策略命中容器前
         // 先剔除，否则 cleanText 的标签替换会把它们留进正文
-        val text = html
+        val text = withImages
             .replace(STRIP_ALL_BLOCK, "")
             .replace(NOISE_ALL_BLOCK, " ")
 
@@ -327,10 +348,41 @@ class ArticleParser @Inject constructor() {
         val title = extractTitle(text)
 
         // 提取正文（多种策略）
-        val content = extractContent(text)
+        val content = BookImages.expandInlineMarkers(extractContent(text))
 
         return ArticleResult(title = title, paragraphs = content)
     }
+
+    /** <img> → 段落级 [[IMG:绝对URL]] 标记；噪音图（追踪/徽章/svg/data URI）直接丢弃。 */
+    private fun replaceImgWithMarkers(html: String, baseUrl: String?): String =
+        html.replace(IMG_TAG_FULL) { m ->
+            val src = m.groupValues[1].trim()
+            when {
+                src.isBlank() || src.startsWith("data:", ignoreCase = true) -> ""
+                IMG_SKIP_EXT.containsMatchIn(src) -> ""
+                IMG_NOISE_SRC.containsMatchIn(src) -> ""
+                else -> {
+                    val absolute = if (src.startsWith("http://") || src.startsWith("https://")) {
+                        src
+                    } else if (baseUrl != null) {
+                        try {
+                            java.net.URI(baseUrl).resolve(src).toString()
+                        } catch (_: Exception) {
+                            null
+                        }
+                    } else {
+                        null
+                    }
+                    if (absolute != null &&
+                        (absolute.startsWith("http://") || absolute.startsWith("https://"))
+                    ) {
+                        "\n\n[[IMG:$absolute]]\n\n"
+                    } else {
+                        ""
+                    }
+                }
+            }
+        }
 
     /**
      * 提取文章标题
@@ -402,9 +454,13 @@ class ArticleParser @Inject constructor() {
             html.replace(BLOCK_END_TAG, "\n\n").replace(HTML_TAG, " ")
         )
         // 段落级正则预编译：\s+ 原写在 map lambda 内，每个段落编译一次
+        // 图片标记段不受长度/字母过滤约束（URL 就是它的内容）
         val paragraphs = text.split(PARAGRAPH_SPLIT)
             .map { it.replace(WHITESPACE, " ").trim() }
-            .filter { it.isNotBlank() && it.length > 20 && it.any { c -> c.isLetter() } }
+            .filter {
+                (it.isNotBlank() && it.length > 20 && it.any { c -> c.isLetter() }) ||
+                    BookImages.isImageMarker(it)
+            }
         if (paragraphs.isNotEmpty()) return paragraphs
 
         // 回退：页面没有块级标签（纯句子流）时，保持旧的"每 4 句一段"合并，

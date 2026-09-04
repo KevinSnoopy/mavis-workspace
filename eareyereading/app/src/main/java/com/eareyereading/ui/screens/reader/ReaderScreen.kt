@@ -33,6 +33,7 @@ import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
@@ -55,10 +56,13 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import com.eareyereading.domain.model.ReadingMode
 import com.eareyereading.domain.model.ReadingTheme
 import com.eareyereading.ui.components.shimmer
 import com.eareyereading.ui.theme.*
+import com.eareyereading.util.BookImages
 import com.eareyereading.util.ClozeWord
 import com.eareyereading.util.CollinsClassifier
 import com.eareyereading.util.PosTagger
@@ -73,6 +77,14 @@ import com.eareyereading.util.CollinsClassifier.WordLevel
 private val LocalReaderFontFamily = androidx.compose.runtime.staticCompositionLocalOf {
     FontFamily.Default
 }
+
+/**
+ * 阅读器正文强调色（译文/高亮底/模式标签）：随（书内主题 + 系统深色）变化——
+ * 深色下用更亮的赤陶 Accent，浅色/护眼用暖棕 Primary。
+ * 深层视图（ReaderParagraphBlock/SplitReadingView 等）经
+ * `LocalReaderAccent.current` 消费，免逐层透传参数。
+ */
+private val LocalReaderAccent = androidx.compose.runtime.staticCompositionLocalOf { Primary }
 
 /**
  * 段落正文样式统一入口：字号 + 行高（倍数）+ 可选衬线。
@@ -134,15 +146,32 @@ fun ReaderScreen(
         }
     }
 
+    // 书内阅读主题 + 系统深色共同决定整套 Material 配色：
+    // 弹窗/菜单/滑杆等组件颜色与纸面一致（此前只换正文背景，
+    // 暗色纸面上会弹出纯白对话框）
+    val systemDark = androidx.compose.foundation.isSystemInDarkTheme()
+    val readerScheme = readingColorScheme(uiState.theme, systemDark)
+    val accentColor = readerAccentColor(uiState.theme, systemDark)
+
     val backgroundColor = when (uiState.theme) {
-        ReadingTheme.LIGHT -> MaterialTheme.colorScheme.background
+        ReadingTheme.LIGHT -> readerScheme.background
         ReadingTheme.DARK -> DarkBg
         ReadingTheme.SEPIA -> SepiaBg
     }
     val textColor = when (uiState.theme) {
-        ReadingTheme.LIGHT -> MaterialTheme.colorScheme.onBackground
+        ReadingTheme.LIGHT -> readerScheme.onBackground
         ReadingTheme.DARK -> DarkText
         ReadingTheme.SEPIA -> SepiaText
+    }
+
+    // 状态栏与阅读纸面同色：App 级主题的 SideEffect 只看全局设置，
+    // 书内切 DARK/SEPIA 时状态栏会残留全局背景色，顶部一条色带割裂
+    val statusBarView = androidx.compose.ui.platform.LocalView.current
+    androidx.compose.runtime.SideEffect {
+        val window = (statusBarView.context as? android.app.Activity)?.window ?: return@SideEffect
+        window.statusBarColor = backgroundColor.toArgb()
+        androidx.core.view.WindowCompat.getInsetsController(window, statusBarView)
+            .isAppearanceLightStatusBars = !systemDark && uiState.theme != ReadingTheme.DARK
     }
 
     // issue 3.8：阅读沉浸态。点正文空白切换显隐；滚动短暂显示后自动收起；
@@ -224,9 +253,15 @@ fun ReaderScreen(
         }
     }
 
-    // 衬线字体注入：uiState.serifFont 驱动全阅读器正文字形
+    // 衬线字体 + 主题强调色注入：uiState.serifFont 驱动全阅读器正文字形，
+    // MaterialTheme 覆盖让弹窗/菜单/滑杆等组件配色跟随书内阅读主题
     androidx.compose.runtime.CompositionLocalProvider(
         LocalReaderFontFamily provides if (uiState.serifFont) FontFamily.Serif else FontFamily.Default,
+        LocalReaderAccent provides accentColor,
+    ) {
+    MaterialTheme(
+        colorScheme = readerScheme,
+        typography = MaterialTheme.typography,
     ) {
     Scaffold(
         // issue 3.8（地基）：正文占满物理边缘，不再被根 Scaffold 额外预留系统栏。
@@ -279,13 +314,13 @@ fun ReaderScreen(
                             CircularProgressIndicator(
                                 modifier = Modifier.size(24.dp),
                                 strokeWidth = 2.dp,
-                                color = Primary,
+                                color = LocalReaderAccent.current,
                             )
                         } else {
                             Icon(
                                 if (uiState.showTranslation) Icons.Default.Translate else Icons.Outlined.Translate,
                                 "翻译",
-                                tint = if (uiState.showTranslation) Primary else LocalContentColor.current,
+                                tint = if (uiState.showTranslation) LocalReaderAccent.current else LocalContentColor.current,
                             )
                         }
                     }
@@ -461,6 +496,7 @@ fun ReaderScreen(
                             bookTitle = uiState.book?.title ?: "",
                             onCenterTap = { chromeVisible = !chromeVisible },
                             classifier = viewModel.wordClassifier,
+                            bookId = uiState.book?.id ?: 0L,
                         )
                     } else {
                         NormalReadingView(
@@ -488,6 +524,7 @@ fun ReaderScreen(
                             },
                             onRemoveHighlight = viewModel::removeHighlight,
                             classifier = viewModel.wordClassifier,
+                            bookId = uiState.book?.id ?: 0L,
                         )
                     }
                     ReadingMode.RSVP -> RsvpReadingView(
@@ -544,6 +581,7 @@ fun ReaderScreen(
                         onVisibleParagraphChanged = viewModel::onVisibleParagraphChanged,
                         isTranslating = uiState.isTranslating,
                         onRetryTranslate = viewModel::retryTranslation,
+                        bookId = uiState.book?.id ?: 0L,
                     )
                     ReadingMode.BACK_TRANSLATION -> BackTranslationView(
                         paragraphs = uiState.paragraphs,
@@ -551,11 +589,12 @@ fun ReaderScreen(
                         currentIndex = uiState.currentParagraphIndex,
                         fontSize = uiState.fontSize,
                         textColor = textColor,
-                        primaryColor = Primary,
+                        primaryColor = accentColor,
                         translationAlpha = uiState.translationAlpha,
                         isTranslating = uiState.isTranslating,
                         onRetryTranslate = viewModel::retryTranslation,
                         onVisibleParagraphChanged = viewModel::onVisibleParagraphChanged,
+                        bookId = uiState.book?.id ?: 0L,
                     )
                     ReadingMode.POS_ANALYSIS -> PosAnalysisView(
                         paragraphs = uiState.paragraphs,
@@ -569,8 +608,9 @@ fun ReaderScreen(
                 }
             }
         }
-    }
-    } // 关闭 CompositionLocalProvider(衬线字体)
+    } // 关闭 Scaffold
+    } // 关闭 MaterialTheme(阅读主题配色)
+    } // 关闭 CompositionLocalProvider(衬线字体/强调色)
 
     // 模式选择弹窗
     if (uiState.showModeSelector) {
@@ -813,6 +853,8 @@ fun NormalReadingView(
     // VM 注入的 CollinsClassifier 单例：词表全 App 一份，避免视图内手动
     // new 造成双份内存 + 组合期构建卡首帧
     classifier: CollinsClassifier,
+    // 插图渲染用：[[IMG:n]] 标记解析到本书的落盘图片目录
+    bookId: Long = 0L,
 ) {
     // LazyColumn：只布局可见段落。原实现整书 eager Column + 每次重组全文重排版，
     // 播放时每个句子 tick 都是 O(book) 开销。
@@ -867,8 +909,51 @@ fun NormalReadingView(
                 onWordClick = onWordClick,
                 onSentenceDoubleTap = onSentenceDoubleTap,
                 classifier = classifier,
+                bookId = bookId,
             )
         }
+    }
+}
+
+/**
+ * 段落插图渲染：`[[IMG:n]]`（EPUB 落盘降采样 JPEG）/ `[[IMG:url]]`（文章在线图）。
+ *
+ * 性能（用户确认"可以展示模糊一些"）：
+ *  - Coil ImageRequest 固定 size(720)——按需解码 720px 宽的缩略位图，
+ *    原图尺寸再大也不在阅读滚动路径上进出内存；
+ *  - EPUB 图导入期已重编码为小 JPEG，文章图按 720 解码 + memoryCache，
+ *    单图解码内存 ~≤2MB，翻页/滚动时 Coil 缓存直接命中。
+ */
+@Composable
+private fun ReaderImageBlock(
+    ref: String,
+    bookId: Long,
+    modifier: Modifier = Modifier,
+) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val model = remember(ref, bookId) {
+        ref.toIntOrNull()
+            ?.let { BookImages.localImageFile(context, bookId, it) }
+            ?: ref
+    }
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        AsyncImage(
+            model = ImageRequest.Builder(context)
+                .data(model)
+                .size(720)
+                .memoryCacheKey("reader_img_${bookId}_${ref.takeLast(64)}")
+                .build(),
+            contentDescription = "插图",
+            contentScale = ContentScale.Fit,
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(8.dp)),
+        )
     }
 }
 
@@ -877,6 +962,7 @@ fun NormalReadingView(
  * 生词高亮 / 用户高亮四分支）+ 译文。从滚动视图的 LazyColumn item 抽出，
  * 供滚动（NormalReadingView）与左右翻页（PagedReadingView）两视图共用，
  * 保证两种阅读方式的段落渲染完全一致。
+ * 插图标记段（[[IMG:n]]）直接渲染为图片，不走文本分支。
  */
 @Composable
 private fun ReaderParagraphBlock(
@@ -901,7 +987,14 @@ private fun ReaderParagraphBlock(
     onWordClick: (String) -> Unit,
     onSentenceDoubleTap: (String) -> Unit,
     classifier: CollinsClassifier,
+    bookId: Long = 0L,
 ) {
+    // 插图段：整块渲染为图片（书签标记照常保留），不参与词色/高亮/译文
+    val imageRef = BookImages.markerRef(para)
+    if (imageRef != null) {
+        ReaderImageBlock(ref = imageRef, bookId = bookId)
+        return
+    }
     // 朗读中的当前段落：背景直接加在内容容器上。
     // 原实现额外放了一个包 Text("") 的 Surface —— 零高度，背景永远不可见
     Column(
@@ -910,7 +1003,7 @@ private fun ReaderParagraphBlock(
             .then(
                 if (isCurrent && isAutoReading) {
                     Modifier
-                        .background(Primary.copy(alpha = 0.06f), RoundedCornerShape(8.dp))
+                        .background(LocalReaderAccent.current.copy(alpha = 0.06f), RoundedCornerShape(8.dp))
                         .padding(horizontal = 6.dp, vertical = 2.dp)
                 } else {
                     Modifier
@@ -953,7 +1046,7 @@ private fun ReaderParagraphBlock(
                     else -> 0.6f                           // 未读
                 }
                 val bgColor = if (sIdx == currentSentenceIndex)
-                    Primary.copy(alpha = 0.10f) else Color.Transparent
+                    LocalReaderAccent.current.copy(alpha = 0.10f) else Color.Transparent
 
                 Surface(
                     modifier = Modifier
@@ -1114,7 +1207,7 @@ private fun ReaderParagraphBlock(
                     .padding(vertical = 2.dp)
                     .alpha(alpha),
                 style = readerParagraphStyle(fontSize - 2, 1.5f).copy(
-                    color = Primary.copy(alpha = translationAlpha),
+                    color = LocalReaderAccent.current.copy(alpha = translationAlpha),
                 ),
             )
             // 只有实际有译文才留间距：原实现把 Spacer 放在判空之外，
@@ -1218,6 +1311,8 @@ fun PagedReadingView(
     onCenterTap: () -> Unit = {},
     // VM 注入的 CollinsClassifier 单例（与滚动视图共用，见 NormalReadingView 注释）
     classifier: CollinsClassifier,
+    // 插图渲染用：[[IMG:n]] 标记解析到本书的落盘图片目录
+    bookId: Long = 0L,
 ) {
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val density = LocalDensity.current
@@ -1233,6 +1328,9 @@ fun PagedReadingView(
         val paragraphVPadPx = with(density) { 12.dp.toPx() }    // TappableParagraphText vertical 6*2
         val bookmarkRowPx = with(density) { 25.dp.toPx() }      // 书签标记行
         val transBlockPadPx = with(density) { 20.dp.toPx() }    // 译文 4 + 2*2 + 12
+        // 插图段固定估高：720px 解码宽 × 常见屏宽 → 约 200dp 显示高 + 边距，
+        // 独占一页过浪费，给中等预算让图文同页
+        val imageBlockPx = with(density) { 220.dp.toPx() }
 
         // 分页排版：整书 Paint 估高 + 贪心装箱。放 Default 调度器：
         // 大书几百段的测量同步做在组合期会顶掉帧（字号滑杆逐像素回调时尤甚），
@@ -1262,7 +1360,12 @@ fun PagedReadingView(
                 var current = mutableListOf<Int>()
                 var used = 0
                 paragraphs.forEachIndexed { idx, para ->
-                    var h = estHeight(para, fontSizePx, 1.8f, paragraphVPadPx)
+                    // 插图标记段按固定图块高度参与分箱（无文本可测）
+                    var h = if (com.eareyereading.util.BookImages.isImageMarker(para)) {
+                        imageBlockPx.toInt()
+                    } else {
+                        estHeight(para, fontSizePx, 1.8f, paragraphVPadPx)
+                    }
                     if (idx in bookmarkedParagraphs) h += bookmarkRowPx.toInt()
                     val trans = if (showTranslation) paragraphTranslations[idx] else null
                     if (!trans.isNullOrBlank()) {
@@ -1393,6 +1496,7 @@ fun PagedReadingView(
                                 onWordClick = onWordClick,
                                 onSentenceDoubleTap = onSentenceDoubleTap,
                                 classifier = classifier,
+                                bookId = bookId,
                             )
                         }
                     }
@@ -1452,12 +1556,12 @@ fun RsvpReadingView(
             // TalkBack 会把它读成"没反应的按钮"
             Surface(
                 shape = RoundedCornerShape(50),
-                color = Primary.copy(alpha = 0.1f),
+                color = LocalReaderAccent.current.copy(alpha = 0.1f),
                 modifier = Modifier.padding(top = 8.dp),
             ) {
                 Text(
                     "强度 $rsvpStrength",
-                    color = Primary,
+                    color = LocalReaderAccent.current,
                     style = MaterialTheme.typography.labelMedium,
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
                 )
@@ -1519,7 +1623,7 @@ fun SpeedReadingView(
                             .then(
                                 if (isCurrent) {
                                     Modifier
-                                        .background(Primary.copy(alpha = 0.10f), RoundedCornerShape(4.dp))
+                                        .background(LocalReaderAccent.current.copy(alpha = 0.10f), RoundedCornerShape(4.dp))
                                         .padding(horizontal = 6.dp, vertical = 4.dp)
                                 } else Modifier
                             ),
@@ -1613,12 +1717,12 @@ fun ClozeReadingView(
             Spacer(modifier = Modifier.height(16.dp))
             Card(
                 modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = Primary.copy(alpha = 0.1f)),
+                colors = CardDefaults.cardColors(containerColor = LocalReaderAccent.current.copy(alpha = 0.1f)),
             ) {
                 Text(
                     text = currentTranslation,
                     modifier = Modifier.padding(12.dp),
-                    color = Primary.copy(alpha = translationAlpha),
+                    color = LocalReaderAccent.current.copy(alpha = translationAlpha),
                     fontSize = (fontSize - 2).sp,
                 )
             }
@@ -1667,6 +1771,8 @@ fun SplitReadingView(
     onVisibleParagraphChanged: (Int) -> Unit = {},
     isTranslating: Boolean = false,
     onRetryTranslate: () -> Unit = {},
+    // 插图渲染用：[[IMG:n]] 标记解析到本书的落盘图片目录
+    bookId: Long = 0L,
 ) {
     // 单滚动容器 + 逐段并排：原实现左右两个独立滚动列，
     // 滚一边另一边不动，原文第 N 段会对上译文第 M 段。
@@ -1696,14 +1802,14 @@ fun SplitReadingView(
                 Text(
                     "原文",
                     style = MaterialTheme.typography.labelSmall,
-                    color = Primary,
+                    color = LocalReaderAccent.current,
                     fontWeight = FontWeight.Bold,
                     modifier = Modifier.weight(1f),
                 )
                 Text(
                     "译文",
                     style = MaterialTheme.typography.labelSmall,
-                    color = Primary,
+                    color = LocalReaderAccent.current,
                     fontWeight = FontWeight.Bold,
                     modifier = Modifier.weight(1f),
                 )
@@ -1718,7 +1824,7 @@ fun SplitReadingView(
                         CircularProgressIndicator(
                             modifier = Modifier.size(14.dp),
                             strokeWidth = 2.dp,
-                            color = Primary,
+                            color = LocalReaderAccent.current,
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
@@ -1742,7 +1848,7 @@ fun SplitReadingView(
                             Text(
                                 "点击重试",
                                 style = MaterialTheme.typography.bodySmall,
-                                color = Primary,
+                                color = LocalReaderAccent.current,
                             )
                         }
                     }
@@ -1756,35 +1862,41 @@ fun SplitReadingView(
         ) { index, para ->
             val alpha = if (index == currentIndex) 1f else 0.5f
             val translation = translations[index]
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                TappableParagraphText(
-                    text = AnnotatedString(para),
-                    paragraph = para,
-                    onWordClick = onWordClick,
-                    onSentenceDoubleTap = {},
-                    modifier = Modifier
-                        .weight(1f)
-                        .padding(vertical = 4.dp),
-                    style = readerParagraphStyle(fontSize).copy(
-                        color = textColor.copy(alpha = alpha),
-                    ),
-                )
-                Text(
-                    text = translation ?: "（无译文）",
-                    modifier = Modifier
-                        .weight(1f)
-                        .padding(vertical = 4.dp),
-                    style = readerParagraphStyle(fontSize).copy(
-                        color = if (translation != null) {
-                            Primary.copy(alpha = alpha * translationAlpha)
-                        } else {
-                            textColor.copy(alpha = alpha * 0.4f)
-                        },
-                    ),
-                )
+            // 插图标记段：整宽渲染插图（无文本可对照，也不参与译文列）
+            val imageRef = BookImages.markerRef(para)
+            if (imageRef != null) {
+                ReaderImageBlock(ref = imageRef, bookId = bookId)
+            } else {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    TappableParagraphText(
+                        text = AnnotatedString(para),
+                        paragraph = para,
+                        onWordClick = onWordClick,
+                        onSentenceDoubleTap = {},
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(vertical = 4.dp),
+                        style = readerParagraphStyle(fontSize).copy(
+                            color = textColor.copy(alpha = alpha),
+                        ),
+                    )
+                    Text(
+                        text = translation ?: "（无译文）",
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(vertical = 4.dp),
+                        style = readerParagraphStyle(fontSize).copy(
+                            color = if (translation != null) {
+                                LocalReaderAccent.current.copy(alpha = alpha * translationAlpha)
+                            } else {
+                                textColor.copy(alpha = alpha * 0.4f)
+                            },
+                        ),
+                    )
+                }
             }
             if (index < paragraphs.lastIndex) {
                 Divider(
@@ -1968,6 +2080,8 @@ fun BackTranslationView(
     isTranslating: Boolean = false,
     onRetryTranslate: () -> Unit = {},
     onVisibleParagraphChanged: (Int) -> Unit = {},
+    // 插图渲染用：[[IMG:n]] 标记解析到本书的落盘图片目录
+    bookId: Long = 0L,
 ) {
     // 直接派生即可，无需 remember + LaunchedEffect 多一次组合跳转
     // issue 8.3：失败段不再写 "" 占位，但空白段会写 ""——全空白 Map
@@ -2122,30 +2236,36 @@ fun BackTranslationView(
             ) { index, para ->
                 val translation = translations[index]
                 val alpha = if (index == currentIndex) 1f else 0.5f
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Text(
-                        text = translation ?: "...",
-                        modifier = Modifier
-                            .weight(1f)
-                            .padding(vertical = 6.dp),
-                        style = readerParagraphStyle(fontSize).copy(
-                            color = primaryColor.copy(alpha = alpha * translationAlpha),
-                        ),
-                    )
-                    Text(
-                        text = para,
-                        modifier = Modifier
-                            .weight(1f)
-                            .padding(vertical = 6.dp)
-                            // 揭示后或译文还没加载完（没东西可挡）时不模糊
-                            .blur(if (revealed || !hasTranslation) 0.dp else 6.dp),
-                        style = readerParagraphStyle(fontSize).copy(
-                            color = textColor.copy(alpha = if (revealed) alpha else alpha * 0.4f),
-                        ),
-                    )
+                // 插图标记段：整宽渲染插图（无译文/原文可对照）
+                val imageRef = BookImages.markerRef(para)
+                if (imageRef != null) {
+                    ReaderImageBlock(ref = imageRef, bookId = bookId)
+                } else {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text(
+                            text = translation ?: "...",
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(vertical = 6.dp),
+                            style = readerParagraphStyle(fontSize).copy(
+                                color = primaryColor.copy(alpha = alpha * translationAlpha),
+                            ),
+                        )
+                        Text(
+                            text = para,
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(vertical = 6.dp)
+                                // 揭示后或译文还没加载完（没东西可挡）时不模糊
+                                .blur(if (revealed || !hasTranslation) 0.dp else 6.dp),
+                            style = readerParagraphStyle(fontSize).copy(
+                                color = textColor.copy(alpha = if (revealed) alpha else alpha * 0.4f),
+                            ),
+                        )
+                    }
                 }
                 if (index < paragraphs.lastIndex) {
                     Divider(
@@ -2182,7 +2302,7 @@ fun DictationReadingView(
                 Icons.Default.RecordVoiceOver,
                 null,
                 modifier = Modifier.size(64.dp),
-                tint = Primary,
+                tint = LocalReaderAccent.current,
             )
             Spacer(modifier = Modifier.height(16.dp))
             Text(
@@ -2209,7 +2329,7 @@ fun DictationReadingView(
                 "请填写划线单词",
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold,
-                color = Primary,
+                color = LocalReaderAccent.current,
             )
             Spacer(modifier = Modifier.height(16.dp))
             Text(
@@ -2222,7 +2342,7 @@ fun DictationReadingView(
                                 withStyle(SpanStyle(
                                     textDecoration = TextDecoration.Underline,
                                     fontWeight = FontWeight.Bold,
-                                    color = Primary,
+                                    color = LocalReaderAccent.current,
                                 )) { append("____") }
                             } else {
                                 withStyle(SpanStyle(color = textColor)) { append(word.text) }
@@ -2353,7 +2473,7 @@ fun ReadingBottomBar(
                     Icon(
                         if (uiState.serifFont) Icons.Default.TextFields else Icons.Default.FormatSize,
                         contentDescription = if (uiState.serifFont) "衬线字体（开）" else "衬线字体（关）",
-                        tint = if (uiState.serifFont) Primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        tint = if (uiState.serifFont) LocalReaderAccent.current else MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             }
@@ -2382,8 +2502,8 @@ fun ReadingBottomBar(
                 valueRange = 0f..(uiState.paragraphs.size - 1).coerceAtLeast(1).toFloat(),
                 modifier = Modifier.fillMaxWidth(),
                 colors = SliderDefaults.colors(
-                    thumbColor = Primary,
-                    activeTrackColor = Primary,
+                    thumbColor = LocalReaderAccent.current,
+                    activeTrackColor = LocalReaderAccent.current,
                 ),
             )
             Row(
@@ -2404,7 +2524,7 @@ fun ReadingBottomBar(
                             "${(uiState.currentParagraphIndex + 1)}/${uiState.paragraphs.size}"
                     },
                     style = MaterialTheme.typography.labelMedium,
-                    color = if (isSeeking) Primary else MaterialTheme.colorScheme.onSurface,
+                    color = if (isSeeking) LocalReaderAccent.current else MaterialTheme.colorScheme.onSurface,
                 )
                 IconButton(onClick = onNext, enabled = uiState.currentParagraphIndex < uiState.paragraphs.size - 1) {
                     Icon(Icons.Default.NavigateNext, "下一段")
@@ -2618,7 +2738,7 @@ private fun SettingsGroupLabel(text: String) {
         text,
         style = MaterialTheme.typography.labelMedium,
         fontWeight = FontWeight.SemiBold,
-        color = Primary,
+        color = LocalReaderAccent.current,
         modifier = Modifier.padding(top = 16.dp, bottom = 2.dp),
     )
 }
@@ -2649,7 +2769,7 @@ private fun SettingSliderRow(
                 valueText,
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.SemiBold,
-                color = Primary,
+                color = LocalReaderAccent.current,
             )
         }
         Slider(
@@ -2743,7 +2863,7 @@ fun WordDetailDialog(
             ) {
                 Text(word, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
                 IconButton(onClick = onSpeak) {
-                    Icon(Icons.Default.PlayCircleFilled, "播放发音", tint = Primary)
+                    Icon(Icons.Default.PlayCircleFilled, "播放发音", tint = LocalReaderAccent.current)
                 }
                 if (wordLevel != WordLevel.UNKNOWN) {
                     val badgeColor = when (wordLevel) {
@@ -2836,9 +2956,14 @@ fun ChapterNavDialog(
             contentPadding = PaddingValues(bottom = 24.dp),
         ) {
             itemsIndexed(paragraphs) { idx, para ->
-                // 显示段落前60字预览
-                val preview = para.take(60).replace("\n", " ") +
-                    if (para.length > 60) "…" else ""
+                // 显示段落前60字预览（插图标记段显示占位）
+                val isImage = BookImages.isImageMarker(para)
+                val preview = if (isImage) {
+                    "🖼 插图"
+                } else {
+                    para.take(60).replace("\n", " ") +
+                        if (para.length > 60) "…" else ""
+                }
                 ListItem(
                     headlineContent = {
                         Text(
@@ -2849,7 +2974,7 @@ fun ChapterNavDialog(
                     },
                     trailingContent = {
                         if (idx == currentIndex) {
-                            Icon(Icons.Default.PlayArrow, "当前", tint = Primary)
+                            Icon(Icons.Default.PlayArrow, "当前", tint = LocalReaderAccent.current)
                         }
                     },
                     modifier = Modifier.clickable {
@@ -2858,7 +2983,7 @@ fun ChapterNavDialog(
                     },
                     colors = ListItemDefaults.colors(
                         containerColor = if (idx == currentIndex)
-                            Primary.copy(alpha = 0.1f) else Color.Transparent,
+                            LocalReaderAccent.current.copy(alpha = 0.1f) else Color.Transparent,
                     ),
                 )
             }
@@ -2892,7 +3017,7 @@ fun SentenceTranslationDialog(
                 Text("句子翻译", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                 Spacer(modifier = Modifier.weight(1f))
                 IconButton(onClick = onSpeak) {
-                    Icon(Icons.Default.PlayCircleFilled, "播放朗读", tint = Primary)
+                    Icon(Icons.Default.PlayCircleFilled, "播放朗读", tint = LocalReaderAccent.current)
                 }
             }
             Spacer(modifier = Modifier.height(8.dp))
@@ -2915,7 +3040,7 @@ fun SentenceTranslationDialog(
                 Text(
                     text = translation,
                     style = MaterialTheme.typography.bodyLarge,
-                    color = Primary,
+                    color = LocalReaderAccent.current,
                 )
             } else {
                 // issue 8.9：null 语义是"词典/模型都没翻出来"，

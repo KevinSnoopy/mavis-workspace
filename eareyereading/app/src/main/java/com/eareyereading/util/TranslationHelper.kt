@@ -34,6 +34,7 @@ import kotlin.coroutines.resume
 @Singleton
 class TranslationHelper @Inject constructor(
     private val dictionaryManager: DictionaryManager,
+    private val onlineTranslator: OnlineTranslator,
 ) {
     @Volatile
     private var mlkitTranslator: com.google.mlkit.nl.translate.Translator? = null
@@ -146,12 +147,15 @@ class TranslationHelper @Inject constructor(
     }
 
     private suspend fun translateViaMlKit(text: String): String? {
-        // 等待 ML Kit 模型就绪；等待失败才回退到本地词典
+        // 等待 ML Kit 模型就绪；等待失败先走在线翻译（无 GMS ROM 上
+        // downloadModelIfNeeded 必失败，全文翻译此前只有本地词典单词兜底，
+        // 段落级翻译全军覆没——issue：全文翻译不可用的根因）
         if (!waitForMlKit()) {
-            android.util.Log.d("TranslationHelper", "ML Kit not ready, using dict fallback")
+            android.util.Log.d("TranslationHelper", "ML Kit not ready, trying online fallback")
+            onlineTranslator.translate(text, "en", "zh")?.let { return it }
             return lookupLocalDict(text)
         }
-        // ML Kit 翻译；失败/超时/并发 close 时回退到本地词典。
+        // ML Kit 翻译；失败/超时/并发 close 时先走在线翻译，再回退本地词典。
         // 外层 20s 超时：GMS Task 挂死时不再无限挂起调用方。
         val mlkitResult = withTimeoutOrNull(20_000) {
             suspendCancellableCoroutine { cont ->
@@ -174,7 +178,10 @@ class TranslationHelper @Inject constructor(
                 }
             }
         }
-        return mlkitResult ?: lookupLocalDict(text)
+        if (mlkitResult != null) return mlkitResult
+        // ML Kit 失败（模型被回收/推理异常）：在线兜底
+        onlineTranslator.translate(text, "en", "zh")?.let { return it }
+        return lookupLocalDict(text)
     }
 
     // ── 主入口 ───────────────────────────────────
@@ -238,29 +245,39 @@ class TranslationHelper @Inject constructor(
 
     /**
      * 非默认语言对的按需翻译：单飞创建 + 下载对应语言模型，之后翻译。
+     * ML Kit 不可用/失败时走在线翻译兜底（与默认方向同语义）。
      */
     private suspend fun translateViaPair(text: String, sourceLang: String, targetLang: String): String? {
         // 并发首次访问只需下载一次；下载失败也以 CompletableDeferred(false) 落地，
-        // 后续不再反复重试（模型缺失是持久态）
-        val ready = startPairTranslator(sourceLang, targetLang) ?: return null
-        if (withTimeoutOrNull(30_000) { ready.await() } != true) {
-            android.util.Log.d("TranslationHelper", "pair $sourceLang>$targetLang model not ready, no translatable output")
-            return null
-        }
-        val key = "$sourceLang>$targetLang"
-        val translator = pairTranslators[key] ?: return null
-        return withTimeoutOrNull(20_000) {
-            suspendCancellableCoroutine { cont ->
-                try {
-                    translator.translate(text)
-                        .addOnSuccessListener { cont.resume(it) }
-                        .addOnFailureListener { cont.resume(null) }
-                } catch (e: java.lang.RuntimeException) {
-                    android.util.Log.w("TranslationHelper", "pair translate threw: ${e.message}", e)
-                    cont.resume(null)
+        // 后续不再反复重试（模型缺失是持久态）→ 转在线兜底
+        val ready = startPairTranslator(sourceLang, targetLang)
+        val mlkitResult = if (ready == null) {
+            null
+        } else if (withTimeoutOrNull(30_000) { ready.await() } != true) {
+            android.util.Log.d("TranslationHelper", "pair $sourceLang>$targetLang model not ready")
+            null
+        } else {
+            val key = "$sourceLang>$targetLang"
+            val translator = pairTranslators[key]
+            if (translator == null) {
+                null
+            } else {
+                withTimeoutOrNull(20_000) {
+                    suspendCancellableCoroutine<String?> { cont ->
+                        try {
+                            translator.translate(text)
+                                .addOnSuccessListener { cont.resume(it) }
+                                .addOnFailureListener { cont.resume(null) }
+                        } catch (e: java.lang.RuntimeException) {
+                            android.util.Log.w("TranslationHelper", "pair translate threw: ${e.message}", e)
+                            cont.resume(null)
+                        }
+                    }
                 }
             }
         }
+        if (!mlkitResult.isNullOrEmpty()) return mlkitResult
+        return onlineTranslator.translate(text, sourceLang, targetLang)
     }
 
     /**
