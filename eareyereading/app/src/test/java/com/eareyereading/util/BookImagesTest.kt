@@ -117,6 +117,34 @@ class BookImagesTest {
         assertEquals("\n\n[[IMG:https://cdn.example.com/real.jpg]]\n\n", out)
     }
 
+    @Test
+    fun `replaceImgTagsWithMarkers falls back to data-src when src is placeholder`() {
+        // NPR pattern: <img src="undefined" data-src="https://cdn.npr.org/photo.jpg">
+        val html = "<img src=\"undefined\" data-src=\"https://cdn.npr.org/photo.jpg\" alt=\"article image\"/>"
+        val out = BookImages.replaceImgTagsWithMarkers(html, baseUrl = "https://www.npr.org/2026/09/04/story")
+        assertEquals("\n\n[[IMG:https://cdn.npr.org/photo.jpg]]\n\n", out)
+    }
+
+    @Test
+    fun `replaceImgTagsWithMarkers falls back to data-lazy-src and data-original`() {
+        val html = "<img src=\"#\" data-lazy-src=\"https://cdn.example.com/lazy.jpg\"/>" +
+            "<img src=\"\" data-original=\"https://cdn.example.com/orig.png\"/>"
+        val out = BookImages.replaceImgTagsWithMarkers(html, baseUrl = "https://www.example.com/")
+        assertEquals(
+            "\n\n[[IMG:https://cdn.example.com/lazy.jpg]]\n\n" +
+                "\n\n[[IMG:https://cdn.example.com/orig.png]]\n\n",
+            out,
+        )
+    }
+
+    @Test
+    fun `replaceImgTagsWithMarkers uses src when it is valid even if data-src exists`() {
+        // src 优先：src 有效时不回退到 data-src
+        val html = "<img src=\"https://cdn.example.com/src.jpg\" data-src=\"https://cdn.example.com/data.jpg\"/>"
+        val out = BookImages.replaceImgTagsWithMarkers(html, baseUrl = "https://www.example.com/")
+        assertEquals("\n\n[[IMG:https://cdn.example.com/src.jpg]]\n\n", out)
+    }
+
     // ── EpubParser：<img> → 标记 + zip 条目登记 ─────────────
 
     private fun writeEpub(file: File, entries: Map<String, String>) {

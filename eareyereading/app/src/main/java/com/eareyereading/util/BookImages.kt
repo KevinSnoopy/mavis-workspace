@@ -30,11 +30,23 @@ object BookImages {
 
     // ── HTML <img> → 标记 的共享转换（ArticleParser / RssParser 共用）──
 
-    /** 整段 <img> 标签（src 属性顺序无关）。 */
-    private val IMG_TAG_FULL = Regex(
-        "<img\\b[^>]*\\bsrc\\s*=\\s*[\"']([^\"']+)[\"'][^>]*>",
-        RegexOption.IGNORE_CASE,
-    )
+    /** 任意 <img> 标签（不要求 src 属性，覆盖 data-src 懒加载场景）。 */
+    private val IMG_TAG_ANY = Regex("<img\\b[^>]*>", RegexOption.IGNORE_CASE)
+
+    /** 提取 src 属性值（lookbehind 防 data-src / data-lazy-src 里的 src 误匹配）。 */
+    private val SRC_ATTR = Regex("(?<![\\w-])src\\s*=\\s*[\"']([^\"']*)[\"']", RegexOption.IGNORE_CASE)
+
+    /** data-src 懒加载属性（jQuery lazyload / WordPress 等）。 */
+    private val DATA_SRC_ATTR = Regex("\\bdata-src\\s*=\\s*[\"']([^\"']*)[\"']", RegexOption.IGNORE_CASE)
+
+    /** data-lazy-src 懒加载属性（WP Rocket 等）。 */
+    private val DATA_LAZY_SRC_ATTR = Regex("\\bdata-lazy-src\\s*=\\s*[\"']([^\"']*)[\"']", RegexOption.IGNORE_CASE)
+
+    /** data-original 懒加载属性（jQuery lazyload 旧版）。 */
+    private val DATA_ORIGINAL_ATTR = Regex("\\bdata-original\\s*=\\s*[\"']([^\"']*)[\"']", RegexOption.IGNORE_CASE)
+
+    /** 懒加载属性查找优先级：src 优先，占位时回退到 data-* 系列。 */
+    private val LAZY_SRC_ATTRS = listOf(SRC_ATTR, DATA_SRC_ATTR, DATA_LAZY_SRC_ATTR, DATA_ORIGINAL_ATTR)
 
     /** 明显的装饰/追踪类小图：命中即丢弃（1x1 像素、分享徽章等）。 */
     private val IMG_NOISE_SRC = Regex(
@@ -78,7 +90,26 @@ object BookImages {
     }
 
     /**
+     * 从 <img> 标签里按优先级取第一个有效的图片 URL 候选。
+     * src 是占位符（undefined/#/data:）时回退到 data-src 等懒加载属性，
+     * 提取真实 URL 而非直接丢弃。
+     */
+    private fun pickImageSrc(tag: String): String? {
+        for (attrRegex in LAZY_SRC_ATTRS) {
+            val v = attrRegex.find(tag)?.groupValues?.get(1)?.trim() ?: continue
+            if (v.isBlank() || v.startsWith("data:", ignoreCase = true)) continue
+            if (v.lowercase() in IMG_PLACEHOLDER_SRC) continue
+            if (IMG_SKIP_EXT.containsMatchIn(v)) continue
+            if (IMG_NOISE_SRC.containsMatchIn(v)) continue
+            return v
+        }
+        return null
+    }
+
+    /**
      * 把 HTML 里的 `<img>` 替换为独立段落标记 `[[IMG:绝对URL]]`。
+     * - 懒加载兜底：src 是 JS 占位符（undefined/#/data:）时尝试 data-src、
+     *   data-lazy-src、data-original 等属性，提取真实 URL 而非丢弃；
      * - 噪音图（追踪/徽章/svg/data URI）与无法解析成绝对 http(s) 的 src 直接丢弃；
      * - 相对 src 以 [baseUrl] 解析补全；
      * - 标记两侧垫空行，后续按空行分段的管线（cleanText /
@@ -86,20 +117,20 @@ object BookImages {
      *   切成独立段落，渲染层按插图整块呈现，文字不再错位。
      */
     fun replaceImgTagsWithMarkers(html: String, baseUrl: String?): String =
-        html.replace(IMG_TAG_FULL) { m ->
-            val src = m.groupValues[1].trim()
-            val absolute = when {
-                src.isBlank() || src.startsWith("data:", ignoreCase = true) -> null
-                IMG_PLACEHOLDER_SRC.contains(src.lowercase()) -> null     // JS 懒加载占位 src
-                IMG_SKIP_EXT.containsMatchIn(src) -> null
-                IMG_NOISE_SRC.containsMatchIn(src) -> null
-                src.startsWith("http://") || src.startsWith("https://") -> src
-                baseUrl != null -> try {
-                    java.net.URI(baseUrl).resolve(src).toString()
-                } catch (_: Exception) {
-                    null
+        html.replace(IMG_TAG_ANY) { m ->
+            val src = pickImageSrc(m.value)
+            val absolute = if (src != null) {
+                when {
+                    src.startsWith("http://") || src.startsWith("https://") -> src
+                    baseUrl != null -> try {
+                        java.net.URI(baseUrl).resolve(src).toString()
+                    } catch (_: Exception) {
+                        null
+                    }
+                    else -> null
                 }
-                else -> null
+            } else {
+                null
             }
             if (absolute != null &&
                 (absolute.startsWith("http://") || absolute.startsWith("https://"))
