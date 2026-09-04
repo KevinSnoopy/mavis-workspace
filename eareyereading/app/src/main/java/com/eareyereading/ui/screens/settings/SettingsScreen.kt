@@ -13,17 +13,19 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.room.withTransaction
 import com.eareyereading.data.local.dao.ReadingStatsDao
 import com.eareyereading.data.local.dao.VocabularyDao
-import com.eareyereading.domain.model.ReadingTheme
 import com.eareyereading.domain.repository.SettingsRepository
 import com.eareyereading.domain.repository.VocabularyRepository
 import com.eareyereading.ui.theme.*
@@ -33,34 +35,22 @@ import com.eareyereading.util.TtsHelper
 import com.eareyereading.tts.EmbeddedTtsEngine
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
-import java.text.SimpleDateFormat
 import java.util.*
 import javax.inject.Inject
 
 data class SettingsUiState(
-    val fontSize: Int = 18,
-    val rsvpSpeed: Int = 300,
-    val theme: ReadingTheme = ReadingTheme.LIGHT,
     val streakDays: Int = 0,
     val totalWords: Int = 0,
-    val darkMode: Boolean = false,
     // Material You 动态取色（Android 12+）
     val dynamicColor: Boolean = false,
-    // 阅读器正文字体：true=衬线
-    val serifFont: Boolean = false,
     val notifications: Boolean = true,
     val notificationDownloadProgress: Boolean = true,
     val notificationDownloadComplete: Boolean = true,
-    val collinsHighlight: Boolean = true,
     val isExporting: Boolean = false,
     val isImporting: Boolean = false,
     val isClearing: Boolean = false,
@@ -99,97 +89,24 @@ class SettingsViewModel @Inject constructor(
 
     private val notificationHelper = NotificationHelper(context)
 
-    // 设置滑杆逐像素写 DataStore 的防抖（与阅读器设置弹窗 persistSettingDebounced 同型，
-    // Round 6/8 延期项收口）：UI 状态立即更新保证滑杆跟手，持久化合并到拖停后一次。
-    // 按设置项分 key，互不取消；onCleared 兜底冲刷，防抖窗口内退出不丢最终值
-    private val settingsPersistJobs = mutableMapOf<String, kotlinx.coroutines.Job>()
-    private val settingsPendingWrites = mutableMapOf<String, suspend () -> Unit>()
-    private val flushScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-
-    private fun persistSettingDebounced(key: String, write: suspend () -> Unit) {
-        settingsPersistJobs[key]?.cancel()
-        settingsPendingWrites[key] = write
-        settingsPersistJobs[key] = viewModelScope.launch {
-            delay(SETTINGS_PERSIST_DEBOUNCE_MS)
-            try {
-                write()
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                // DataStore 写失败不得炸到未捕获处理器崩 App：
-                // 提示用户，设置值仍保留在本会话内存态
-                android.util.Log.e("SettingsViewModel", "persist setting failed: $key", e)
-                _uiState.update { it.copy(snackbarMessage = "设置保存失败") }
-            }
-            // 按身份移除：只清自己这条，不误删并发排队的同名写入
-            if (settingsPendingWrites[key] === write) {
-                settingsPendingWrites.remove(key)
-            }
-        }
-    }
-
     override fun onCleared() {
         super.onCleared()
-        // viewModelScope 已随 onCleared 取消：用独立 scope 冲刷待写项，
-        // 防抖窗口内退出设置页不丢最后一次滑杆位置。
-        // 逐条隔离异常：一条写入失败不得连累其余待写项被丢弃
-        val pending = settingsPendingWrites.values.toList()
-        settingsPendingWrites.clear()
-        if (pending.isNotEmpty()) {
-            val flushJob = flushScope.launch {
-                pending.forEach { write ->
-                    try {
-                        write()
-                    } catch (e: kotlinx.coroutines.CancellationException) {
-                        throw e
-                    } catch (e: Exception) {
-                        android.util.Log.e("SettingsViewModel", "flush pending write failed", e)
-                    }
-                }
-            }
-            flushJob.invokeOnCompletion { flushScope.cancel() }
-        } else {
-            flushScope.cancel()
-        }
+        // 阅读类滑杆设置已收敛到阅读页，本页不再有防抖待写项，
+        // 无需退出冲刷逻辑
     }
 
     init {
-        // 加载阅读设置
+        // 通知总开关（阅读相关设置——字号/RSVP/主题/衬线等——已全部收敛到
+        // 阅读页内的设置弹窗与底栏快捷设置，本页不再重复提供入口）
         viewModelScope.launch {
             try {
-                combine(
-                    settingsRepository.getFontSize(),
-                    settingsRepository.getRsvpSpeed(),
-                    settingsRepository.getTheme(),
-                    settingsRepository.getDarkMode(),
-                    settingsRepository.getNotifications(),
-                ) { fontSize, speed, theme, darkMode, notifications ->
-                    _uiState.update {
-                        it.copy(
-                            fontSize = fontSize,
-                            rsvpSpeed = speed,
-                            theme = theme,
-                            darkMode = darkMode,
-                            notifications = notifications,
-                        )
-                    }
-                }.collect()
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                android.util.Log.e("SettingsViewModel", "settings combine failed", e)
-            }
-        }
-
-        viewModelScope.launch {
-            try {
-                settingsRepository.getSerifFont().collect { serifFont ->
-                    _uiState.update { it.copy(serifFont = serifFont) }
+                settingsRepository.getNotifications().collect { notifications ->
+                    _uiState.update { it.copy(notifications = notifications) }
                 }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
-                android.util.Log.e("SettingsViewModel", "serif collect failed", e)
+                android.util.Log.e("SettingsViewModel", "notifications collect failed", e)
             }
         }
 
@@ -202,18 +119,6 @@ class SettingsViewModel @Inject constructor(
                 throw e
             } catch (e: Exception) {
                 android.util.Log.e("SettingsViewModel", "dynamic color collect failed", e)
-            }
-        }
-
-        viewModelScope.launch {
-            try {
-                settingsRepository.getCollinsHighlight().collect { collinsHighlight ->
-                    _uiState.update { it.copy(collinsHighlight = collinsHighlight) }
-                }
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                android.util.Log.e("SettingsViewModel", "collins collect failed", e)
             }
         }
 
@@ -471,20 +376,6 @@ class SettingsViewModel @Inject constructor(
     private fun calculateStreak(stats: List<com.eareyereading.data.local.entity.ReadingStatsEntity>): Int =
         com.eareyereading.util.ReadingStreak.calculate(stats)
 
-    fun setFontSize(size: Int) {
-        _uiState.update { it.copy(fontSize = size) }
-        persistSettingDebounced("fontSize") { settingsRepository.setFontSize(size) }
-    }
-
-    fun setRsvpSpeed(speed: Int) {
-        _uiState.update { it.copy(rsvpSpeed = speed) }
-        persistSettingDebounced("rsvpSpeed") { settingsRepository.setRsvpSpeed(speed) }
-    }
-
-    fun setTheme(theme: ReadingTheme) {
-        viewModelScope.launch { settingsRepository.setTheme(theme) }
-    }
-
     /** Material You 动态取色开关（Android 12+）。 */
     fun setDynamicColor(enabled: Boolean) {
         viewModelScope.launch {
@@ -497,24 +388,6 @@ class SettingsViewModel @Inject constructor(
                 _uiState.update { it.copy(snackbarMessage = "设置保存失败") }
             }
         }
-    }
-
-    /** 阅读器衬线字体开关。 */
-    fun setSerifFont(enabled: Boolean) {
-        viewModelScope.launch {
-            try {
-                settingsRepository.setSerifFont(enabled)
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                android.util.Log.e("SettingsViewModel", "setSerifFont failed", e)
-                _uiState.update { it.copy(snackbarMessage = "设置保存失败") }
-            }
-        }
-    }
-
-    fun setDarkMode(enabled: Boolean) {
-        viewModelScope.launch { settingsRepository.setDarkMode(enabled) }
     }
 
     fun setNotifications(enabled: Boolean) {
@@ -542,10 +415,6 @@ class SettingsViewModel @Inject constructor(
             settingsRepository.setNotificationDownloadComplete(enabled)
             notificationService.rebuildTtsCompleteChannel(enabled)
         }
-    }
-
-    fun setCollinsHighlight(enabled: Boolean) {
-        viewModelScope.launch { settingsRepository.setCollinsHighlight(enabled) }
     }
 
     fun exportData() {
@@ -760,11 +629,6 @@ class SettingsViewModel @Inject constructor(
     fun resetToDefaults() {
         viewModelScope.launch {
             try {
-                // 先取消防抖窗口内的待写项：否则拖过滑杆立刻重置时，
-                // 300ms 内排队的旧值会在 clearAll 之后落盘，设置"复活"
-                settingsPersistJobs.values.forEach { it.cancel() }
-                settingsPersistJobs.clear()
-                settingsPendingWrites.clear()
                 settingsRepository.clearAll()
                 // 默认值是"开启提醒"：重置后必须补排闹钟而不是取消，
                 // 否则开关显示开启却永远不提醒（只能靠拨开关/重启救活）
@@ -786,11 +650,6 @@ class SettingsViewModel @Inject constructor(
 
     fun dismissSnackbar() {
         _uiState.update { it.copy(snackbarMessage = null) }
-    }
-
-    private companion object {
-        // 与阅读器设置弹窗同款窗口（ReaderViewModel.SETTINGS_PERSIST_DEBOUNCE_MS）
-        const val SETTINGS_PERSIST_DEBOUNCE_MS = 300L
     }
 }
 
@@ -925,96 +784,33 @@ fun SettingsScreen(
                         checked = uiState.dynamicColor,
                         onCheckedChange = viewModel::setDynamicColor,
                     )
-
-                    Divider(modifier = Modifier.padding(horizontal = 20.dp))
-
-                    SettingRowToggle(
-                        icon = Icons.Default.TextFields,
-                        iconBg = PrimaryLight,
-                        iconColor = Primary,
-                        title = "衬线阅读字体",
-                        subtitle = "阅读器正文使用衬线字体（宋体风）",
-                        checked = uiState.serifFont,
-                        onCheckedChange = viewModel::setSerifFont,
-                    )
                 }
                 Spacer(modifier = Modifier.height(20.dp))
             }
 
-            // ── 阅读 ──────────────────────────────────
+            // ── 阅读与词典 ──────────────────────────────
+            // 字号/RSVP 速度/阅读主题/衬线字体等阅读设置已全部收敛到阅读页内
+            //（顶栏"更多 → 设置"弹窗 + 底栏快捷设置），本页不再提供重复入口——
+            // 两处入口并存时，设置页改的是"默认值"，阅读页改的是"当前值"，
+            // 互相覆盖容易让用户困惑"为什么设置了不生效"
             item {
-                SettingsSectionTitle("阅读")
+                SettingsSectionTitle("阅读与词典")
             }
             item {
                 SettingsListCard {
                     SettingRow(
-                        icon = Icons.Default.FormatSize,
+                        icon = Icons.Default.MenuBook,
                         iconBg = PrimaryLight,
                         iconColor = Primary,
-                        title = "默认字体大小",
-                        subtitle = "${uiState.fontSize}sp",
-                    )
-                    Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp)) {
-                        Slider(
-                            value = uiState.fontSize.toFloat(),
-                            onValueChange = { viewModel.setFontSize(it.toInt()) },
-                            valueRange = 12f..32f,
-                            steps = 19,
-                            colors = SliderDefaults.colors(
-                                thumbColor = Primary,
-                                activeTrackColor = Primary,
-                            ),
-                        )
-                    }
-
-                    Divider(modifier = Modifier.padding(horizontal = 20.dp))
-
-                    SettingRow(
-                        icon = Icons.Default.VolumeUp,
-                        iconBg = PrimaryLight,
-                        iconColor = Info,
-                        title = "RSVP 默认速度",
-                        subtitle = "${uiState.rsvpSpeed} 字/分钟",
-                    )
-                    Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp)) {
-                        Slider(
-                            value = uiState.rsvpSpeed.toFloat(),
-                            onValueChange = { viewModel.setRsvpSpeed(it.toInt()) },
-                            valueRange = 100f..800f,
-                            steps = 13,
-                            colors = SliderDefaults.colors(
-                                thumbColor = Info,
-                                activeTrackColor = Info,
-                            ),
-                        )
-                    }
-
-                    Divider(modifier = Modifier.padding(horizontal = 20.dp))
-
-                    SettingRow(
-                        icon = Icons.Default.Visibility,
-                        iconBg = SuccessBg,
-                        iconColor = Accent,
-                        title = "阅读主题",
-                        subtitle = uiState.theme.displayName,
+                        title = "阅读偏好",
+                        subtitle = "字号、阅读主题、衬线字体、翻译显示等",
                     ) {
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Row(
-                            modifier = Modifier.padding(horizontal = 0.dp, vertical = 8.dp),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            ReadingTheme.entries.forEach { theme ->
-                                FilterChip(
-                                    selected = theme == uiState.theme,
-                                    onClick = { viewModel.setTheme(theme) },
-                                    label = { Text(theme.displayName) },
-                                    colors = FilterChipDefaults.filterChipColors(
-                                        selectedContainerColor = Primary.copy(alpha = 0.12f),
-                                        selectedLabelColor = Primary,
-                                    ),
-                                )
-                            }
-                        }
+                        Text(
+                            text = "已移至阅读页内：进入任意书籍，点击正文唤出菜单 → 设置",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Primary,
+                            modifier = Modifier.padding(top = 2.dp),
+                        )
                     }
 
                     Divider(modifier = Modifier.padding(horizontal = 20.dp))
@@ -1325,28 +1121,34 @@ private fun ProfileCard(
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.5.dp),
+        border = androidx.compose.foundation.BorderStroke(
+            0.5.dp,
+            MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f),
+        ),
     ) {
         Row(
             modifier = Modifier.padding(20.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            // Avatar
-            Surface(
-                modifier = Modifier.size(60.dp),
-                shape = RoundedCornerShape(30.dp),
-                color = Primary,
+            // Avatar：品牌色渐变，替代单调纯色块
+            Box(
+                modifier = Modifier
+                    .size(60.dp)
+                    .clip(RoundedCornerShape(30.dp))
+                    .background(
+                        Brush.linearGradient(listOf(Primary, Secondary)),
+                    ),
+                contentAlignment = Alignment.Center,
             ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Text(
-                        "K",
-                        style = MaterialTheme.typography.headlineSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White,
-                    )
-                }
+                Text(
+                    "阅",
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White,
+                )
             }
             Spacer(modifier = Modifier.width(16.dp))
             Column(modifier = Modifier.weight(1f)) {
@@ -1395,21 +1197,43 @@ private fun ProfileCard(
 
 @Composable
 private fun SettingsSectionTitle(title: String) {
-    Text(
-        title,
-        style = SectionTitle,
-        modifier = Modifier.padding(vertical = 10.dp),
-    )
-    Spacer(modifier = Modifier.height(4.dp))
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 4.dp, vertical = 10.dp),
+    ) {
+        // 色条锚点：与卡片内容对齐的强调条，比纯文本标题更有层级感
+        Box(
+            modifier = Modifier
+                .size(width = 4.dp, height = 16.dp)
+                .background(Primary, RoundedCornerShape(2.dp)),
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Text(
+            title,
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold,
+            letterSpacing = 0.8.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+    Spacer(modifier = Modifier.height(2.dp))
 }
 
 @Composable
 private fun SettingsListCard(content: @Composable ColumnScope.() -> Unit) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(14.dp),
+        shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.5.dp),
+        // 发丝描边：浅色/深色主题下都能把卡片从背景里衬出来，
+        // 比堆 elevation 更克制，也不会投影噪
+        border = androidx.compose.foundation.BorderStroke(
+            0.5.dp,
+            MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f),
+        ),
     ) {
         Column(content = content)
     }

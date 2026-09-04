@@ -455,6 +455,9 @@ fun ReaderScreen(
                             onVisibleParagraphChanged = viewModel::onVisibleParagraphChanged,
                             bookmarkedParagraphs = uiState.bookmarkedParagraphs,
                             highlights = uiState.highlights,
+                            // 仿电子书：页眉书名 + 中键点击切换 chrome（左右 30% 为翻页热区）
+                            bookTitle = uiState.book?.title ?: "",
+                            onCenterTap = { chromeVisible = !chromeVisible },
                         )
                     } else {
                         NormalReadingView(
@@ -1160,12 +1163,17 @@ fun PagedReadingView(
     bookmarkedParagraphs: Set<Int> = emptySet(),
     highlights: Map<Int, List<HighlightData>> = emptyMap(),
     classifier: CollinsClassifier = remember { CollinsClassifier() },
+    // 仿电子书装饰：页眉书名 + 页脚页码；中键点击回调（左右边缘被翻页区占用）
+    bookTitle: String = "",
+    onCenterTap: () -> Unit = {},
 ) {
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val density = LocalDensity.current
         val contentWidthPx = with(density) { maxWidth.roundToPx() }
-        // 页高预算：视口高 - 上下 8dp 留白（与滚动视图 contentPadding 一致）
-        val pageBudgetPx = with(density) { (maxHeight - 16.dp).roundToPx() }
+        // 页高预算：视口高 - 上下 8dp 留白 - 仿电子书页眉页脚预留
+        // （书名 running header ~18sp + 页码 footer ~16sp + 上下间距）
+        val pageBudgetPx = with(density) { (maxHeight - 16.dp).roundToPx() } -
+            with(density) { 52.dp.roundToPx() }
         val serif = LocalReaderFontFamily.current != FontFamily.Default
         // 各项 px 尺寸（密度/字号变化时 produceState 的 key 一起变）
         val fontSizePx = with(density) { fontSize.sp.toPx() }
@@ -1258,42 +1266,94 @@ fun PagedReadingView(
             // 分页排版计算中（后台整书测量，通常 <100ms）：保持空白防跳变
             Box(modifier = Modifier.fillMaxSize())
         } else {
+            // 仿电子书点击翻页协程作用域
+            val pageFlipScope = rememberCoroutineScope()
             HorizontalPager(
                 state = pagerState,
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier
+                    .fillMaxSize()
+                    // 仿电子书点击翻页区：左 30% 上一页、右 30% 下一页、
+                    // 中间 40% 切换顶底栏显隐（Kindle 式热区）。段落文字上的
+                    // 点词/双击翻译由内层手势先消费，只有空白处的点击落到这里
+                    .pointerInput(pages.size) {
+                        detectTapGestures { offset ->
+                            val edge = size.width * 0.3f
+                            val cur = pagerState.currentPage
+                            when {
+                                offset.x < edge && cur > 0 -> pageFlipScope.launch {
+                                    pagerState.animateScrollToPage(cur - 1)
+                                }
+                                offset.x > size.width - edge && cur < pages.size - 1 ->
+                                    pageFlipScope.launch {
+                                        pagerState.animateScrollToPage(cur + 1)
+                                    }
+                                else -> onCenterTap()
+                            }
+                        }
+                    },
             ) { page ->
-                // verticalScroll 兜底：超页高单段/估算偏差导致的内容溢出仍可滚动查看
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
-                        .verticalScroll(rememberScrollState())
                         .padding(vertical = 8.dp),
                 ) {
-                    pages[page].forEach { idx ->
-                        ReaderParagraphBlock(
-                            index = idx,
-                            para = paragraphs[idx],
-                            isCurrent = idx == currentIndex,
-                            isBookmarked = idx in bookmarkedParagraphs,
-                            paraHighlights = highlights[idx] ?: emptyList(),
-                            alpha = if (idx == currentIndex) 1f else if (idx < currentIndex) 0.4f else 0.7f,
-                            fontSize = fontSize,
-                            textColor = textColor,
-                            showTranslation = showTranslation,
-                            translation = paragraphTranslations[idx],
-                            translationAlpha = translationAlpha,
-                            showWordLevelColors = showWordLevelColors,
-                            showKnownWordsHighlight = showKnownWordsHighlight,
-                            knownWords = knownWords,
-                            learnedWords = learnedWords,
-                            isAutoReading = isAutoReading,
-                            currentSentences = currentSentences,
-                            currentSentenceIndex = currentSentenceIndex,
-                            onWordClick = onWordClick,
-                            onSentenceDoubleTap = onSentenceDoubleTap,
-                            classifier = classifier,
+                    // 仿电子书页眉：书名 running header（纸书式页顶书名）
+                    if (bookTitle.isNotBlank()) {
+                        Text(
+                            text = bookTitle,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = textColor.copy(alpha = 0.45f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 2.dp),
                         )
                     }
+                    // verticalScroll 兜底：超页高单段/估算偏差导致的内容溢出仍可滚动查看
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth()
+                            .verticalScroll(rememberScrollState()),
+                    ) {
+                        pages[page].forEach { idx ->
+                            ReaderParagraphBlock(
+                                index = idx,
+                                para = paragraphs[idx],
+                                isCurrent = idx == currentIndex,
+                                isBookmarked = idx in bookmarkedParagraphs,
+                                paraHighlights = highlights[idx] ?: emptyList(),
+                                alpha = if (idx == currentIndex) 1f else if (idx < currentIndex) 0.4f else 0.7f,
+                                fontSize = fontSize,
+                                textColor = textColor,
+                                showTranslation = showTranslation,
+                                translation = paragraphTranslations[idx],
+                                translationAlpha = translationAlpha,
+                                showWordLevelColors = showWordLevelColors,
+                                showKnownWordsHighlight = showKnownWordsHighlight,
+                                knownWords = knownWords,
+                                learnedWords = learnedWords,
+                                isAutoReading = isAutoReading,
+                                currentSentences = currentSentences,
+                                currentSentenceIndex = currentSentenceIndex,
+                                onWordClick = onWordClick,
+                                onSentenceDoubleTap = onSentenceDoubleTap,
+                                classifier = classifier,
+                            )
+                        }
+                    }
+                    // 仿电子书页脚：页码 + 全书进度百分比
+                    Text(
+                        text = "${page + 1} / ${pages.size} · ${(page + 1) * 100 / pages.size}%",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = textColor.copy(alpha = 0.45f),
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 2.dp),
+                    )
                 }
             }
         }

@@ -23,7 +23,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.runBlocking
@@ -471,6 +470,13 @@ class ReaderViewModel @Inject constructor(
         // 等模型就绪/触发下载限流），限流后吞吐更高也更稳
         private const val TRANSLATION_CONCURRENCY = 6
 
+        // 逐段渐进上屏的合批窗口：翻页模式下每次译文更新触发整书重新分页，
+        // 400ms 合并一次把重组/测量开销压到常数级，视觉上仍是"逐段浮现"
+        private const val TRANSLATION_UI_FLUSH_MS = 400L
+
+        // 译文分批落库批大小：中途取消/失败时已译段落不丢，也避免整本一个大事务
+        private const val TRANSLATION_SAVE_BATCH = 16
+
         // 句子边界（ASCII）：句末标点 + 空白 + 大写字母/引号/左括号。
         // "Aug." "Mr." "Dr." 这类缩写后的 "." + 空格 + 小写/数字不会误切，
         // 而 "happened. The" 的正常句子边界仍能切出。提升为常量避免热路径重复编译。
@@ -767,14 +773,29 @@ class ReaderViewModel @Inject constructor(
                 when (_uiState.value.readingMode) {
                     ReadingMode.CLOZE -> generateCloze()
                     ReadingMode.FUZZY -> generateFuzzy()
+                    // 全文翻译改为"总是补缺"：loadBook 已把 Room 缓存灌进
+                    // paragraphTranslations，若只在 isEmpty 时才触发，部分缓存
+                    // （上次中途取消/失败）的书永远缺着尾巴不补
                     ReadingMode.BACK_TRANSLATION, ReadingMode.SPLIT ->
-                        if (_uiState.value.paragraphTranslations.isEmpty()) translateAllParagraphs()
+                        translateAllParagraphs()
                     else -> Unit
                 }
 
                 // TTS 是单例、跨书复用：无论是否已初始化都要同步语言，
                 // 否则读完英文书再开中文书会用旧 locale 一直读下去
                 ttsHelper.setLanguage(book.language)
+
+                // 预翻译预热：进书即后台拉起 ML Kit 翻译模型下载/就绪，
+                // 首次开启全文翻译不再阻塞等待模型（最多 30s）
+                viewModelScope.launch {
+                    try {
+                        translationHelper.warmUp(bookLang)
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
+                    } catch (_: Exception) {
+                        // 预热失败静默：正式翻译路径仍有重试窗口兜底
+                    }
+                }
 
                 // 初始化 TTS
                 if (!_uiState.value.ttsInitialized) {
@@ -1073,10 +1094,9 @@ class ReaderViewModel @Inject constructor(
 
         // 回译/分栏模式依赖全书译文，但旧实现里全书翻译只有
         // toggleTranslation() 一个入口——从没开过翻译开关就进回译模式，
-        // 页面永远停在"正在获取译文..."的假加载态（没有任何任务在跑）
-        if ((mode == ReadingMode.BACK_TRANSLATION || mode == ReadingMode.SPLIT) &&
-            _uiState.value.paragraphTranslations.isEmpty()
-        ) {
+        // 页面永远停在"正在获取译文..."的假加载态（没有任何任务在跑）。
+        // 总是补缺：部分缓存的书也继续翻完剩余段落
+        if (mode == ReadingMode.BACK_TRANSLATION || mode == ReadingMode.SPLIT) {
             translateAllParagraphs()
         }
 
@@ -1088,9 +1108,8 @@ class ReaderViewModel @Inject constructor(
 
     /** 回译模式译文缺失时的手动重试入口（翻译失败后视图提供重试按钮）。 */
     fun retryTranslation() {
-        if (_uiState.value.paragraphTranslations.isEmpty()) {
-            translateAllParagraphs()
-        }
+        // 与 toggleTranslation 同语义：总是补缺（部分缓存的书也能续翻剩余段落）
+        translateAllParagraphs()
     }
 
     fun generateCloze() {
@@ -1659,12 +1678,10 @@ class ReaderViewModel @Inject constructor(
         }
         // isTranslating 必须同步置位：标志原来在 launch 内部才设置，
         // 快速开-关-开会在两次 launch 都未执行前连过两次守卫 → 并发双份全书翻译
-        _uiState.update { it.copy(isTranslating = _uiState.value.paragraphTranslations.isEmpty()) }
-
-        // 如果是打开翻译，且还没翻译过，则触发翻译
-        if (_uiState.value.paragraphTranslations.isEmpty()) {
-            translateAllParagraphs()
-        }
+        _uiState.update { it.copy(showTranslation = true, isTranslating = true) }
+        // 打开翻译总是走"补缺"：loadBook 已把 Room 缓存灌进 paragraphTranslations，
+        // 旧实现只要缓存非空就跳过——部分缓存的书（上次中途取消）永远缺尾巴
+        translateAllParagraphs()
     }
 
     private fun translateAllParagraphs() {
@@ -1686,20 +1703,52 @@ class ReaderViewModel @Inject constructor(
                     }
                     return@launch
                 }
-                // issue 8.5：优先读 Room 缓存，只有未缓存的段落才重新翻译。
-                // 这样回译/分栏模式重开书、或本地部分缺失时，只补缺不整本重跑
+                // issue 8.5：优先读 Room 缓存，只有未缓存的段落才重新翻译
                 val cached = readingRepository.getTranslations(bookId, langPair)
                 val merged = cached.toMutableMap()
+                // 缓存先上屏：开关一开立即可读，不必等全书补翻完成
+                if (merged.isNotEmpty() && currentBookId == myBookId) {
+                    _uiState.update { it.copy(paragraphTranslations = merged.toMap()) }
+                }
                 // 需要翻译的段落：有源文、尚未缓存
                 val missing = paragraphs.indices.filter { idx ->
                     paragraphs[idx].isNotBlank() && !merged.containsKey(idx)
                 }
                 if (missing.isNotEmpty()) {
-                    // issue 8.1：全书翻译随书语言进行，不再写死 en→zh；
-                    // 逐段并发 + Semaphore 限流（几百段不限流会同时压 ML Kit），失败段返回 null
+                    // 逐段翻译 · 预翻译优先：从当前阅读位置向两侧扩散排序，
+                    // 用户正在看的段落最先翻译上屏；后台仍 Semaphore 限流并发
+                    val center = _uiState.value.currentParagraphIndex
+                    val ordered = missing.sortedBy { kotlin.math.abs(it - center) }
                     val semaphore = Semaphore(TRANSLATION_CONCURRENCY)
-                    val fresh = coroutineScope {
-                        missing.map { idx ->
+                    // 渐进上屏合批：翻页模式下 paragraphTranslations 每次更新都会
+                    // 触发整书重新分页测量，逐段直推 = O(段落数²) 测量开销；
+                    // 按时间双阈值合并成 ~2.5 次/秒
+                    var uiDirty = false
+                    var lastUiFlushMs = 0L
+                    fun flushUi(force: Boolean = false) {
+                        if (!uiDirty) return
+                        val now = android.os.SystemClock.elapsedRealtime()
+                        if (!force && now - lastUiFlushMs < TRANSLATION_UI_FLUSH_MS) return
+                        lastUiFlushMs = now
+                        uiDirty = false
+                        if (currentBookId == myBookId) {
+                            _uiState.update { it.copy(paragraphTranslations = merged.toMap()) }
+                        }
+                    }
+                    // 分批落库：每 N 段一个事务，中途取消/失败时已译段落不丢
+                    val pendingSave = LinkedHashMap<Int, String>()
+                    suspend fun flushSave() {
+                        if (pendingSave.isEmpty()) return
+                        val batch = pendingSave.toMap()
+                        pendingSave.clear()
+                        try {
+                            readingRepository.saveTranslations(bookId, langPair, paragraphs, batch)
+                        } catch (e: Exception) {
+                            android.util.Log.e("ReaderViewModel", "save translation cache failed", e)
+                        }
+                    }
+                    coroutineScope {
+                        val jobs = ordered.map { idx ->
                             async(Dispatchers.IO) {
                                 semaphore.withPermit {
                                     idx to translationHelper.translate(
@@ -1708,18 +1757,23 @@ class ReaderViewModel @Inject constructor(
                                     )
                                 }
                             }
-                        }.awaitAll()
-                    }.toMap()
-                    // issue 8.3：失败段（null/空）不写入显示，也不落缓存
-                    val freshMap = fresh.filterValues { !it.isNullOrBlank() }
-                        .mapValues { it.value.orEmpty() }
-                    // 成功段落单事务批量落缓存：旧路径逐段独立事务 = 整本几百次 fsync
-                    try {
-                        readingRepository.saveTranslations(bookId, langPair, paragraphs, freshMap)
-                    } catch (e: Exception) {
-                        android.util.Log.e("ReaderViewModel", "save translation cache failed", e)
+                        }
+                        // 逐段渐进：按"离当前阅读位置由近及远"的顺序 await，
+                        // 译完一段记一段，达阈值成批上屏 + 落库
+                        for (job in jobs) {
+                            val (idx, result) = job.await()
+                            // issue 8.3：失败段（null/空）不写入显示，也不落缓存
+                            if (!result.isNullOrBlank()) {
+                                merged[idx] = result
+                                pendingSave[idx] = result
+                                uiDirty = true
+                            }
+                            flushUi()
+                            if (pendingSave.size >= TRANSLATION_SAVE_BATCH) flushSave()
+                        }
                     }
-                    merged.putAll(freshMap)
+                    flushUi(force = true)
+                    flushSave()
                 }
                 // 全空视为失败：所有段落要么失败要么无缓存——非空 Map 会把
                 // hasTranslation 顶成 true——回译视图变永久空白栏，
@@ -1735,7 +1789,7 @@ class ReaderViewModel @Inject constructor(
                 // 本段仍会执行——按书核对，旧书译文不写进新书状态
                 if (currentBookId != myBookId) return@launch
                 _uiState.update { it.copy(
-                    paragraphTranslations = merged,
+                    paragraphTranslations = merged.toMap(),
                     isTranslating = false,
                 ) }
             } catch (e: kotlinx.coroutines.CancellationException) {

@@ -263,6 +263,12 @@ class EmbeddedTtsEngine @Inject constructor(
         private const val MAX_EXTRACT_BYTES = 256L * 1_000_000L
 
         /**
+         * 解压 IO 缓冲：读（BufferedInputStream 归并 BZip2 位读取器的小粒度
+         * read）与写（整轮复用的复制缓冲）共用 256KB，减少 syscall 与 GC 压力。
+         */
+        private const val EXTRACTION_IO_BUFFER_BYTES = 256 * 1024
+
+        /**
          * 内置可用模型列表。
          *
          * 默认内置模型 = Piper lessac-medium（见 DEFAULT_MODEL_ID）：
@@ -1073,10 +1079,24 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
             Log.d(TAG, "extraction: opening BZip2+Tar streams on $tarballCanonical")
             val canonicalRoot = modelsDir.canonicalPath + File.separator
             var copiedSinceCheck = 0L
+            // 解压性能优化：
+            // 1. BufferedInputStream：commons-compress 的 BZip2 位读取器对底层流做
+            //    大量小粒度 read，裸 FileInputStream 时每次都是一次 syscall；
+            //    66MB 归档能放大成百万级系统调用，缓冲后归并成 256KB 级读取
+            // 2. 复制缓冲整轮解压只分配一次：旧实现每个条目 new 一个 256KB 数组，
+            //    espeak-ng-data 几百个小文件 = 几百次大对象分配的 GC 压力
+            // 3. 已建目录 HashSet 缓存：跳过同目录连续文件重复 mkdirs 的 stat 调用
+            // 4. 条目级 Log.d 撤掉（每文件 2-3 条 × 几百文件），只保留采样日志
             // 解压总量上限：正常归档解压后 ~120MB，256MB 上限防 bzip2 解压炸弹（1.3）
-            java.io.FileInputStream(tarballFile).use { fis ->
-                BZip2CompressorInputStream(fis).use { bzis ->
+            java.io.BufferedInputStream(
+                java.io.FileInputStream(tarballFile),
+                EXTRACTION_IO_BUFFER_BYTES,
+            ).use { bis ->
+                BZip2CompressorInputStream(bis).use { bzis ->
                     TarArchiveInputStream(bzis).use { tis ->
+                        val copyBuf = ByteArray(EXTRACTION_IO_BUFFER_BYTES)
+                        val createdDirs = HashSet<String>()
+                        var entryCount = 0
                         var entry = tis.nextEntry
                         while (entry != null) {
                             // 协作式取消：~100MB 归档的解压没有天然挂起点，
@@ -1100,18 +1120,22 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
                             val outFile = File(modelsDir, name)
                             lastExtractionEntry = name
                             if (entry.isDirectory) {
-                                Log.d(TAG, "extraction: mkdir ${outFile.absolutePath}")
                                 outFile.mkdirs()
+                                createdDirs.add(outFile.canonicalPath)
                             } else {
-                                outFile.parentFile?.mkdirs()
-                                Log.d(TAG, "extraction: writing ${entry.name} (entry.size=${entry.size})")
-                                FileOutputStream(outFile).use { out ->
-                                    val buf = ByteArray(262144)
+                                val parentPath = outFile.parentFile?.canonicalPath
+                                if (parentPath != null && createdDirs.add(parentPath)) {
+                                    outFile.parentFile?.mkdirs()
+                                }
+                                java.io.BufferedOutputStream(
+                                    FileOutputStream(outFile),
+                                    64 * 1024,
+                                ).use { out ->
                                     var fileBytes = 0L
                                     while (true) {
-                                        val n = tis.read(buf)
+                                        val n = tis.read(copyBuf)
                                         if (n == -1) break
-                                        out.write(buf, 0, n)
+                                        out.write(copyBuf, 0, n)
                                         fileBytes += n
                                         copiedSinceCheck += n
                                         totalExtractedBytes += n
@@ -1126,17 +1150,28 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
                                                 ?.ensureActive()
                                         }
                                     }
-                                    Log.d(TAG, "extraction: wrote ${outFile.name} ${fileBytes} bytes")
                                 }
                             }
                             // 解压进度按字节推进（已解压字节在上层累计），每个条目推一次，
                             // pushExtractionProgress 按 100ms 节流
                             pushExtractionProgress(isFinal = false)
+                            entryCount++
+                            if (entryCount == 1 || entryCount % 100 == 0) {
+                                Log.d(
+                                    TAG,
+                                    "extraction: $entryCount entries done, " +
+                                        "$totalExtractedBytes bytes so far",
+                                )
+                            }
                             entry = tis.nextEntry
                         }
                         // 流结束：强制推一次末态，保证 UI 看到解压 100%
                         pushExtractionProgress(isFinal = true)
-                        Log.i(TAG, "extraction: tar stream fully consumed, took ${(System.currentTimeMillis() - extractionStartMs) / 1000}s")
+                        Log.i(
+                            TAG,
+                            "extraction: tar stream fully consumed ($entryCount entries), " +
+                                "took ${(System.currentTimeMillis() - extractionStartMs) / 1000}s",
+                        )
                     }
                 }
             }

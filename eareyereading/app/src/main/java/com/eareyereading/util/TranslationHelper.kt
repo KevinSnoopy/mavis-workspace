@@ -18,6 +18,7 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
+import java.util.LinkedHashMap
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
@@ -57,6 +58,22 @@ class TranslationHelper @Inject constructor(
      */
     @Volatile
     private var initFailedAt = 0L
+
+    // ── 翻译结果内存 LRU 缓存 ─────────────────────────
+    // 同一段落/句子/单词的重复翻译（翻译开关重开、分栏/回译模式重进、
+    // 同句再次双击等）直接命中内存，不再消耗 ML Kit 推理。
+    // accessOrder LinkedHashMap + 条数上限驱逐，synchronizedMap 保证并发安全；
+    // 失败结果不落缓存（下次仍会重试）。
+    private val memoryCache: MutableMap<String, String> =
+        java.util.Collections.synchronizedMap(
+            object : LinkedHashMap<String, String>(64, 0.75f, true) {
+                override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String>): Boolean =
+                    size > MEMORY_CACHE_MAX_ENTRIES
+            },
+        )
+
+    private fun cacheKey(text: String, sourceLang: String, targetLang: String): String =
+        "$sourceLang>$targetLang|$text"
 
     // ── 懒加载初始化（线程安全）─────────────────────
     private suspend fun ensureInitialized() {
@@ -164,9 +181,8 @@ class TranslationHelper @Inject constructor(
 
     /**
      * 语言对感知的统一翻译入口（issue 8.1）。
-     * 默认 en→zh 走单 Translator + 本地词典优先的快路径；
-     * 其余语言对按需创建/下载对应 Translator，不再被硬编码的 EN→ZH 卡死。
-     * 源语言与目标语言相同时视为无需翻译，直接返回原文。
+     * 外层套内存 LRU 缓存：同一文本重复翻译（开关重开/模式重进/同句再点）
+     * 直接命中，不再消耗 ML Kit 推理；失败结果不缓存，下次仍会重试。
      *
      * @param sourceLang 语言代码（如 "en" / "fr" / "ja"，ML Kit 支持范围内）
      * @param targetLang 目标语言代码，默认 "zh"
@@ -178,7 +194,18 @@ class TranslationHelper @Inject constructor(
     ): String? {
         if (text.isBlank()) return null
         if (sourceLang.equals(targetLang, ignoreCase = true)) return text
+        val key = cacheKey(text, sourceLang, targetLang)
+        memoryCache[key]?.let { return it }
+        val result = translateUncached(text, sourceLang, targetLang)
+        if (!result.isNullOrBlank()) memoryCache[key] = result
+        return result
+    }
 
+    private suspend fun translateUncached(
+        text: String,
+        sourceLang: String,
+        targetLang: String,
+    ): String? {
         // 默认方向（EN→ZH）：保留既有快路径（本地词典优先，少消耗 ML Kit）
         if (sourceLang.equals("en", ignoreCase = true) && targetLang.equals("zh", ignoreCase = true)) {
             // issue 8.7：单词级输入（≤20 字符且无空格）先查本地词典，命中即返回，
@@ -192,18 +219,62 @@ class TranslationHelper @Inject constructor(
         return translateViaPair(text, sourceLang, targetLang)
     }
 
+    /**
+     * 预热翻译模型：进阅读页即后台拉起模型下载/就绪，首次开启全文翻译
+     * 不再阻塞等待模型 30s。非阻塞（下载异步进行）、失败静默
+     * （正式翻译路径仍有 60s 重试窗口兜底）。
+     */
+    suspend fun warmUp(sourceLang: String = "en", targetLang: String = "zh") {
+        if (sourceLang.equals("en", ignoreCase = true) && targetLang.equals("zh", ignoreCase = true)) {
+            // 默认方向：只触发懒加载（内部异步下载，不等待完成）
+            ensureInitialized()
+        } else if (languageTag(sourceLang) != null && languageTag(targetLang) != null) {
+            // 其他语言对：单飞启动对应模型下载
+            startPairTranslator(sourceLang, targetLang)
+        }
+    }
+
     suspend fun translateEnToZh(text: String): String? = translate(text, "en", "zh")
 
     /**
      * 非默认语言对的按需翻译：单飞创建 + 下载对应语言模型，之后翻译。
      */
     private suspend fun translateViaPair(text: String, sourceLang: String, targetLang: String): String? {
+        // 并发首次访问只需下载一次；下载失败也以 CompletableDeferred(false) 落地，
+        // 后续不再反复重试（模型缺失是持久态）
+        val ready = startPairTranslator(sourceLang, targetLang) ?: return null
+        if (withTimeoutOrNull(30_000) { ready.await() } != true) {
+            android.util.Log.d("TranslationHelper", "pair $sourceLang>$targetLang model not ready, no translatable output")
+            return null
+        }
+        val key = "$sourceLang>$targetLang"
+        val translator = pairTranslators[key] ?: return null
+        return withTimeoutOrNull(20_000) {
+            suspendCancellableCoroutine { cont ->
+                try {
+                    translator.translate(text)
+                        .addOnSuccessListener { cont.resume(it) }
+                        .addOnFailureListener { cont.resume(null) }
+                } catch (e: java.lang.RuntimeException) {
+                    android.util.Log.w("TranslationHelper", "pair translate threw: ${e.message}", e)
+                    cont.resume(null)
+                }
+            }
+        }
+    }
+
+    /**
+     * 单飞创建并启动某语言对的 Translator 模型下载（幂等）。
+     * warmUp 预热与 translateViaPair 共用：并发首次访问只下载一次。
+     */
+    private fun startPairTranslator(
+        sourceLang: String,
+        targetLang: String,
+    ): CompletableDeferred<Boolean>? {
         val src = languageTag(sourceLang) ?: return null
         val tgt = languageTag(targetLang) ?: return null
         val key = "$sourceLang>$targetLang"
-        // 并发首次访问只需下载一次；下载失败也以 CompletableDeferred(false) 落地，
-        // 后续不再反复重试（模型缺失是持久态）
-        val ready = pairDeferreds.computeIfAbsent(key) { k ->
+        return pairDeferreds.computeIfAbsent(key) { k ->
             CompletableDeferred<Boolean>().also { d ->
                 try {
                     val translator = com.google.mlkit.nl.translate.Translation.getClient(
@@ -222,23 +293,6 @@ class TranslationHelper @Inject constructor(
                 } catch (e: Exception) {
                     android.util.Log.w("TranslationHelper", "init pair $key failed: ${e.message}")
                     d.complete(false)
-                }
-            }
-        }
-        if (withTimeoutOrNull(30_000) { ready.await() } != true) {
-            android.util.Log.d("TranslationHelper", "pair $key model not ready, no translatable output")
-            return null
-        }
-        val translator = pairTranslators[key] ?: return null
-        return withTimeoutOrNull(20_000) {
-            suspendCancellableCoroutine { cont ->
-                try {
-                    translator.translate(text)
-                        .addOnSuccessListener { cont.resume(it) }
-                        .addOnFailureListener { cont.resume(null) }
-                } catch (e: java.lang.RuntimeException) {
-                    android.util.Log.w("TranslationHelper", "pair translate threw: ${e.message}", e)
-                    cont.resume(null)
                 }
             }
         }
@@ -397,6 +451,10 @@ class TranslationHelper @Inject constructor(
 
         // 初始化失败后的重试窗口（issue 8.2）
         const val INIT_RETRY_WINDOW_MS = 60_000L
+
+        // 内存 LRU 缓存上限：段落级译文体量较大，512 条足够覆盖
+        // 整本中小型书籍 + 常用句子/单词，超出按访问顺序驱逐
+        const val MEMORY_CACHE_MAX_ENTRIES = 512
 
         // 整书翻译并发上限：旧实现 200 段一次性 async 同时压 ML Kit
         //（各自还可能等模型就绪），限流后吞吐更高也更稳
