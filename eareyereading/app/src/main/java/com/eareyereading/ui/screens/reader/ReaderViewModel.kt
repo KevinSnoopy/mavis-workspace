@@ -208,6 +208,13 @@ class ReaderViewModel @Inject constructor(
     }
 
     /**
+     * 暴露注入的 CollinsClassifier 单例给渲染层：此前 ReaderScreen 两个视图
+     * 各自 remember { CollinsClassifier() } 手动 new，词表双份内存且在组合期
+     * 构建卡首帧；统一走单例后全 App 一份词表、首次进入阅读页前已就绪。
+     */
+    val wordClassifier: CollinsClassifier get() = collinsClassifier
+
+    /**
      * 显示 TTS 引导弹窗——已下线系统 TTS 探测，只剩"提醒下载内置引擎"一种场景。
      */
     private suspend fun showTtsInstallPrompt(@Suppress("UNUSED_PARAMETER") reason: TtsHelper.InitFailureReason, force: Boolean = false) {
@@ -707,7 +714,12 @@ class ReaderViewModel @Inject constructor(
                     return@launch
                 }
                 val paragraphs = if (book.content.isNotBlank()) {
-                    book.content.split("\n\n").filter { it.isNotBlank() }
+                    // split 是 O(全书) 的字符串切分 + 一次性分配全部段子串，
+                    // 10M 字符的书在主线程执行可感知卡顿——与 EPUB 重解析
+                    // 同样下沉后台调度器
+                    withContext(Dispatchers.Default) {
+                        book.content.split("\n\n").filter { it.isNotBlank() }
+                    }
                 } else {
                     // parseBook 是阻塞式 zip IO + 正则解析，viewModelScope 跑在
                     // Main 上——大书打开时直接 ANR（R9 修过 addBook 同款调用点，
@@ -731,7 +743,10 @@ class ReaderViewModel @Inject constructor(
 
                 _uiState.update {
                     it.copy(
-                        book = book,
+                        // content 剥离：paragraphs 已是全文的段落形态，再在 uiState
+                        // 持有 content 即整书双份常驻内存（10M 字符书 ≈ 40MB+）。
+                        // 后续需要重解析时（content 为空分支）由本地 book 变量兜底
+                        book = book.copy(content = ""),
                         paragraphs = paragraphs,
                         currentParagraphIndex = (state?.currentParagraph ?: 0).coerceIn(0, maxIdx),
                         currentWordIndex = (state?.currentPosition ?: 0).coerceAtLeast(0),
@@ -1593,7 +1608,10 @@ class ReaderViewModel @Inject constructor(
                 val dedupeWord = vocabToSave.word.ifBlank { word }
                 val existing = vocabularyRepository.getWord(dedupeWord)
                 if (existing != null) {
+                    // 此前重复词静默关闭弹窗，与成功路径无差别——用户不知道
+                    // 到底加没加进去；补一条明确提示
                     _uiState.update { it.copy(showWordDialog = false, selectedVocab = null) }
+                    showToast("「$dedupeWord」已在生词本中")
                     return@launch
                 }
 
@@ -1613,6 +1631,7 @@ class ReaderViewModel @Inject constructor(
                         selectedVocab = vocabToSave.copy(id = id),
                     )
                 }
+                showToast("已加入生词本")
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -2126,6 +2145,11 @@ class ReaderViewModel @Inject constructor(
     fun dismissSentenceTranslation() {
         _selectedSentence.value = null
         _sentenceTranslation.value = null
+    }
+
+    /** 句子翻译失败后的重试入口：对当前选中句子重新翻译。 */
+    fun retrySentenceTranslation() {
+        _selectedSentence.value?.let { translateSentence(it) }
     }
 
     // ── 书签 ─────────────────────────────────

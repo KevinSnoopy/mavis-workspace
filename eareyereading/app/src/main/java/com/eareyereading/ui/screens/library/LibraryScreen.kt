@@ -181,7 +181,12 @@ fun LibraryScreen(
                                         cornerRadius = 6.dp,
                                     )
                                 },
-                                modifier = Modifier.clickable { onBookClick(book.id) },
+                                modifier = Modifier.clickable {
+                                    // 点击搜索结果进书后收起搜索态：旧实现从阅读器
+                                    // 返回时仍停在展开的搜索页，列表还是旧关键词的子集
+                                    searchActive = false
+                                    onBookClick(book.id)
+                                },
                             )
                         }
                     }

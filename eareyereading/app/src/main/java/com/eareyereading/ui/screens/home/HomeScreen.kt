@@ -228,6 +228,61 @@ fun HomeScreen(
                 }
             }
 
+            // 新用户空状态引导：没有最近阅读时给一条明确的"导入第一本书"
+            // CTA——旧实现此时"最近阅读"/热力图整段隐藏，新用户面对的
+            // 是全 0 统计卡 + 空柱状图，不知道下一步该做什么
+            if (uiState.recentBooks.isEmpty()) {
+                item {
+                    Spacer(modifier = Modifier.height(28.dp))
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp),
+                        shape = RoundedCornerShape(20.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surface,
+                        ),
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 28.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                        ) {
+                            Surface(
+                                shape = CircleShape,
+                                color = Primary.copy(alpha = 0.10f),
+                            ) {
+                                Icon(
+                                    Icons.Default.MenuBook,
+                                    null,
+                                    tint = Primary,
+                                    modifier = Modifier
+                                        .padding(18.dp)
+                                        .size(28.dp),
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Text(
+                                "开始你的第一本书",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                "导入 EPUB 或用 URL 添加文章，边读边攒生词",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Spacer(modifier = Modifier.height(16.dp))
+                            OutlinedButton(onClick = onNavigateToLibrary) {
+                                Text("去书库导入")
+                            }
+                        }
+                    }
+                }
+            }
+
             // 快捷入口已移除：与底部导航完全重复的 web 仪表盘式链接区。
             // 书库/生词本/复习都在底部导航栏一步直达
             item { Spacer(modifier = Modifier.height(20.dp)) }

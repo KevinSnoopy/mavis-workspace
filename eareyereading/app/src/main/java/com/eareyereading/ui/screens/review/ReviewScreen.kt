@@ -102,8 +102,9 @@ fun ReviewScreen(
                     )
                 }
                 uiState.isSessionComplete && uiState.totalReviewed == 0 -> {
-                    // 没有待复习
-                    EmptyReviewView()
+                    // 没有待复习：给"去阅读攒生词"出口，形成学习闭环
+                    //（旧实现只有一句贺词，页面无任何下一步）
+                    EmptyReviewView(onBack = onBack)
                 }
                 uiState.isSessionComplete -> {
                     // 复习完成总结
@@ -150,7 +151,7 @@ fun ReviewScreen(
 }
 
 @Composable
-private fun EmptyReviewView() {
+private fun EmptyReviewView(onBack: () -> Unit) {
     Column(
         modifier = Modifier.fillMaxSize(),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -174,6 +175,14 @@ private fun EmptyReviewView() {
             style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        Spacer(modifier = Modifier.height(20.dp))
+        // 返回继续阅读：阅读中点词加生词才会进复习队列，
+        // 这里指一条"攒生词"的去路，页面不留死胡同
+        OutlinedButton(onClick = onBack) {
+            Icon(Icons.Default.MenuBook, null, modifier = Modifier.size(16.dp))
+            Spacer(modifier = Modifier.width(6.dp))
+            Text("去阅读攒生词")
+        }
     }
 }
 
@@ -370,6 +379,10 @@ private fun ReviewCardView(
                 haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                 onAnswer(currentIndex, q)
             },
+            onReveal = {
+                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                onReveal()
+            },
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f),
@@ -471,6 +484,7 @@ private fun ReviewFlipCard(
     isShowingAnswer: Boolean,
     isSubmitting: Boolean,
     onAnswer: (Int) -> Unit,
+    onReveal: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     // 翻面动画：0f(正面) ↔ 180f(背面)
@@ -494,6 +508,9 @@ private fun ReviewFlipCard(
         Card(
             modifier = Modifier
                 .fillMaxSize()
+                // 正面整卡可点翻面：文案写着"点击下方按钮查看释义"，但用户
+                // 本能是点卡片本身；背面可点无操作（评分走滑动/按钮）
+                .clickable(enabled = !isShowingAnswer && !isSubmitting) { onReveal() }
                 .graphicsLayer {
                     rotationY = flip.value + (dragOffset / swipeThreshold) * 4f
                     // cameraDistance 的单位是 1dp 像素密度：14 * density.density

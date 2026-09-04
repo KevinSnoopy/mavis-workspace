@@ -167,8 +167,17 @@ fun DictionaryManagerScreen(
                     }
                 },
                 actions = {
-                    IconButton(onClick = { viewModel.refresh() }) {
-                        Icon(Icons.Default.Refresh, "刷新")
+                    // 刷新中给可见反馈：旧实现点刷新无任何状态变化，
+                    // 用户无法感知刷新是否发生
+                    if (uiState.loading) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(24.dp),
+                            strokeWidth = 2.dp,
+                        )
+                    } else {
+                        IconButton(onClick = { viewModel.refresh() }) {
+                            Icon(Icons.Default.Refresh, "刷新")
+                        }
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
