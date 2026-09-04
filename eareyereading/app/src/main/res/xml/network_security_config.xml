@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 阅读源图片/正文走用户自选的任意站点：大量真实 RSS 源（政府/学校/老站）
+     的图片与 feed 仍是 http:// 明文，Android 9+ 默认禁止明文会导致图片
+     全部加载失败、http feed 无法抓取。阅读器场景放开明文限制。 -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

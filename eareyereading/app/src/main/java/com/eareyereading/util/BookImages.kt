@@ -28,6 +28,55 @@ object BookImages {
     /** 标记剥离后的连续空格折叠（"a [[IMG:0]] b" → "a b"）。 */
     private val MULTI_SPACE = Regex(" {2,}")
 
+    // ── HTML <img> → 标记 的共享转换（ArticleParser / RssParser 共用）──
+
+    /** 整段 <img> 标签（src 属性顺序无关）。 */
+    private val IMG_TAG_FULL = Regex(
+        "<img\\b[^>]*\\bsrc\\s*=\\s*[\"']([^\"']+)[\"'][^>]*>",
+        RegexOption.IGNORE_CASE,
+    )
+
+    /** 明显的装饰/追踪类小图：命中即丢弃（1x1 像素、分享徽章等）。 */
+    private val IMG_NOISE_SRC = Regex(
+        "(1x1|pixel|spacer|blank\\.gif|tracking|analytics|beacon|badge|icon|logo|avatar|emoji|smiley|sprite)",
+        RegexOption.IGNORE_CASE,
+    )
+
+    /** Coil 未含 svg 模块，svg 源直接跳过。 */
+    private val IMG_SKIP_EXT = Regex("\\.svg(\\?|#|$)", RegexOption.IGNORE_CASE)
+
+    /**
+     * 把 HTML 里的 `<img>` 替换为独立段落标记 `[[IMG:绝对URL]]`。
+     * - 噪音图（追踪/徽章/svg/data URI）与无法解析成绝对 http(s) 的 src 直接丢弃；
+     * - 相对 src 以 [baseUrl] 解析补全；
+     * - 标记两侧垫空行，后续按空行分段的管线（cleanText /
+     *   stripHtmlKeepParagraphs / addArticleToLibrary 的 split）自然把标记
+     *   切成独立段落，渲染层按插图整块呈现，文字不再错位。
+     */
+    fun replaceImgTagsWithMarkers(html: String, baseUrl: String?): String =
+        html.replace(IMG_TAG_FULL) { m ->
+            val src = m.groupValues[1].trim()
+            val absolute = when {
+                src.isBlank() || src.startsWith("data:", ignoreCase = true) -> null
+                IMG_SKIP_EXT.containsMatchIn(src) -> null
+                IMG_NOISE_SRC.containsMatchIn(src) -> null
+                src.startsWith("http://") || src.startsWith("https://") -> src
+                baseUrl != null -> try {
+                    java.net.URI(baseUrl).resolve(src).toString()
+                } catch (_: Exception) {
+                    null
+                }
+                else -> null
+            }
+            if (absolute != null &&
+                (absolute.startsWith("http://") || absolute.startsWith("https://"))
+            ) {
+                "\n\n[[IMG:$absolute]]\n\n"
+            } else {
+                ""
+            }
+        }
+
     /** 该段落是否是图片标记段（渲染为插图而非文本）。 */
     fun isImageMarker(paragraph: String): Boolean = MARKER_PARAGRAPH.matches(paragraph.trim())
 

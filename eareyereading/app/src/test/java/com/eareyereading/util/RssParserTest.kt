@@ -327,6 +327,58 @@ class RssParserTest {
     }
 
     @Test
+    fun `content encoded keeps images as standalone marker paragraphs`() {
+        // 真实阅读源正文里的 <img> 不再被 stripHtml 一并剥掉：
+        // 绝对 URL 与相对 src（按文章 link 解析）都转成 [[IMG:]] 标记段
+        val html = "<p>First paragraph with enough words to be kept.</p>" +
+            "<figure><img src=\"https://cdn.example.com/photo.jpg\"/></figure>" +
+            "<p>Words after the image continue the article body here.</p>" +
+            "<img src=\"/assets/inline.png\"/>"
+        val xml = """
+            <rss><channel><title>F</title><item>
+              <title>One</title><link>https://www.example.com/story/1</link>
+              <content:encoded><![CDATA[$html]]></content:encoded>
+            </item></channel></rss>
+        """.trimIndent()
+
+        val content = parser.parseXml(xml).items.first().content ?: ""
+        val paragraphs = content.split(Regex("\n\\s*\n"))
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+
+        assertTrue(
+            "expected absolute url marker paragraph, got $paragraphs",
+            paragraphs.contains("[[IMG:https://cdn.example.com/photo.jpg]]"),
+        )
+        assertTrue(
+            "expected relative src resolved against item link, got $paragraphs",
+            paragraphs.contains("[[IMG:https://www.example.com/assets/inline.png]]"),
+        )
+        // 标记段独立成段：不与正文粘连（否则渲染层当普通文本，文字错位）
+        val markerIdx = paragraphs.indexOf("[[IMG:https://cdn.example.com/photo.jpg]]")
+        assertTrue(paragraphs[markerIdx - 1].contains("First paragraph"))
+        assertTrue(paragraphs[markerIdx + 1].contains("Words after the image"))
+        // 正常段落保序保留
+        assertTrue(paragraphs.none { it.contains("<img") || it.contains("<p>") })
+    }
+
+    @Test
+    fun `content encoded noise images are dropped not marked`() {
+        val html = "<p>Body paragraph long enough to survive the filters.</p>" +
+            "<img src=\"https://t.example.com/pixel.gif\"/>" +
+            "<img src=\"data:image/png;base64,iVBOR\"/>"
+        val xml = """
+            <rss><channel><title>F</title><item>
+              <title>One</title><link>https://example.com/1</link>
+              <content:encoded><![CDATA[$html]]></content:encoded>
+            </item></channel></rss>
+        """.trimIndent()
+
+        val content = parser.parseXml(xml).items.first().content ?: ""
+        assertFalse("noise images must not become markers", content.contains("[[IMG:"))
+    }
+
+    @Test
     fun `content encoded html is stripped and bounded`() {
         val longHtml = "<p>" + "word ".repeat(5000) + "</p>"
         val xml = """

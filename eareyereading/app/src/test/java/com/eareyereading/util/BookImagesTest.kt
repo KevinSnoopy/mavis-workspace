@@ -50,6 +50,42 @@ class BookImagesTest {
         assertEquals(listOf("before", "[[IMG:7]]", "after"), expanded)
     }
 
+    // ── <img> → 标记 的共享转换（ArticleParser / RssParser 共用）─────────
+
+    @Test
+    fun `replaceImgTagsWithMarkers keeps absolute url and pads blank lines`() {
+        val out = BookImages.replaceImgTagsWithMarkers(
+            "<p>Text.</p><img src=\"https://cdn.example.com/a.jpg\"/>",
+            baseUrl = "https://www.example.com/story",
+        )
+        assertEquals("<p>Text.</p>\n\n[[IMG:https://cdn.example.com/a.jpg]]\n\n", out)
+    }
+
+    @Test
+    fun `replaceImgTagsWithMarkers resolves relative src against base`() {
+        val out = BookImages.replaceImgTagsWithMarkers(
+            "<img src='/img/pic.png'>",
+            baseUrl = "https://www.example.com/story/page.html",
+        )
+        assertEquals("\n\n[[IMG:https://www.example.com/img/pic.png]]\n\n", out)
+    }
+
+    @Test
+    fun `replaceImgTagsWithMarkers drops noise svg and data uri images`() {
+        val html = "<img src=\"https://t.example/pixel.gif\"/>" +
+            "<img src=\"https://cdn.example.com/logo.svg\"/>" +
+            "<img src=\"data:image/png;base64,iVBOR\"/>" +
+            "<img src=\"https://cdn.example.com/real.jpg\"/>"
+        val out = BookImages.replaceImgTagsWithMarkers(html, baseUrl = "https://www.example.com/")
+        assertEquals("\n\n[[IMG:https://cdn.example.com/real.jpg]]\n\n", out)
+    }
+
+    @Test
+    fun `replaceImgTagsWithMarkers without base drops relative src`() {
+        val out = BookImages.replaceImgTagsWithMarkers("<img src=\"img/rel.jpg\"/>", baseUrl = null)
+        assertEquals("", out)
+    }
+
     // ── EpubParser：<img> → 标记 + zip 条目登记 ─────────────
 
     private fun writeEpub(file: File, entries: Map<String, String>) {

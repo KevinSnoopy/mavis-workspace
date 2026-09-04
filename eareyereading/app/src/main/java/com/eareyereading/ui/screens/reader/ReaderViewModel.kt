@@ -501,6 +501,32 @@ class ReaderViewModel @Inject constructor(
             .flatMap { it.split(SENTENCE_BOUNDARY) }
             .map { it.trim() }
             .filter { it.isNotBlank() }
+
+    /**
+     * 段落按句翻译：先按句末标点（.!?。！？；）切句，逐句过翻译器再拼接成段译文。
+     * - 整段一次翻译在 ML Kit 侧会被长输入截断/降质，超过 TRANSLATION_CHAR_LIMIT
+     *   的段落此前直接被 take() 砍掉尾巴；逐句输入天然规避两类截断；
+     * - 每句独立走 TranslationHelper 的内存 LRU——书中重复出现的句式/对白
+     *   直接命中缓存，重开翻译开关的开销显著降低；
+     * - 任一句失败则整段按失败处理（不写显示/不落缓存），与原段落级语义一致。
+     */
+    private suspend fun translateParagraphBySentences(
+        paragraph: String,
+        sourceLang: String,
+    ): String? {
+        val sentences = splitSentencesCompat(paragraph)
+        if (sentences.isEmpty()) return null
+        val parts = ArrayList<String>(sentences.size)
+        for (sentence in sentences) {
+            val translated = translationHelper.translate(
+                sentence.take(TRANSLATION_CHAR_LIMIT),
+                sourceLang,
+            )
+            if (translated.isNullOrBlank()) return null
+            parts.add(translated.trim())
+        }
+        return parts.joinToString("")
+    }
     // 本次阅读会话的统计（用于 saveProgress/cleanup 时写入 DB）
     private var sessionCharsRead: Long = 0L
     private var lastRecordedParagraphIndex: Int = -1
@@ -1354,7 +1380,11 @@ class ReaderViewModel @Inject constructor(
 
         if (_uiState.value.isTtsPlaying) {
             ttsHelper.pause()
-            _uiState.update { it.copy(isTtsPlaying = false) }
+            // 句链被 stop 打断时 onAllDone 也会清一次；这里同步清，保证
+            // UI 立即退出句子高亮态（等回调会有一帧延迟）
+            _uiState.update {
+                it.copy(isTtsPlaying = false, currentSentences = emptyList(), currentSentenceIndex = 0)
+            }
         } else {
             // 启动前停掉其他播放形态（RSVP/速读可能在跑）
             stopAllPlayback()
@@ -1407,12 +1437,29 @@ class ReaderViewModel @Inject constructor(
         val para = _uiState.value.paragraphs.getOrNull(_uiState.value.currentParagraphIndex) ?: return
         // 插图标记段无文本可读：直接跳过，不进入 TTS 状态
         if (BookImages.isImageMarker(para)) return
-        _uiState.update { it.copy(isTtsPlaying = true) }
-        ttsHelper.speak(para) {
-            viewModelScope.launch {
-                _uiState.update { it.copy(isTtsPlaying = false) }
-            }
+        // 按句朗读（与自动朗读/速读同一套切分与链式播放）：原实现整段
+        // 一次合成，长段既无句级推进高亮，也没法按句暂停跟进
+        val sentences = splitSentencesCompat(para)
+        if (sentences.isEmpty()) return
+        _uiState.update {
+            it.copy(isTtsPlaying = true, currentSentences = sentences, currentSentenceIndex = 0)
         }
+        ttsHelper.speakSentences(
+            sentences = sentences,
+            onSentenceDone = { sentenceIdx ->
+                // 同自动朗读语义："第 sentenceIdx 句已读完"，高亮推进到下一句
+                _uiState.update {
+                    it.copy(currentSentenceIndex = (sentenceIdx + 1).coerceAtMost(sentences.size - 1))
+                }
+            },
+            onAllDone = {
+                viewModelScope.launch {
+                    _uiState.update {
+                        it.copy(isTtsPlaying = false, currentSentences = emptyList(), currentSentenceIndex = 0)
+                    }
+                }
+            },
+        )
     }
 
     fun nextParagraph() {
@@ -1779,10 +1826,7 @@ class ReaderViewModel @Inject constructor(
                         val jobs = ordered.map { idx ->
                             async(Dispatchers.IO) {
                                 semaphore.withPermit {
-                                    idx to translationHelper.translate(
-                                        paragraphs[idx].take(TRANSLATION_CHAR_LIMIT),
-                                        sourceLang,
-                                    )
+                                    idx to translateParagraphBySentences(paragraphs[idx], sourceLang)
                                 }
                             }
                         }

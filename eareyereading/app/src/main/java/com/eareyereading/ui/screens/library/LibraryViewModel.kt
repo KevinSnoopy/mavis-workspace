@@ -687,10 +687,13 @@ class LibraryViewModel @Inject constructor(
                 // issue 7.3：优先用 feed 自带的完整正文（content:encoded），
                 // 仅在为空时才回退去抓 link——NPR 等源的 <link> 指向 SPA 渲染页，
                 // HttpURLConnection 拿到的是空壳 HTML，抓取路径基本必失败
+                // expandInlineMarkers：正文里的 [[IMG:url]] 插图标记统一规整为
+                // 独立段落（feed 正文图片由 RssParser 转成标记，见 BookImages）
                 val feedParagraphs = article.content
                     ?.split(Regex("\n\\s*\n"))
                     ?.map { it.trim() }
                     ?.filter { it.isNotEmpty() }
+                    ?.let { com.eareyereading.util.BookImages.expandInlineMarkers(it) }
                     .orEmpty()
                 val result = if (feedParagraphs.isNotEmpty()) {
                     ArticleResult(

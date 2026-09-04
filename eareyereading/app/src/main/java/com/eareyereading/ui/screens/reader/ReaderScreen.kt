@@ -2,6 +2,7 @@ package com.eareyereading.ui.screens.reader
 
 import android.widget.Toast
 import androidx.compose.animation.*
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.*
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
@@ -57,6 +58,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import coil.compose.AsyncImage
+import coil.compose.AsyncImagePainter
 import coil.request.ImageRequest
 import com.eareyereading.domain.model.ReadingMode
 import com.eareyereading.domain.model.ReadingTheme
@@ -435,6 +437,21 @@ fun ReaderScreen(
             }
         },
     ) { padding ->
+        // 沉浸态系统栏避让：chrome 收起后 topBar/bottomBar 槽位高度归零，
+        // 正文会顶进状态栏/手势导航条区域，首行文字被时钟电量图标压住。
+        // 这里按 chrome 显隐补回系统栏内边距；animateDpAsState 与
+        // AnimatedVisibility 的收起动画同节奏过渡，收起过程不跳变。
+        val insetsDensity = LocalDensity.current
+        val immersiveTopPad by animateDpAsState(
+            targetValue = if (chromeVisible) 0.dp
+            else with(insetsDensity) { WindowInsets.statusBars.getTop(this).toDp() },
+            label = "immersiveTopPad",
+        )
+        val immersiveBottomPad by animateDpAsState(
+            targetValue = if (chromeVisible) 0.dp
+            else with(insetsDensity) { WindowInsets.navigationBars.getBottom(this).toDp() },
+            label = "immersiveBottomPad",
+        )
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -448,6 +465,9 @@ fun ReaderScreen(
                     detectTapGestures { chromeVisible = !chromeVisible }
                 }
                 .padding(padding)
+                // 沉浸态补回系统栏避让（chrome 显示时这两段为 0，由 TopAppBar/
+                // ReadingBottomBar 自己处理 insets，不会叠加双份）
+                .padding(top = immersiveTopPad, bottom = immersiveBottomPad)
                 .padding(horizontal = 20.dp),
         ) {
             if (uiState.isLoading) {
@@ -484,7 +504,9 @@ fun ReaderScreen(
                             showKnownWordsHighlight = uiState.showKnownWordsHighlight,
                             knownWords = uiState.knownWords,
                             learnedWords = uiState.learnedWords,
-                            isAutoReading = uiState.isAutoReading,
+                            // 单段朗读（isTtsPlaying）现也走句链播放：一并启用
+                            // 句子级同步高亮，与自动朗读同一套渲染
+                            isAutoReading = uiState.isAutoReading || uiState.isTtsPlaying,
                             currentSentences = uiState.currentSentences,
                             currentSentenceIndex = uiState.currentSentenceIndex,
                             onWordClick = viewModel::selectWord,
@@ -511,7 +533,8 @@ fun ReaderScreen(
                             showKnownWordsHighlight = uiState.showKnownWordsHighlight,
                             knownWords = uiState.knownWords,
                             learnedWords = uiState.learnedWords,
-                            isAutoReading = uiState.isAutoReading,
+                            // 同 PagedReadingView：单段朗读也启用句级同步高亮
+                            isAutoReading = uiState.isAutoReading || uiState.isTtsPlaying,
                             currentSentences = uiState.currentSentences,
                             currentSentenceIndex = uiState.currentSentenceIndex,
                             onWordClick = viewModel::selectWord,
@@ -916,13 +939,18 @@ fun NormalReadingView(
 }
 
 /**
- * 段落插图渲染：`[[IMG:n]]`（EPUB 落盘降采样 JPEG）/ `[[IMG:url]]`（文章在线图）。
+ * 段落插图渲染：`[[IMG:n]]`（EPUB 落盘降采样 JPEG）/ `[[IMG:url]]`（文章/RSS 在线图）。
  *
  * 性能（用户确认"可以展示模糊一些"）：
  *  - Coil ImageRequest 固定 size(720)——按需解码 720px 宽的缩略位图，
  *    原图尺寸再大也不在阅读滚动路径上进出内存；
- *  - EPUB 图导入期已重编码为小 JPEG，文章图按 720 解码 + memoryCache，
- *    单图解码内存 ~≤2MB，翻页/滚动时 Coil 缓存直接命中。
+ *  - EPUB 图导入期已重编码为小 JPEG，文章图按 720 解码，memoryCacheKey 稳定
+ *    派生，Coil 磁盘缓存默认开启——单图解码内存 ~≤2MB，翻页/滚动时缓存直接命中。
+ *
+ * 版式（issue：真实阅读源图片加载时文字错位）：
+ *  - 加载中先占位（浅底 + minHeight），段落高度不再从 0 突变到图片高度，
+ *    后文不会先"上移占位"再被图片顶下去；
+ *  - 失败显示紧凑占位条（图片加载失败），保留段落节奏，后文不塌陷。
  */
 @Composable
 private fun ReaderImageBlock(
@@ -936,20 +964,52 @@ private fun ReaderImageBlock(
             ?.let { BookImages.localImageFile(context, bookId, it) }
             ?: ref
     }
+    // null = 首帧还没回调（视为加载中）：占位先顶住段落高度
+    var imageState by remember(ref, bookId) {
+        mutableStateOf<AsyncImagePainter.State?>(null)
+    }
+    val failed = imageState is AsyncImagePainter.State.Error
     Box(
         modifier = modifier
             .fillMaxWidth()
             .padding(vertical = 8.dp),
         contentAlignment = Alignment.Center,
     ) {
+        // 加载中/失败占位：Success 前 minHeight 先占住版式高度，后文不被
+        // 突然弹出的图片顶下去（错位感）；失败保留紧凑提示条不塌陷
+        if (imageState !is AsyncImagePainter.State.Success) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = if (failed) 48.dp else 160.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(
+                        MaterialTheme.colorScheme.onSurface.copy(
+                            alpha = if (failed) 0.06f else 0.10f,
+                        ),
+                    ),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (failed) {
+                    Text(
+                        text = "图片加载失败",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = LocalContentColor.current.copy(alpha = 0.55f),
+                        modifier = Modifier.padding(vertical = 8.dp),
+                    )
+                }
+            }
+        }
         AsyncImage(
             model = ImageRequest.Builder(context)
                 .data(model)
                 .size(720)
                 .memoryCacheKey("reader_img_${bookId}_${ref.takeLast(64)}")
+                .crossfade(180)
                 .build(),
             contentDescription = "插图",
             contentScale = ContentScale.Fit,
+            onState = { imageState = it },
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(8.dp)),
@@ -2416,6 +2476,9 @@ fun ReadingBottomBar(
     Surface(
         shadowElevation = 4.dp,
         color = MaterialTheme.colorScheme.surface,
+        // Scaffold contentWindowInsets=0：底栏必须自己避让手势导航条，
+        // 否则上一段/下一段按钮整行被系统手势区压住
+        modifier = Modifier.navigationBarsPadding(),
     ) {
         Column(modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp)) {
             // 快捷设置行（微信读书式）：字号 ±、主题循环、衬线切换。

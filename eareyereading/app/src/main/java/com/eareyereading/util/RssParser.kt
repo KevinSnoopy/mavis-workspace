@@ -238,8 +238,14 @@ class RssParser @Inject constructor() {
                 // issue 7.1：content:encoded 是 feed 自带的完整正文，
                 // 独立保存且不截断——此前与 description 混流并被 MAX_DESC 砍掉
                 "content", "encoded" -> {
+                    // 插图先行：<img> → [[IMG:绝对URL]] 标记（以文章 link 为基准
+                    // 解析相对地址；链接缺失时退回 feed 链接）。此前 stripHtml
+                    // 把 <img> 一并剥掉，真实阅读源正文里的图片全部丢失，
+                    // 阅读页只有文字、与原文版式错位。标记独立成段，
+                    // 导入书库后渲染层按插图整块加载
+                    val withImages = BookImages.replaceImgTagsWithMarkers(raw, item.link ?: feedLink)
                     // 保留段落结构（</p> 等块级标签 → 空行），导入书库时按段切分
-                    val cleaned = stripHtmlKeepParagraphs(raw)
+                    val cleaned = stripHtmlKeepParagraphs(withImages)
                     if (inArticle) {
                         if (cleaned.isNotEmpty()) item.content.append(cleaned)
                     } else if (feedDescription == null) {

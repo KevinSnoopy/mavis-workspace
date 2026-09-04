@@ -54,21 +54,6 @@ class ArticleParser @Inject constructor() {
                 "|<(?:aside|nav|figcaption|iframe|button|form|input|select|textarea|ins)\\b[^>]*/?>",
         )
 
-        // ── 插图提取：整段 <img> 标签（src 属性顺序无关）──
-        private val IMG_TAG_FULL = Regex(
-            "<img\\b[^>]*\\bsrc\\s*=\\s*[\"']([^\"']+)[\"'][^>]*>",
-            RegexOption.IGNORE_CASE,
-        )
-
-        /** 明显的装饰/追踪类小图：命中即丢弃（1x1 像素、分享徽章等）。 */
-        private val IMG_NOISE_SRC = Regex(
-            "(1x1|pixel|spacer|blank\\.gif|tracking|analytics|beacon|badge|icon|logo|avatar|emoji|smiley|sprite)",
-            RegexOption.IGNORE_CASE,
-        )
-
-        /** Coil 未含 svg 模块，svg 源直接跳过。 */
-        private val IMG_SKIP_EXT = Regex("\\.svg(\\?|#|$)", RegexOption.IGNORE_CASE)
-
         // ── 每次调用重新编译的正则全部提升为常量（文章解析路径高频）──
         private val EXCLUDE_LINK_PATTERN = Regex(
             """(login|sign[-]?in|sign[-]?up|register|about|contact|privacy|terms|category|tag|author|profile|feed|rss|xml|sitemap|css|js|png|jpg|gif|svg|ico|pdf|zip)""",
@@ -355,34 +340,7 @@ class ArticleParser @Inject constructor() {
 
     /** <img> → 段落级 [[IMG:绝对URL]] 标记；噪音图（追踪/徽章/svg/data URI）直接丢弃。 */
     private fun replaceImgWithMarkers(html: String, baseUrl: String?): String =
-        html.replace(IMG_TAG_FULL) { m ->
-            val src = m.groupValues[1].trim()
-            when {
-                src.isBlank() || src.startsWith("data:", ignoreCase = true) -> ""
-                IMG_SKIP_EXT.containsMatchIn(src) -> ""
-                IMG_NOISE_SRC.containsMatchIn(src) -> ""
-                else -> {
-                    val absolute = if (src.startsWith("http://") || src.startsWith("https://")) {
-                        src
-                    } else if (baseUrl != null) {
-                        try {
-                            java.net.URI(baseUrl).resolve(src).toString()
-                        } catch (_: Exception) {
-                            null
-                        }
-                    } else {
-                        null
-                    }
-                    if (absolute != null &&
-                        (absolute.startsWith("http://") || absolute.startsWith("https://"))
-                    ) {
-                        "\n\n[[IMG:$absolute]]\n\n"
-                    } else {
-                        ""
-                    }
-                }
-            }
-        }
+        BookImages.replaceImgTagsWithMarkers(html, baseUrl)
 
     /**
      * 提取文章标题
