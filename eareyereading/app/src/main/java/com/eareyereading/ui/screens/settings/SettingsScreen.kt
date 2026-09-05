@@ -380,10 +380,16 @@ class SettingsViewModel @Inject constructor(
     /**
      * 切换内置语音模型。已下载的模型立即换引擎（朗读即时生效）；
      * 未下载的只记住选择，由现有"下载内置语音模型"按钮引导下载。
+     *
+     * 切换前先停止当前朗读：initialize 会挂在 speakMutex 上等朗读结束，
+     * 用户会感觉"点了切换没反应"。先 stop() 让锁立即释放，切换才即时生效。
+     * 切换后触发 warmUp：否则首次朗读要付 ~10 秒冷启动开销（Kokoro 首块）。
      */
     fun setEmbeddedModel(id: String) {
         viewModelScope.launch {
             if (id == embeddedTts.getSelectedModelId()) return@launch
+            // 先停止当前朗读：initialize 需要 speakMutex，正在朗读时锁被持有
+            ttsHelper.stop()
             embeddedTts.setSelectedModelId(id)
             val model = embeddedTts.getCurrentModelInfo()
             val downloaded = withContext(Dispatchers.IO) { embeddedTts.isModelDownloaded(model) }
@@ -395,6 +401,13 @@ class SettingsViewModel @Inject constructor(
                         embeddedReady = ok,
                         snackbarMessage = if (ok) "已切换到 ${model.displayName}" else "切换失败：模型初始化异常",
                     )
+                }
+                // 切换成功后预热：与 TtsHelper.initializeEmbeddedForced 一致，
+                // 把首次推理冷启动开销挪到切换后的空闲期，而非下次朗读的首声
+                if (ok) {
+                    launch {
+                        try { embeddedTts.warmUp() } catch (_: Exception) {}
+                    }
                 }
             } else {
                 _uiState.update {
@@ -411,6 +424,10 @@ class SettingsViewModel @Inject constructor(
      * 选择 Kokoro 音色（sid）并立即试听一句。
      * 引擎未就绪/加载的仍是其他模型时先尝试初始化（模型已下载则换引擎）；
      * 未下载时只保存选择。
+     *
+     * 试听前用 ttsHelper.stop() 而非 embeddedTts.stop()：TtsHelper 层的
+     * sentenceChainJob 也需取消，否则自动朗读的 onAllDone 回调不触发、
+     * ReaderViewModel 的朗读循环状态不一致。
      */
     fun selectEmbeddedVoice(sid: Int) {
         viewModelScope.launch {
@@ -423,14 +440,16 @@ class SettingsViewModel @Inject constructor(
             // 先初始化把引擎换到选中的 Kokoro，否则试听会落在英文声上
             val engineReady = embeddedTts.state.value is EmbeddedTtsEngine.EngineState.READY
             if (!engineReady || !embeddedTts.isKokoroActive) {
+                // 初始化前先停朗读：initialize 需要 speakMutex，正在朗读时锁被持有
+                ttsHelper.stop()
                 val ok = embeddedTts.initialize(model)
                 if (!ok) {
                     _uiState.update { it.copy(snackbarMessage = "已保存音色，下载并启用模型后生效") }
                     return@launch
                 }
             }
-            // 试听：停掉正在播的（含上一次试听），再读一句中英混合样例
-            embeddedTts.stop()
+            // 试听：停掉正在播的（含上一次试听 + 自动朗读链），再读一句中英混合样例
+            ttsHelper.stop()
             val previewText = when {
                 sid >= 58 -> "你好，这是中文男声音色试听。Hello!"
                 sid >= 3 -> "你好，这是中文女声音色试听。Hello!"

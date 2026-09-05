@@ -2,6 +2,8 @@ package com.eareyereading.tts
 
 import android.content.Context
 import android.media.AudioAttributes
+import android.media.AudioDeviceInfo
+import android.media.AudioFocusRequest
 import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioTrack
@@ -71,6 +73,32 @@ class EmbeddedTtsEngine @Inject constructor(
     @Volatile
     private var sampleRate: Int = 22050
 
+    /**
+     * 已完成"首次推理预热"的模型 id（见 [warmUp]）。
+     * release()/换模型后置 null——新的 OfflineTts 实例要重新预热；
+     * 任何一次真实合成成功也会置位（真实请求本身就完成了预热）。
+     */
+    @Volatile
+    private var warmedUpModelId: String? = null
+
+    /**
+     * 短文本（单词）预合成 PCM 缓存：key = "清洗后文本|sid|speed"。
+     *
+     * 为什么需要：Kokoro 每次 generate 调用有 ~2 秒**固定开销**（与文本长度
+     * 无关——真机实测：7 字符单词合成 1.2 秒音频耗时 2.9 秒；80 字符长块
+     * 6.5 秒音频耗时 4.2 秒，反推固定成本 ~2s + RTF≈0.34）。固定开销在
+     * native 推理层，预热消不掉、每次都付——单词/短句现场合成必然卡。
+     * 单词弹窗打开时后台预合成进缓存，点喇叭时零推理延迟直接播
+     * （2026-09-05 "读一个单词都卡"修复）。
+     *
+     * android.util.LruCache 的 get/put 方法级 synchronized，线程安全。
+     */
+    private val pcmCache = android.util.LruCache<String, FloatArray>(PCM_CACHE_ENTRIES)
+
+    /** 缓存键：与 [doSpeakQueueLocked] 的消费端保持一致（清洗后文本 + 音色 + 语速）。 */
+    private fun cacheKey(text: String, sid: Int, speed: Float): String =
+        "${text.trim().lowercase()}|$sid|$speed"
+
     private val audioTrackLock = Any()
     private var audioTrack: AudioTrack? = null
 
@@ -109,6 +137,31 @@ class EmbeddedTtsEngine @Inject constructor(
     private var audioFocusHeld = false
 
     /**
+     * 播放轨道与焦点请求共用的音频属性（两处必须严格一致）。
+     *
+     * CONTENT_TYPE_MUSIC 而非 SPEECH（2026-09-05 真机诊断定案）：MIUI/HyperOS
+     * 对 SPEECH 内容类型走语音通道特殊策略（与小爱同学/语音识别通道互斥），
+     * 实测 USAGE_MEDIA+CONTENT_TYPE_SPEECH 组合下 AudioTrack 写入成功、
+     * start 成功、状态 PLAYING，但 mixer 恒不消费（playbackHeadPosition=0），
+     * 扬声器完全无声；pcmPeak/musicVol 诊断排除数据与音量因素后锁定于此。
+     */
+    private val playbackAudioAttributes: AudioAttributes = AudioAttributes.Builder()
+        .setUsage(AudioAttributes.USAGE_MEDIA)
+        .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+        .build()
+
+    /**
+     * 焦点请求（API 26+ 新 API）：旧版 requestAudioFocus(listener, STREAM_MUSIC,
+     * gain) 走 legacy stream 焦点路径，与无 streamType 的 AudioTrack 属性不一致，
+     * MIUI 焦点状态机在此错配下行为不可预期（deprecated 警告即源于此）。
+     */
+    private val focusRequest: AudioFocusRequest = AudioFocusRequest
+        .Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+        .setAudioAttributes(playbackAudioAttributes)
+        .setOnAudioFocusChangeListener(focusListener)
+        .build()
+
+    /**
      * 外部停止信号：音频焦点丢失等系统事件触发。
      * 引擎的 stop() 只能取消"正在出声的那一句"，循环播放是由上层
      * （ReaderViewModel 的 autoRead/speed/rsvp Job）驱动的——它们以
@@ -122,12 +175,7 @@ class EmbeddedTtsEngine @Inject constructor(
         if (audioFocusHeld) return
         val am = audioManager ?: return
         try {
-            @Suppress("DEPRECATION")
-            val result = am.requestAudioFocus(
-                focusListener,
-                AudioManager.STREAM_MUSIC,
-                AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK,
-            )
+            val result = am.requestAudioFocus(focusRequest)
             // 只在真正拿到焦点时置位：系统拒给焦点（通话中）时若照样置 true，
             // 一来 abandon 会归还我们没持有的焦点，二来"未持焦点"语义丢失
             audioFocusHeld = result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
@@ -144,8 +192,7 @@ class EmbeddedTtsEngine @Inject constructor(
         audioFocusHeld = false
         val am = audioManager ?: return
         try {
-            @Suppress("DEPRECATION")
-            am.abandonAudioFocus(focusListener)
+            am.abandonAudioFocusRequest(focusRequest)
         } catch (e: Exception) {
             Log.w(TAG, "abandonAudioFocus failed", e)
         }
@@ -303,10 +350,51 @@ class EmbeddedTtsEngine @Inject constructor(
         /**
          * 单块合成文本最大字符数：块内只有逗号没有句末标点时，sherpa-onnx
          * 内部按句切分的回调不触发，整块合成完才出声——块越长首声延迟越大、
-         * 欠载爆炸半径越大（150 字符块实测首块 6 秒无输出）。80 字符在
-         * "回调粒度"与"每块 native 调用开销"之间取平衡。
+         * 欠载爆炸半径越大（150 字符块实测首块 6 秒无输出）。
+         *
+         * 2026-09-05：从 80 收紧到 50。Kokoro RTF≈0.65，80 字符 ≈ 6.5 秒音频
+         * 合成需 4.2 秒，首块等待过长；50 字符 ≈ 4 秒音频合成 ~2.6 秒，首声
+         * 延迟显著降低。配合 [hardChunks] 按次级标点（逗号/分号/冒号）切分，
+         * 每块更可能以标点结尾 → sherpa-onnx 内部回调更早触发 → 真正流式出声。
          */
-        private const val MAX_CHUNK_CHARS = 80
+        private const val MAX_CHUNK_CHARS = 50
+
+        /**
+         * 推理预热文本（见 [warmUp]）：长度必须接近真实首块负载
+         * （~90 字符 ≈ 4-6 秒音频）。用 "Ok." 这类短句预热时，ONNX Runtime
+         * 的 arena 内存池只长到小句规模，真实首句推理仍要触发大额 arena
+         * 扩张与物理页缺页，冷启动成本大部分重现（2026-09-05 真机实测：
+         * 短句预热后首句出声仍 ~8s）。长句预热把内存池/页表一次性长到
+         * 峰值形状，真实首句直接复用。合成出的音频直接丢弃，
+         * 不建 AudioTrack、不申请音频焦点。
+         */
+        private const val WARMUP_TEXT =
+            "The morning sun rises slowly over the quiet hills, and the birds begin to sing in the trees."
+
+        /**
+         * 预合成 PCM 缓存条目数（单词场景）：单条约 100-300KB
+         * （1-3 秒 24kHz Float PCM），24 条峰值 ~7MB。
+         */
+        private const val PCM_CACHE_ENTRIES = 24
+
+        /**
+         * 预合成仅面向短文本（单词/短语）：超长文本的每次 generate 固定开销
+         * 占比小，缓存价值低且浪费内存。
+         */
+        private const val MAX_PREWARM_CHARS = 40
+
+        /**
+         * AudioTrack 硬件采样率：固定 48000（设备 primary output 原生率）。
+         *
+         * 为什么不用模型原生率（Kokoro 24000 / Piper 22050）：2026-09-05 真机
+         * 诊断——MIUI（afSampleRate=48000）上 24kHz 的流写入成功、start
+         * 成功、自报 PLAYING，但 mixer 恒不消费（playbackHeadPosition=0，
+         * 扬声器无声；pcmPeak/musicVol 均正常）。疑为 AudioPolicy 把非
+         * 原生率流路由到不支持重采样的 direct/low-power 输出线程
+         * （audio_lowpower_app_list.xml 即该策略配置文件）。统一上采样到
+         * 48k 建轨，强制走 primary mixer 原生路径。
+         */
+        private const val TRACK_SAMPLE_RATE = 48000
 
         /**
          * 内置可用模型列表。
@@ -763,8 +851,14 @@ private fun splitSentences(text: String): List<String> {
 }
 
 /**
- * 超长句切块（≤maxLen）：优先在空白处断，找不到就硬切。
- * 替代旧的 substring(0,150)——那是直接丢弃 150 字符以后的全部内容。
+ * 超长句切块（≤maxLen）：优先在次级标点（逗号/分号/冒号）处断，其次在空白处断，
+ * 找不到就硬切。替代旧的 substring(0,150)——那是直接丢弃 150 字符以后的全部内容。
+ *
+ * 为什么优先按次级标点切（2026-09-05 长句慢修复）：sherpa-onnx generateWithCallback
+ * 的回调由 native 端按句末标点触发。块内只有逗号没有句末标点时，整块合成完才回调
+ * 一次——块越长首声延迟越大（80 字符块实测首块 6 秒无输出）。按逗号切分后，每块
+ * 以标点结尾，native 端在标点处触发回调，采样边合成边写入 AudioTrack 立即出声，
+ * 首声延迟从"整块合成时间"降到"首小句合成时间"。
  */
 private fun hardChunks(sentence: String, maxLen: Int): List<String> {
     if (sentence.length <= maxLen) return listOf(sentence)
@@ -773,8 +867,21 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
     while (start < sentence.length) {
         val end = minOf(start + maxLen, sentence.length)
         val cut = if (end < sentence.length) {
-            val ws = sentence.lastIndexOf(' ', end)
-            if (ws > start + maxLen - 40) ws else end
+            // 优先在次级标点处断（逗号/分号/冒号/中文逗号/中文分号）：
+            // 标点后切分让块以标点结尾，sherpa-onnx 内部回调更早触发
+            val punctChars = charArrayOf(',', ';', ':', '，', '；', '：')
+            var bestPunct = -1
+            for (i in end - 1 downTo start + maxLen / 2) {
+                if (sentence[i] in punctChars) {
+                    bestPunct = i + 1  // 标点之后切，保留标点在块尾
+                    break
+                }
+            }
+            if (bestPunct > start) bestPunct else {
+                // 次级标点找不到：回退到空白处断
+                val ws = sentence.lastIndexOf(' ', end)
+                if (ws > start + maxLen - 40) ws else end
+            }
         } else {
             end
         }
@@ -1794,7 +1901,10 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
                 var assigned = false
                 try {
                     speakMutex.withLock {
-                        synchronized(this) {
+                        // 注意锁对象必须是引擎实例本身：withContext 的 lambda 里裸 this
+                        // 是 CoroutineScope，与 release() 的 synchronized(this)（成员
+                        // 函数内 = 引擎实例）不是同一把锁，互斥会失效
+                        synchronized(this@EmbeddedTtsEngine) {
                             // 锁内双检：快路径检查后两个协程可能同时在锁外构造
                             // OfflineTts（各 ~66MB native 内存）。后进锁者若发现
                             // 同模型已被抢先加载，直接复用——否则会把刚加载好的
@@ -1848,6 +1958,108 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
                 false
             }
         }
+
+    /**
+     * 后台预热：跑一次与真实首块等长的合成并丢弃音频，提前消化
+     * ONNX Runtime **首次** generate 的一次性开销（图优化、线程池爬升、
+     * arena 内存池扩张与物理页缺页）。
+     *
+     * **为什么需要**（2026-09-05 真机日志实测，Kokoro int8 / 4 线程）：
+     * 首次 generateWithCallback 从入队到攒满 0.8s 预缓冲花了 **10.4 秒**，
+     * 而稳态第二块仅 4.2 秒合成 6.5 秒音频（RTF≈0.65）——即首块里约
+     * 7-8 秒是纯冷启动开销，全部落在"用户点击朗读后的首声延迟"上。
+     * 把这笔开销挪到进书/初始化后的空闲时间，用户点击时引擎已热，
+     * 首声延迟从 10s 级降到稳态首块合成时间（约 1-3 秒）。
+     *
+     * **预热形状必须匹配真实负载**：用 [WARMUP_TEXT]（~90 字符，与首块
+     * 同规模）。短句预热（如 "Ok."）只把 arena 内存池长到小句规模，
+     * 真实长句推理时大额扩张与缺页成本会重现，预热近乎无效。
+     *
+     * 锁语义：tryLock 立即返回——拿不到锁说明有真实朗读正在合成
+     * （它自己就会完成预热，[doSpeakQueueLocked] 成功后同样置位），
+     * 本次预热直接放弃，绝不排在用户请求后面反向增加首声延迟；
+     * 预热期间新来的真实请求会挂在 mutex 上等预热结束，但预热剩余
+     * 时间 ≤ 无预热时该请求自己要付的冷启动时间，只会更快不会更慢。
+     */
+    suspend fun warmUp() = withContext(Dispatchers.IO) {
+        val modelId = currentModelName
+        if (modelId.isEmpty() || modelId == warmedUpModelId) return@withContext
+        if (!speakMutex.tryLock()) return@withContext
+        try {
+            // 双检：等锁/调度期间引擎可能已被 release() 或换了模型
+            val engine = synchronized(this@EmbeddedTtsEngine) { tts } ?: return@withContext
+            if (currentModelName != modelId) return@withContext
+            val sid = if (currentModelIsKokoro) getSelectedSid() else 0
+            val startMs = System.currentTimeMillis()
+            try {
+                // 与真实朗读同一代码路径（generateWithCallback + sid），
+                // 确保 ONNX 会话/内存池/线程池全部被预热
+                engine.generateWithCallback(WARMUP_TEXT, sid = sid, speed = 1.0f) { _ -> 1 }
+                warmedUpModelId = modelId
+                Log.i(
+                    TAG,
+                    "warmUp: model=$modelId done in ${System.currentTimeMillis() - startMs}ms",
+                )
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // 预热失败静默：真实朗读路径有自己的重试/熔断处理，
+                // 下次 initialize 后还会再尝试
+                Log.w(TAG, "warmUp generate failed (harmless, first real speak will retry)", e)
+            }
+        } finally {
+            speakMutex.unlock()
+        }
+    }
+
+    /**
+     * 预合成一段短文本（≤[MAX_PREWARM_CHARS]，单词/短语）并把 PCM 存入
+     * [pcmCache]；朗读路径命中缓存时跳过 generate 直接播（见
+     * [doSpeakQueueLocked]），避开 Kokoro 每次 generate ~2s 的固定开销。
+     *
+     * 典型用法：单词释义弹窗打开时调用——用户看释义的几秒内合成完成，
+     * 点喇叭时缓存命中立即出声；若用户在预合成完成前点喇叭，speak 挂在
+     * mutex 上等预合成结束，缓存随即命中，总延迟仍严格小于现场合成。
+     *
+     * 锁语义与 [warmUp] 一致：tryLock 拿不到（正文朗读进行中）直接放弃——
+     * 预合成是体验优化，绝不能反过来阻塞用户的正文朗读。
+     * 引擎未加载/文本超长/已在缓存：零成本 no-op。
+     */
+    suspend fun prewarmSynthesis(text: String, speed: Float = 1.0f) = withContext(Dispatchers.IO) {
+        val trimmed = text.trim()
+        if (trimmed.isEmpty() || trimmed.length > MAX_PREWARM_CHARS) return@withContext
+        if (synchronized(this@EmbeddedTtsEngine) { tts } == null) return@withContext
+        val isKokoro = currentModelIsKokoro
+        val sid = if (isKokoro) getSelectedSid() else 0
+        // 与朗读路径同一套清洗：缓存键与合成输入都必须和 doSpeakQueueLocked 对齐
+        val cleaned = if (isKokoro) preprocessForTtsLight(trimmed) else preprocessForTts(trimmed)
+        if (cleaned.isBlank()) return@withContext
+        val key = cacheKey(cleaned, sid, speed)
+        if (pcmCache.get(key) != null) return@withContext
+        if (!speakMutex.tryLock()) return@withContext
+        try {
+            // 双检：等锁期间可能已被另一条路径合成并缓存 / 引擎被 release
+            val engine = synchronized(this@EmbeddedTtsEngine) { tts } ?: return@withContext
+            if (pcmCache.get(key) != null) return@withContext
+            val audio = engine.generateWithCallback(cleaned, sid = sid, speed = speed) { _ -> 1 }
+            if (audio.samples.isNotEmpty()) {
+                pcmCache.put(key, audio.samples)
+                // 顺带完成引擎级预热置位（本次 generate 已消化首次推理开销）
+                warmedUpModelId = currentModelName
+                Log.i(
+                    TAG,
+                    "prewarmSynthesis cached: '${cleaned.take(30)}', samples=${audio.samples.size}",
+                )
+            }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // 预合成失败静默：点喇叭时走正常合成路径兜底
+            Log.w(TAG, "prewarmSynthesis failed for '${trimmed.take(30)}'", e)
+        } finally {
+            speakMutex.unlock()
+        }
+    }
 
     /**
      * 朗读一段文字（阻塞至音频播放完毕，由调用方在协程中调用）。
@@ -2000,6 +2212,20 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
                             // 按句切分的回调不触发，整块合成完才回调——块越长首声延迟越大
                             for (chunk in hardChunks(sub, MAX_CHUNK_CHARS)) {
                                 val framesBeforeChunk = player.framesOffered
+                                // 预合成缓存命中（单词弹窗 selectWord 时后台预合成）：
+                                // 跳过 generate 直接播缓存 PCM——Kokoro 每次 generate 有
+                                // ~2s 固定开销（与文本长度无关），单词现场合成必然卡
+                                val cachedPcm = pcmCache.get(cacheKey(chunk, sid, speed))
+                                if (cachedPcm != null) {
+                                    if (speakJob?.isActive != false) {
+                                        player.offer(cachedPcm)
+                                        Log.i(
+                                            TAG,
+                                            "Embedded TTS chunk from cache: len=${chunk.length}, " +
+                                                "samples=${cachedPcm.size}",
+                                        )
+                                    }
+                                } else {
                                 val audio = try {
                                     currentTts.generateWithCallback(chunk, sid = sid, speed = speed) { samples ->
                                         // 返回 1 继续合成；协程已取消时返回 0 让 native 立即中止
@@ -2015,17 +2241,26 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
                                 // 兜底与日志均以 framesOffered（含预缓冲 pending 里的帧）为基准：
                                 // 预缓冲期间 framesWritten 恒为 0，若用它判断"一帧未写"会把
                                 // 首块音频在兜底路径重复 offer 一遍（声音重叠）
+                                // 链已被 stop() 取消时必须禁用兜底：回调被取消检查挡住
+                                // （返回 0 中止合成）并不代表"JNI 回调静默失效"，此时整段
+                                // 补写会让一条已停止的链在数秒后突然出声——真机表现为
+                                // "点了停止，几秒后突然又开始读"，且与用户随后启动的新链
+                                // 叠音（2026-09-05 顶栏两播报按钮"冲突"的机理）
                                 if (audio != null && player.framesOffered == framesBeforeChunk &&
-                                    audio.samples.isNotEmpty()
+                                    audio.samples.isNotEmpty() && speakJob?.isActive != false
                                 ) {
                                     // 兜底：JNI 回调静默失效（一帧未写）时整段补写，保证有声
                                     player.offer(audio.samples)
                                 }
+                                }
                                 if (player.framesOffered > framesBeforeChunk) {
+                                    // 真实合成成功 = 本模型的首次推理开销已被消化，
+                                    // 与 warmUp() 的置位语义一致（幂等，@Volatile 写）
+                                    warmedUpModelId = currentModelName
                                     Log.i(
                                         TAG,
                                         "Embedded TTS chunk queued: len=${chunk.length}, " +
-                                            "samples=${audio?.samples?.size ?: 0}, " +
+                                            "samples=${player.framesOffered - framesBeforeChunk}, " +
                                             "totalFrames=${player.framesOffered}",
                                     )
                                 }
@@ -2140,8 +2375,30 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
         /** pending 队列里尚未写入硬件的帧数 */
         private var pendingFrames = 0L
 
-        /** 开播前的预缓冲目标帧数（约 [PREBUFFER_SECONDS] 秒音频） */
-        private val prebufferFrames = (sampleRate * PREBUFFER_SECONDS).toLong()
+        /** 开播前的预缓冲目标帧数（约 [PREBUFFER_SECONDS] 秒音频，按轨道采样率计） */
+        private val prebufferFrames = (TRACK_SAMPLE_RATE * PREBUFFER_SECONDS).toLong()
+
+        /**
+         * 源采样率（模型输出，[sampleRate]）→ 轨道采样率（[TRACK_SAMPLE_RATE]）
+         * 的线性插值上采样。见 TRACK_SAMPLE_RATE 注释：24kHz 流在 MIUI 上
+         * mixer 不消费，必须按设备原生率 48k 建轨。速率相等时原样返回。
+         */
+        private fun upsampleToTrackRate(src: FloatArray): FloatArray {
+            if (sampleRate == TRACK_SAMPLE_RATE) return src
+            val ratio = TRACK_SAMPLE_RATE.toDouble() / sampleRate
+            val dstLen = (src.size * ratio).toInt()
+            if (dstLen <= 0) return FloatArray(0)
+            val dst = FloatArray(dstLen)
+            for (i in 0 until dstLen) {
+                val pos = i / ratio
+                val idx = pos.toInt()
+                val frac = (pos - idx).toFloat()
+                val a = if (idx < src.size) src[idx] else 0f
+                val b = if (idx + 1 < src.size) src[idx + 1] else a
+                dst[i] = a + (b - a) * frac
+            }
+            return dst
+        }
 
         /**
          * 写入一段采样（[-1,1] Float → 16-bit PCM）。在 JNI 回调内调用，
@@ -2150,8 +2407,9 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
          */
         fun offer(samples: FloatArray): Int {
             if (broken || samples.isEmpty()) return 1
-            val pcm16 = ShortArray(samples.size) { i ->
-                (samples[i] * 32767f).toInt().coerceIn(-32768, 32767).toShort()
+            val resampled = upsampleToTrackRate(samples)
+            val pcm16 = ShortArray(resampled.size) { i ->
+                (resampled[i] * 32767f).toInt().coerceIn(-32768, 32767).toShort()
             }
             framesOffered += pcm16.size
             val t = track
@@ -2163,11 +2421,17 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
             pending.addLast(pcm16)
             pendingFrames += pcm16.size
             if (pendingFrames < prebufferFrames) return 1
-            // 攒够预缓冲：建轨 → pending 一次性写入硬件 → play()。
-            // play 时刻轨道缓冲内已有 ≥0.8 秒音频，合成抖动不再直接击穿缓冲
+            // 攒够预缓冲：建轨 → play() → pending 一次性写入硬件。
+            // 顺序说明（2026-09-05 19:34 日志定案）：PERFORMANCE_MODE_LATENCY
+            // 下 AudioTrack 走 fast track 路径（AUDIO_OUTPUT_FLAG_FAST），
+            // fast track FIFO 很小，play() 前写数据会阻塞/只写少量到 FIFO，
+            // play() 后只播 FIFO 里的数据就 underrun（head=16704/36998，
+            // 只播 45%）。先 play() 让硬件开始消费，再写数据，write() 的
+            // 阻塞由硬件消费驱动，数据能持续流入。
+            logPlaybackDiagnostics()
             val newTrack = buildTrack() ?: return 0
-            if (!drainPending(newTrack)) return 0
-            return startTrack(newTrack)
+            if (startTrack(newTrack) == 0) return 0
+            return if (drainPending(newTrack)) 1 else 0
         }
 
         /**
@@ -2183,9 +2447,63 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
                 return
             }
             if (pendingFrames == 0L) return
+            logPlaybackDiagnostics()
             val newTrack = buildTrack() ?: return
             if (!drainPending(newTrack)) return
             startTrack(newTrack)
+        }
+
+        /**
+         * 播放诊断（2026-09-05 "AudioTrack start 成功但扬声器无声"定位用）：
+         * 一次开播打一条，三个字段各自排除一类根因——
+         *   peak=0        → PCM 数据本身是静音（NaN/全零转换结果），合成/缓存层问题；
+         *   musicVol=0    → 媒体音量为 0（音量键在无媒体播放时调的是铃声音量）；
+         *   以上正常但 awaitWatermark 的 head 不动 → 硬件不消费（焦点/路由/系统策略）。
+         */
+        private fun logPlaybackDiagnostics() {
+            var peak = 0
+            for (chunk in pending) {
+                for (s in chunk) {
+                    val v = kotlin.math.abs(s.toInt())
+                    if (v > peak) peak = v
+                }
+            }
+            val vol = audioManager?.getStreamVolume(AudioManager.STREAM_MUSIC) ?: -1
+            val volMax = audioManager?.getStreamMaxVolume(AudioManager.STREAM_MUSIC) ?: -1
+            // mode（0=NORMAL/1=RINGTONE/2=IN_CALL/3=IN_COMMUNICATION）：后台挂着
+            // 微信语音/电话时媒体流会被系统静音或路由听筒——head=0 无声的
+            // 高频环境根因；outputs 看实际路由（是否真到扬声器）
+            val mode = audioManager?.mode ?: -1
+            val speakerOn = audioManager?.isSpeakerphoneOn
+            val musicActive = audioManager?.isMusicActive
+            val outputDevices = try {
+                audioManager?.getDevices(AudioManager.GET_DEVICES_OUTPUTS)?.toList() ?: emptyList()
+            } catch (e: Exception) {
+                emptyList()
+            }
+            val outputs = outputDevices.joinToString { "${it.type}:${it.productName}" }
+            // A2DP/蓝牙设备路由检测：type 7=A2DP, 8=SCO, 26=HEARING_AID, 27=BLE_SPEAKER
+            // 蓝牙手表（如华为 Watch 3 Pro）连着但无扬声器/休眠时，AudioTrack 写入
+            // 成功、PLAYING，但 mixer 恒不消费（head=0）——2026-09-05 18:02 日志定案
+            val hasBtOutput = outputDevices.any {
+                it.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP ||
+                    it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
+                    it.type == AudioDeviceInfo.TYPE_HEARING_AID ||
+                    it.type == AudioDeviceInfo.TYPE_BLE_SPEAKER
+            }
+            if (hasBtOutput) {
+                Log.w(
+                    TAG,
+                    "TTS routed to Bluetooth device (likely not consuming): " +
+                        "outputs=[$outputs]. If head stays 0, will try forcing speaker.",
+                )
+            }
+            Log.i(
+                TAG,
+                "TTS playback diag: pcmPeak=$peak, musicVol=$vol/$volMax, mode=$mode, " +
+                    "speakerOn=$speakerOn, musicActive=$musicActive, outputs=[$outputs], " +
+                    "pendingFrames=$pendingFrames, srcRate=$sampleRate, trackRate=$TRACK_SAMPLE_RATE",
+            )
         }
 
         /** 当前硬件已播帧数；轨道未建/已被外部接管（stop()）返回 -1。 */
@@ -2212,13 +2530,86 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
          */
         suspend fun awaitWatermark(frames: Long): Boolean {
             val t = track ?: return frames <= 0L
+            var lastLogMs = 0L
+            // MIUI/HyperOS workaround：play() 后 mixer 可能不消费（head 恒 0）。
+            // 检测到该现象持续 >1.5s 时重新 play() 一次——实测部分 MIUI 版本
+            // 二次 play 能激活 mixer 消费（首次 play 被低功耗策略拦截）。
+            // 重试上限 2 次，避免无限循环；每次重试间隔 1.5s。
+            var stillSinceMs = System.currentTimeMillis()
+            var replayAttempts = 0
+            val maxReplayAttempts = 2
+            val replayThresholdMs = 1500L
             while (true) {
                 kotlinx.coroutines.delay(20)
                 val head = synchronized(audioTrackLock) {
                     if (audioTrack !== t) return false
                     t.playbackHeadPosition.toLong()
                 }
+                // 播放诊断（临时）：head 不增长 = 硬件不消费（焦点/路由/音量问题），
+                // 与 pcmPeak/musicVol 组合可三分定位"start 成功但无声"
+                val now = System.currentTimeMillis()
+                if (now - lastLogMs > 500) {
+                    lastLogMs = now
+                    Log.d(TAG, "awaitWatermark: head=$head/$frames, playState=${t.playState}")
+                }
                 if (head >= frames) return true
+                // head 增长说明 mixer 已开始消费，重置计时
+                if (head > 0) {
+                    stillSinceMs = now
+                } else if (now - stillSinceMs > replayThresholdMs && replayAttempts < maxReplayAttempts) {
+                    replayAttempts++
+                    Log.w(TAG, "awaitWatermark: head stuck at 0 for ${now - stillSinceMs}ms, replay attempt $replayAttempts/$maxReplayAttempts")
+                    // 首次重试：尝试强制切扬声器（绕过蓝牙 A2DP 路由）
+                    // 2026-09-05 18:02 日志定案：蓝牙手表 A2DP 连接但无扬声器/休眠时，
+                    // mixer 恒不消费。setSpeakerphoneOn(true) 在 MODE_NORMAL 下可能
+                    // 无效，但部分 MIUI 版本会响应并切到扬声器。
+                    if (replayAttempts == 1) {
+                        try {
+                            audioManager?.let { am ->
+                                if (!am.isSpeakerphoneOn) {
+                                    am.isSpeakerphoneOn = true
+                                    Log.i(TAG, "forced speakerphone on (A2DP workaround)")
+                                }
+                            }
+                        } catch (e: Exception) {
+                            Log.w(TAG, "setSpeakerphoneOn failed", e)
+                        }
+                    } else if (replayAttempts == 2) {
+                        // 第二次重试：MODE_IN_COMMUNICATION + setSpeakerphoneOn 组合。
+                        // MODE_NORMAL 下 setSpeakerphoneOn 无效（19:01 日志已证伪），
+                        // MODE_IN_COMMUNICATION 改变音频路由策略，强制走通信通道+
+                        // 扬声器，绕过 MIUI 媒体流的低功耗策略。播放结束后在
+                        // releaseIfCurrent 恢复 MODE_NORMAL。
+                        try {
+                            audioManager?.let { am ->
+                                if (am.mode != AudioManager.MODE_IN_COMMUNICATION) {
+                                    am.mode = AudioManager.MODE_IN_COMMUNICATION
+                                    Log.i(TAG, "set mode IN_COMMUNICATION (mixer workaround)")
+                                }
+                                if (!am.isSpeakerphoneOn) {
+                                    am.isSpeakerphoneOn = true
+                                    Log.i(TAG, "forced speakerphone on (mode=IN_COMMUNICATION)")
+                                }
+                            }
+                        } catch (e: Exception) {
+                            Log.w(TAG, "mode/speaker workaround failed", e)
+                        }
+                    }
+                    synchronized(audioTrackLock) {
+                        if (audioTrack === t && t.state == AudioTrack.STATE_INITIALIZED) {
+                            try {
+                                // 不 flush：保留已写入的音频数据。
+                                // pause→play 触发 AudioFlinger 重新挂载这条流到 mixer，
+                                // 部分 MIUI 版本首次 play 被低功耗策略拦截，二次能激活。
+                                t.pause()
+                                t.play()
+                                stillSinceMs = System.currentTimeMillis()
+                            } catch (e: Exception) {
+                                Log.w(TAG, "replay failed", e)
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -2242,6 +2633,16 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
                             t.flush()
                         }
                         t.release()
+                    } catch (_: Exception) {}
+                    // 恢复音频模式：自愈逻辑可能设了 MODE_IN_COMMUNICATION，
+                    // 不恢复会影响后续系统音频（通话/铃声路由异常）
+                    try {
+                        audioManager?.let { am ->
+                            if (am.mode == AudioManager.MODE_IN_COMMUNICATION) {
+                                am.mode = AudioManager.MODE_NORMAL
+                                Log.i(TAG, "restored audio mode to NORMAL")
+                            }
+                        }
                     } catch (_: Exception) {}
                 }
             }
@@ -2299,29 +2700,35 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
             if (broken) return null
             val newTrack = try {
                 val minBuffer = AudioTrack.getMinBufferSize(
-                    sampleRate,
+                    TRACK_SAMPLE_RATE,
                     AudioFormat.CHANNEL_OUT_MONO,
                     AudioFormat.ENCODING_PCM_16BIT,
                 )
-                val targetBytes = sampleRate * 2 * STREAM_BUFFER_SECONDS
+                val targetBytes = TRACK_SAMPLE_RATE * 2 * STREAM_BUFFER_SECONDS
                 val bufferSize = if (minBuffer > 0) maxOf(minBuffer, targetBytes) else targetBytes
-                AudioTrack.Builder()
-                    .setAudioAttributes(
-                        AudioAttributes.Builder()
-                            .setUsage(AudioAttributes.USAGE_MEDIA)
-                            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                            .build()
-                    )
+                val builder = AudioTrack.Builder()
+                    // 与焦点请求共用同一 AudioAttributes（见 playbackAudioAttributes
+                    // 注释：SPEECH 内容类型在 MIUI 上会被语音通道策略静默）
+                    .setAudioAttributes(playbackAudioAttributes)
                     .setAudioFormat(
                         AudioFormat.Builder()
-                            .setSampleRate(sampleRate)
+                            .setSampleRate(TRACK_SAMPLE_RATE)
                             .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
                             .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
                             .build()
                     )
                     .setBufferSizeInBytes(bufferSize)
                     .setTransferMode(AudioTrack.MODE_STREAM)
-                    .build()
+                // PERFORMANCE_MODE_LATENCY（API 26+）：强制走低延迟路径，
+                // 绕过 MIUI 低功耗策略（audio_lowpower_app_list.xml 加载失败时
+                // STREAM 模式被路由到不消费的输出线程）。2026-09-05 19:01 日志：
+                // 蓝牙已断开、路由到扬声器、pcmPeak/musicVol/mode 均正常，
+                // 但 head 恒 0——mixer 不消费 STREAM 流。
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    // PERFORMANCE_MODE_LATENCY = 1（API 26+）：强制走低延迟路径
+                    builder.setPerformanceMode(1)
+                }
+                builder.build()
             } catch (e: Exception) {
                 Log.w(TAG, "stream track build failed", e)
                 broken = true
@@ -2381,6 +2788,8 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
                 tts?.let { try { it.release() } catch (_: Exception) {} }
                 tts = null
                 currentModelIsKokoro = false
+                // native 实例已销毁，下次 initialize 分配的新实例需重新预热
+                warmedUpModelId = null
             }
         }
         // 状态流复位：旧实现释放后流里仍是 READY，设置页状态说谎
@@ -2392,6 +2801,14 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
      * 是否正在播放。
      */
     fun isPlaying(): Boolean = isPlaying.get()
+
+    /**
+     * 引擎是否已完成首次推理预热（[warmUp] 成功或任一真实合成成功后为 true）。
+     * UI 用于在"引擎未热"的等待窗口给用户即时反馈：speak 挂锁等启动预热
+     * 完成的数秒内无声是预期行为，无提示时用户会误判"没声音/卡死"
+     * （2026-09-05 实测：点喇叭后 8 秒无声，实为 warmUp 收尾期排队）。
+     */
+    fun isWarmedUp(): Boolean = warmedUpModelId != null && warmedUpModelId == currentModelName
 
     // ── 下载通知（委托 NotificationService 集中管理：进度 ongoing、完成可划掉）──
 

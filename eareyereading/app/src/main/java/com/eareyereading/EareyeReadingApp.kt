@@ -7,6 +7,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import androidx.core.content.ContextCompat
 import com.eareyereading.domain.repository.SettingsRepository
+import com.eareyereading.tts.EmbeddedTtsEngine
 import com.eareyereading.util.NotificationHelper
 import com.eareyereading.util.ReminderPrefs
 import com.eareyereading.util.TranslationHelper
@@ -32,6 +33,9 @@ class EareyeReadingApp : Application() {
     @Inject
     lateinit var translationHelper: TranslationHelper
 
+    @Inject
+    lateinit var embeddedTtsEngine: EmbeddedTtsEngine
+
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     override fun onCreate() {
@@ -44,6 +48,23 @@ class EareyeReadingApp : Application() {
             // DataStore 首读是磁盘 IO：此前 runBlocking 卡在主线程，
             // 冷启动触发 StrictMode DiskReadViolation、白屏可感知（issue 6.1）
             syncReminderPrefsMirror()
+        }
+        // TTS 引擎启动即预热：模型加载（~1-3s IO）+ 首次推理冷启动（Kokoro
+        // 实测 ~8s：图优化/线程池爬升/arena 扩张与缺页）挪到 app 启动后的空闲期
+        // ——打开 app → 选书 → 进书 → 点朗读之间有天然 10s+ 窗口。此前预热挂在
+        // 进书后，离首次点击太近：用户点击的 speak 总抢在 warmUp 前进锁，
+        // warmUp tryLock 失败后本进程再无预热机会，冷启动完整重现（2026-09-05
+        // 实测）。模型未下载时跳过（进书后的引导下载流程不变）；
+        // initialize/warmUp 均幂等，与阅读页的初始化路径重复调用零成本。
+        appScope.launch {
+            try {
+                val model = embeddedTtsEngine.modelForInitialize(null)
+                if (model != null && embeddedTtsEngine.initialize(model)) {
+                    embeddedTtsEngine.warmUp()
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("EareyeReadingApp", "TTS startup warm-up failed", e)
+            }
         }
         // issue 6.2：ACTION_TIME_SET / ACTION_TIMEZONE_CHANGED 是系统受保护广播，
         // Android 5+ 不再投递给 manifest 静态注册的接收器，只有动态注册能收到。

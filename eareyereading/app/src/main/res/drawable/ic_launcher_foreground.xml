@@ -1,14 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
   听阅 — Adaptive Icon 前景层
-  概念「眸中之页」：两片书页合成杏仁眼廓，
-  中缝 3.2dp 为书脊，中心瞳孔直径 12dp（精修去「大瞳孔」感）。
-
-  安全区：内容落在中心 72dp 安全圆内（x 24→84, y 31→75），
-  可承受圆形 / 圆角方形 / 水滴 / 花瓣等任意厂商遮罩裁切。
-
-  瞳孔色 #0D594F = 背景渐变在中心点的取值，
-  因此视觉上等同于「挖空透底」，无需 clip-path。
+  立体打开的书（带书脊厚度与文字行）+ 上方 4 波峰声波
+  安全区：108dp viewport，元素落在中心 72dp 安全圆内
 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
@@ -16,18 +10,78 @@
     android:viewportWidth="108"
     android:viewportHeight="108">
 
-    <!-- 左页：杏仁左半弧 + 书脊侧直边 -->
+    <!-- 上方声波：4 个完整波周期（正弦波） -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#F1FCFA"
+        android:strokeWidth="2.7"
+        android:strokeLineCap="round"
+        android:pathData="M 10.8,33.5 C 14,22.7 18.4,22.7 21.6,33.5 C 24.9,44.3 29.2,44.3 32.4,33.5 C 35.7,22.7 40,22.7 43.2,33.5 C 46.5,44.3 50.8,44.3 54,33.5 C 57.3,22.7 61.6,22.7 64.8,33.5 C 68.1,44.3 72.4,44.3 75.6,33.5 C 78.9,22.7 83.2,22.7 86.4,33.5 C 89.7,44.3 94,44.3 97.2,33.5" />
+
+    <!-- 左页（俯视透视） -->
     <path
         android:fillColor="#F1FCFA"
-        android:pathData="M54,31 C42,31 24,39.5 24,53 C24,66.5 42,75 54,75 L52.4,75 L52.4,31 Z"/>
+        android:pathData="M 54,47.5 L 19,53 L 16.2,58.5 L 16.2,85.5 L 54,92 Z" />
 
-    <!-- 右页：镜像 -->
+    <!-- 右页（俯视透视） -->
     <path
         android:fillColor="#F1FCFA"
-        android:pathData="M54,31 C66,31 84,39.5 84,53 C84,66.5 66,75 54,75 L55.6,75 L55.6,31 Z"/>
+        android:pathData="M 54,47.5 L 89,53 L 91.8,58.5 L 91.8,85.5 L 54,92 Z" />
 
-    <!-- 瞳孔：Android VectorDrawable 无 <circle>，以双弧路径表达 -->
+    <!-- 左页厚度（侧面） -->
     <path
-        android:fillColor="#0D594F"
-        android:pathData="M48,53 A6,6 0 1,1 60,53 A6,6 0 1,1 48,53 Z"/>
+        android:fillColor="#A6F2D8"
+        android:fillAlpha="0.55"
+        android:pathData="M 16.2,85.5 L 19,90.7 L 54,97.2 L 54,92 Z" />
+
+    <!-- 右页厚度（侧面） -->
+    <path
+        android:fillColor="#A6F2D8"
+        android:fillAlpha="0.55"
+        android:pathData="M 91.8,85.5 L 89,90.7 L 54,97.2 L 54,92 Z" />
+
+    <!-- 书脊 -->
+    <path
+        android:fillColor="#0B473F"
+        android:pathData="M 52.8,47.5 L 55.2,47.5 L 55.2,92 L 52.8,92 Z" />
+
+    <!-- 左页文字行（3 行） -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#0E6B5E"
+        android:strokeWidth="1.1"
+        android:strokeLineCap="round"
+        android:pathData="M 22.7,63.7 L 47.5,62.1" />
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#0E6B5E"
+        android:strokeWidth="1.1"
+        android:strokeLineCap="round"
+        android:pathData="M 22.7,71.3 L 43.2,69.7" />
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#0E6B5E"
+        android:strokeWidth="1.1"
+        android:strokeLineCap="round"
+        android:pathData="M 22.7,79 L 46.4,77.4" />
+
+    <!-- 右页文字行（3 行） -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#0E6B5E"
+        android:strokeWidth="1.1"
+        android:strokeLineCap="round"
+        android:pathData="M 60.5,62.1 L 85.3,63.7" />
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#0E6B5E"
+        android:strokeWidth="1.1"
+        android:strokeLineCap="round"
+        android:pathData="M 64.8,69.7 L 85.3,71.3" />
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#0E6B5E"
+        android:strokeWidth="1.1"
+        android:strokeLineCap="round"
+        android:pathData="M 61.6,77.4 L 85.3,79" />
 </vector>

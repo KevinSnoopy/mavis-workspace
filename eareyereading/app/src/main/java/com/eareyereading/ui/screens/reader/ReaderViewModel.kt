@@ -997,6 +997,7 @@ class ReaderViewModel @Inject constructor(
 
     private fun doStartAutoRead(paragraphs: List<String>) {
         val startParaIdx = _uiState.value.currentParagraphIndex
+        hintTtsWarmUpIfNeeded()
         // autoReadingParaIndex 从实际起播段开始（原实现恒置 0，与起播位置不符）
         _uiState.update { it.copy(isAutoReading = true, autoReadingParaIndex = startParaIdx, currentSentenceIndex = 0) }
 
@@ -1423,6 +1424,7 @@ class ReaderViewModel @Inject constructor(
         val para = _uiState.value.paragraphs.getOrNull(_uiState.value.currentParagraphIndex) ?: return
         // 插图标记段无文本可读：直接跳过，不进入 TTS 状态
         if (BookImages.isImageMarker(para)) return
+        hintTtsWarmUpIfNeeded()
         // 按句朗读（与自动朗读/速读同一套切分与链式播放）：原实现整段
         // 一次合成，长段既无句级推进高亮，也没法按句暂停跟进
         val sentences = splitSentencesCompat(para)
@@ -1615,6 +1617,20 @@ class ReaderViewModel @Inject constructor(
                         selectedWordLevel = level,
                         showWordDialog = true,
                     )
+                }
+                // 弹窗打开即后台预合成单词 PCM：Kokoro 每次 generate 有 ~2s 固定开销
+                // （与文本长度无关），用户看释义的几秒内完成合成，点喇叭时命中缓存
+                // 立即出声（2026-09-05 "读一个单词都卡"修复）。tryLock 语义：
+                // 正文朗读持锁时自动放弃，绝不阻塞正文播放
+                viewModelScope.launch {
+                    try {
+                        ttsHelper.getEmbeddedEngine()
+                            .prewarmSynthesis(clean, speed = ttsHelper.getSpeed())
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
+                    } catch (_: Exception) {
+                        // 预合成失败静默：点喇叭时走正常合成路径兜底
+                    }
                 }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
@@ -2122,6 +2138,7 @@ class ReaderViewModel @Inject constructor(
                         android.util.Log.w("ReaderViewModel", "TTS init for on-demand speak failed", e)
                     }
                 }
+                hintTtsWarmUpIfNeeded()
                 ttsHelper.speak(text)
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
@@ -2129,6 +2146,20 @@ class ReaderViewModel @Inject constructor(
                 android.util.Log.e("ReaderViewModel", "on-demand speak failed", e)
             }
         }
+    }
+
+    /**
+     * 引擎未完成首次推理预热时给一次性提示：此时 speak 会挂锁等启动预热
+     * （app 启动时后台跑的长句冷启动合成，~8s）完成——无声等待是预期行为，
+     * 无提示时用户会误判"没声音/卡死"并反复连点（连点还会取消重排，
+     * 进一步拖后出声，2026-09-05 实测）。预热完成后此方法零成本 no-op。
+     */
+    private var ttsWarmUpHintShown = false
+    private fun hintTtsWarmUpIfNeeded() {
+        if (ttsWarmUpHintShown) return
+        if (ttsHelper.getEmbeddedEngine().isWarmedUp()) return
+        ttsWarmUpHintShown = true
+        showToast("语音引擎首次准备中，需等待几秒…")
     }
 
     fun toggleWordLevelColors() {

@@ -2,11 +2,13 @@
 <!--
   听阅 — Android 13+ Themed Icon (Monochrome)
   ============================================================
-  系统会按壁纸/主题对此图标重新着色（实际只用 #FFFFFF + alpha）。
-  三个 sub-path 用 fillType=evenOdd 复合：
-    左页 + 右页 = 完整杏仁外形
-    瞳孔圆       = 第二层覆盖，偶数层自动透明（挖空效果）
-  书脊中缝由两页内边距自然留白（52.4 ↔ 55.6 之间 3.2dp 不填充）。
+  系统会按壁纸/主题对此图标重新着色（只用 alpha 通道）。
+  元素：上方 4 波周期声波 + 下方立体打开的书（双页 + 书脊留白）。
+
+  设计要点：
+  - 声波用 stroke（无填充路径）
+  - 立体书左/右两页独立 fill，中间留 2.4dp 空隙作为书脊
+  - 厚度侧面也独立 fill，与书页连成整体
 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
@@ -14,10 +16,31 @@
     android:viewportWidth="108"
     android:viewportHeight="108">
 
+    <!-- 上方声波：4 个完整波周期 -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="2.7"
+        android:strokeLineCap="round"
+        android:pathData="M 10.8,33.5 C 14,22.7 18.4,22.7 21.6,33.5 C 24.9,44.3 29.2,44.3 32.4,33.5 C 35.7,22.7 40,22.7 43.2,33.5 C 46.5,44.3 50.8,44.3 54,33.5 C 57.3,22.7 61.6,22.7 64.8,33.5 C 68.1,44.3 72.4,44.3 75.6,33.5 C 78.9,22.7 83.2,22.7 86.4,33.5 C 89.7,44.3 94,44.3 97.2,33.5" />
+
+    <!-- 立体书：左页 -->
     <path
         android:fillColor="#FFFFFF"
-        android:fillType="evenOdd"
-        android:pathData="M54,31 C42,31 24,39.5 24,53 C24,66.5 42,75 54,75 L52.4,75 L52.4,31 Z
-                          M54,31 C66,31 84,39.5 84,53 C84,66.5 66,75 54,75 L55.6,75 L55.6,31 Z
-                          M48,53 A6,6 0 1,1 60,53 A6,6 0 1,1 48,53 Z"/>
+        android:pathData="M 52.8,47.5 L 19,53 L 16.2,58.5 L 16.2,85.5 L 52.8,92 Z" />
+
+    <!-- 立体书：右页 -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M 55.2,47.5 L 89,53 L 91.8,58.5 L 91.8,85.5 L 55.2,92 Z" />
+
+    <!-- 立体书：左页厚度 -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M 16.2,85.5 L 19,90.7 L 52.8,97.2 L 52.8,92 Z" />
+
+    <!-- 立体书：右页厚度 -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M 91.8,85.5 L 89,90.7 L 55.2,97.2 L 55.2,92 Z" />
 </vector>

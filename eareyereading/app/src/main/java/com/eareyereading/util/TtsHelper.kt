@@ -115,6 +115,19 @@ class TtsHelper @Inject constructor(
             // 为 SYSTEM（旧登录状态），所以强制同步一下状态
             _ttsModeState.value = TtsMode.EMBEDDED
             android.util.Log.i(TAG, "initializeEmbeddedForced: ready (${modelInfo.id})")
+            // 首次推理预热：后台消化 ONNX Runtime 首次 generate 的冷启动开销
+            // （真机实测 Kokoro int8 首块 ~10s vs 稳态 RTF≈0.65），把这笔时间
+            // 从"用户点击朗读后的首声延迟"挪到初始化后的空闲期。warmUp 内部
+            // tryLock + 已预热检查：快路径重复调用、朗读进行中都是零成本 no-op
+            scope.launch {
+                try {
+                    embeddedTts.warmUp()
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    // 预热是尽力而为：失败不阻塞初始化结果，下次初始化再试
+                }
+            }
         }
         return ok
     }
