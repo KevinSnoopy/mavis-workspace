@@ -976,10 +976,10 @@ fun SettingsScreen(
                 SettingsListCard {
                     SettingRowToggle(
                         icon = Icons.Default.Palette,
-                        iconBg = PrimaryLight,
+                        iconBg = SurfaceHover,
                         iconColor = Accent,
                         title = "动态取色",
-                        subtitle = "Material You · Android 12+ 跟随壁纸配色",
+                        subtitle = "跟随系统主题色",
                         checked = uiState.dynamicColor,
                         onCheckedChange = viewModel::setDynamicColor,
                     )
@@ -999,7 +999,7 @@ fun SettingsScreen(
                 SettingsListCard {
                     SettingRow(
                         icon = Icons.Default.MenuBook,
-                        iconBg = PrimaryLight,
+                        iconBg = SurfaceHover,
                         iconColor = Primary,
                         title = "阅读偏好",
                         subtitle = "字号、阅读主题、衬线字体、翻译显示等",
@@ -1016,7 +1016,7 @@ fun SettingsScreen(
 
                     SettingRowClickable(
                         icon = Icons.Default.LibraryBooks,
-                        iconBg = PrimaryLight,
+                        iconBg = SurfaceHover,
                         iconColor = Primary,
                         title = "词典管理",
                         subtitle = "下载分级词典（四级/六级/考研/托福/GRE/雅思）",
@@ -1047,7 +1047,7 @@ fun SettingsScreen(
                 SettingsListCard {
                     SettingRowToggle(
                         icon = Icons.Default.AutoAwesome,
-                        iconBg = PrimaryLight,
+                        iconBg = SurfaceHover,
                         iconColor = Accent,
                         title = "AI 智能翻译",
                         subtitle = if (uiState.llmApiKey.isNotBlank()) {
@@ -1072,7 +1072,7 @@ fun SettingsScreen(
 
                     SettingRowClickable(
                         icon = Icons.Default.SmartToy,
-                        iconBg = PrimaryLight,
+                        iconBg = SurfaceHover,
                         iconColor = Primary,
                         title = "服务商",
                         subtitle = providerName,
@@ -1083,7 +1083,7 @@ fun SettingsScreen(
 
                     SettingRowClickable(
                         icon = Icons.Default.Key,
-                        iconBg = PrimaryLight,
+                        iconBg = SurfaceHover,
                         iconColor = Primary,
                         title = "API Key",
                         subtitle = if (uiState.llmApiKey.isBlank()) "未配置"
@@ -1095,7 +1095,7 @@ fun SettingsScreen(
 
                     SettingRowClickable(
                         icon = Icons.Default.TextFields,
-                        iconBg = PrimaryLight,
+                        iconBg = SurfaceHover,
                         iconColor = Primary,
                         title = "模型",
                         subtitle = uiState.llmModel,
@@ -1106,7 +1106,7 @@ fun SettingsScreen(
 
                     SettingRowClickable(
                         icon = Icons.Default.Link,
-                        iconBg = SurfaceSecondary,
+                        iconBg = SurfaceHover,
                         iconColor = OnSurfaceTertiary,
                         title = "接口地址",
                         subtitle = uiState.llmBaseUrl,
@@ -1215,7 +1215,7 @@ fun SettingsScreen(
                 SettingsListCard {
                     SettingRowClickable(
                         icon = Icons.Default.RecordVoiceOver,
-                        iconBg = PrimaryLight,
+                        iconBg = SurfaceHover,
                         iconColor = Primary,
                         title = "语音模型",
                         subtitle = uiState.embeddedModelName,
@@ -1226,7 +1226,7 @@ fun SettingsScreen(
                         Divider(modifier = Modifier.padding(horizontal = 20.dp))
                         SettingRowClickable(
                             icon = Icons.Default.GraphicEq,
-                            iconBg = PrimaryLight,
+                            iconBg = SurfaceHover,
                             iconColor = Primary,
                             title = "音色",
                             subtitle = uiState.embeddedVoiceDisplay.ifEmpty { "默认音色" } +
@@ -1285,7 +1285,7 @@ fun SettingsScreen(
                         val isExtracting = stage.contains("解压")
                         SettingRow(
                             icon = Icons.Default.Downloading,
-                            iconBg = SurfaceSecondary,
+                            iconBg = SurfaceHover,
                             iconColor = OnSurfaceTertiary,
                             title = when {
                                 uiState.embeddedInitializing -> "正在初始化..."
@@ -1302,7 +1302,7 @@ fun SettingsScreen(
                     } else if (!uiState.embeddedModelDownloaded) {
                         SettingRowClickable(
                             icon = Icons.Default.Download,
-                            iconBg = PrimaryLight,
+                            iconBg = SurfaceHover,
                             iconColor = Primary,
                             title = "下载内置语音模型",
                             subtitle = "完全离线，不依赖系统 TTS",
@@ -1311,7 +1311,7 @@ fun SettingsScreen(
                     } else {
                         SettingRowClickable(
                             icon = Icons.Default.Delete,
-                            iconBg = SurfaceSecondary,
+                            iconBg = SurfaceHover,
                             iconColor = OnSurfaceTertiary,
                             title = "删除语音模型",
                             subtitle = "释放 ${uiState.embeddedModelSizeText} 空间",
@@ -1476,7 +1476,7 @@ fun SettingsScreen(
                     Divider(modifier = Modifier.padding(horizontal = 20.dp))
                     SettingRowToggle(
                         icon = Icons.Default.Download,
-                        iconBg = PrimaryLight,
+                        iconBg = SurfaceHover,
                         iconColor = Primary,
                         title = "下载进度提醒",
                         checked = uiState.notificationDownloadProgress,
@@ -1494,7 +1494,7 @@ fun SettingsScreen(
                     Divider(modifier = Modifier.padding(horizontal = 20.dp))
                     SettingRowClickable(
                         icon = Icons.Default.Settings,
-                        iconBg = SurfaceSecondary,
+                        iconBg = SurfaceHover,
                         iconColor = OnSurfaceTertiary,
                         title = "去系统通知设置",
                         subtitle = "管理应用的通知权限与分类",
@@ -1512,7 +1512,7 @@ fun SettingsScreen(
                 SettingsListCard {
                     SettingRowClickable(
                         icon = Icons.Default.Download,
-                        iconBg = PrimaryLight,
+                        iconBg = SurfaceHover,
                         iconColor = Primary,
                         title = "导出数据",
                         subtitle = if (uiState.isExporting) "导出中..." else "导出词汇和阅读数据",
@@ -1521,7 +1521,7 @@ fun SettingsScreen(
                     Divider(modifier = Modifier.padding(horizontal = 20.dp))
                     SettingRowClickable(
                         icon = Icons.Default.Upload,
-                        iconBg = PrimaryLight,
+                        iconBg = SurfaceHover,
                         iconColor = Primary,
                         title = "导入数据",
                         subtitle = if (uiState.isImporting) "导入中..." else "从备份文件导入词汇",
@@ -1530,7 +1530,7 @@ fun SettingsScreen(
                     Divider(modifier = Modifier.padding(horizontal = 20.dp))
                     SettingRowClickable(
                         icon = Icons.Default.Delete,
-                        iconBg = SurfaceSecondary,
+                        iconBg = SurfaceHover,
                         iconColor = OnSurfaceTertiary,
                         title = "清除缓存",
                         subtitle = if (uiState.isClearing) "清除中..." else {

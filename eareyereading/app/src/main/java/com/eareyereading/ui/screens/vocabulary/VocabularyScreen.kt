@@ -20,6 +20,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.eareyereading.domain.model.Vocabulary
+import com.eareyereading.ui.components.EmptyState
 import com.eareyereading.ui.theme.*
 
 private val levelColors = listOf(L1, L2, L3, L4, L5)
@@ -138,16 +139,18 @@ fun VocabularyScreen(
                         .padding(horizontal = 16.dp),
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
+                    // §4.2.2：右卡（学习中）是用户核心关注，背景升一档（L2），
+                    // 左卡维持 L1——用色阶区分权重而非纯装饰底色
                     StatMiniCard(
                         value = "${uiState.learnedCount}",
                         label = "已掌握",
-                        color = Accent,
+                        bg = L1,
                         modifier = Modifier.weight(1f),
                     )
                     StatMiniCard(
                         value = "${uiState.totalCount - uiState.learnedCount}",
                         label = "学习中",
-                        color = Warning,
+                        bg = L2,
                         modifier = Modifier.weight(1f),
                     )
                 }
@@ -231,22 +234,26 @@ fun VocabularyScreen(
             }
 
             if (displayed.isEmpty()) {
+                // §4.2.2 空状态：必须有引导文（原图只有 4 个字，
+                // 用户不知道如何把单词加入），图标用描线风格不用 emoji
                 Box(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text("📝", style = MaterialTheme.typography.displayLarge)
-                        Spacer(modifier = Modifier.height(12.dp))
-                        Text(
-                            when (uiState.selectedTab) {
-                                1 -> "还没有正在学习的单词"
-                                2 -> "还没有已掌握的单词"
-                                else -> "生词本为空"
-                            },
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
+                    EmptyState(
+                        icon = Icons.Default.Translate,
+                        title = when (uiState.selectedTab) {
+                            1 -> "还没有正在学习的单词"
+                            2 -> "还没有已掌握的单词"
+                            else -> "生词本为空"
+                        },
+                        subtitle = when (uiState.selectedTab) {
+                            1 -> "在全部列表里把单词加入复习，即进入学习中"
+                            2 -> "学习中的单词复习达标后会自动移到这里"
+                            else -> "阅读时点选单词即可加入生词本"
+                        },
+                        modifier = Modifier.padding(horizontal = 32.dp),
+                    )
                 }
             } else {
                 LazyColumn(
@@ -275,13 +282,13 @@ fun VocabularyScreen(
 private fun StatMiniCard(
     value: String,
     label: String,
-    color: Color,
+    bg: Color,
     modifier: Modifier = Modifier,
 ) {
     Surface(
         modifier = modifier,
-        shape = RoundedCornerShape(14.dp),
-        color = color.copy(alpha = 0.1f),
+        shape = RoundedCornerShape(16.dp),
+        color = bg,
     ) {
         Column(
             modifier = Modifier.padding(16.dp),
@@ -291,7 +298,7 @@ private fun StatMiniCard(
                 text = value,
                 style = MaterialTheme.typography.headlineMedium,
                 fontWeight = FontWeight.Bold,
-                color = color,
+                color = L5,
             )
             Text(
                 text = label,
@@ -304,20 +311,22 @@ private fun StatMiniCard(
 
 @Composable
 private fun LevelChip(level: Int, count: Int) {
+    // §4.2.3 难度等级块：56×56dp 实色底（§3.1.2 饱和度阶梯），
+    // 文字 L1-L3 用 on-surface / L4-L5 用 on-primary-container
     val color = levelColors.getOrElse(level - 1) { Color.Gray }
+    val textColor = if (level >= 4) OnPrimaryContainer else OnSurface
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Surface(
-            modifier = Modifier.size(48.dp),
-            shape = RoundedCornerShape(12.dp),
-            color = color.copy(alpha = 0.1f),
-            border = androidx.compose.foundation.BorderStroke(1.5.dp, color.copy(alpha = 0.3f)),
+            modifier = Modifier.size(56.dp),
+            shape = RoundedCornerShape(16.dp),
+            color = color,
         ) {
             Box(contentAlignment = Alignment.Center) {
                 Text(
                     "L$level",
                     style = MaterialTheme.typography.labelLarge,
                     fontWeight = FontWeight.Bold,
-                    color = color,
+                    color = textColor,
                 )
             }
         }

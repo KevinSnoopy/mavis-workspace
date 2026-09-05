@@ -33,7 +33,9 @@ import androidx.compose.ui.unit.dp
  * 首页/书库共用的统计卡片（P3 组件抽取：此前 Home/Library 各写一份）。
  *
  * 数字带 Count-up 滚动动画；[pulse] 为 true 时图标做呼吸脉动
- * （连续打卡火焰，多邻国式的存活暗示）。
+ * （连续打卡火焰，多邻多式的存活暗示）。
+ * [highlight] 为 true 时底色升为 primary-container（streak 卡情感焦点，
+ * 色彩承担语义：绿=活跃，其余卡保持中性底）。
  */
 @Composable
 fun StatCard(
@@ -44,11 +46,16 @@ fun StatCard(
     modifier: Modifier = Modifier,
     unit: String? = null,
     pulse: Boolean = false,
+    highlight: Boolean = false,
 ) {
     Surface(
         modifier = modifier,
         shape = RoundedCornerShape(16.dp),
-        color = color.copy(alpha = 0.1f),
+        color = if (highlight) {
+            com.eareyereading.ui.theme.PrimaryLight
+        } else {
+            color.copy(alpha = 0.1f)
+        },
     ) {
         Column(
             modifier = Modifier.padding(14.dp),
@@ -99,14 +106,18 @@ fun StatCard(
                     target = value,
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold,
-                    color = color,
+                    color = if (highlight) com.eareyereading.ui.theme.OnPrimaryContainer else color,
                 )
                 if (unit != null) {
                     Spacer(modifier = Modifier.width(2.dp))
                     Text(
                         text = unit,
                         style = MaterialTheme.typography.labelSmall,
-                        color = color.copy(alpha = 0.7f),
+                        color = if (highlight) {
+                            com.eareyereading.ui.theme.OnPrimaryContainer.copy(alpha = 0.7f)
+                        } else {
+                            color.copy(alpha = 0.7f)
+                        },
                         modifier = Modifier.padding(bottom = 2.dp),
                     )
                 }
@@ -114,7 +125,11 @@ fun StatCard(
             Text(
                 text = label,
                 style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = if (highlight) {
+                    com.eareyereading.ui.theme.OnPrimaryContainer.copy(alpha = 0.8f)
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
             )
         }
     }

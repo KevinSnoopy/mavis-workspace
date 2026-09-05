@@ -128,7 +128,8 @@ fun HomeScreen(
                         color = Primary,
                         modifier = Modifier.weight(1f),
                     )
-                    // 连续打卡：火焰呼吸脉动 + Count-up（多邻国式的存活暗示）
+                    // 连续打卡：火焰呼吸脉动 + Count-up（多邻国式的存活暗示）；
+                    // 底色升为 primary-container（绿=活跃，情感焦点高亮）
                     StatCard(
                         icon = Icons.Outlined.LocalFireDepartment,
                         value = uiState.streakDays,
@@ -136,6 +137,7 @@ fun HomeScreen(
                         label = "连续打卡",
                         color = Warning,
                         pulse = uiState.streakDays > 0,
+                        highlight = true,
                         modifier = Modifier.weight(1f),
                     )
                     StatCard(
@@ -369,13 +371,15 @@ private fun ReviewReminderBanner(
 }
 
 // ── 周阅读图表 ───────────────────────────────────
+/** 日均目标（分钟）：达标判定阈值，与热力图第一档对齐。 */
+private const val DAILY_GOAL_MINUTES = 15
+
 @Composable
 private fun WeeklyChart(
     data: List<DayReadingData>,
     modifier: Modifier = Modifier,
 ) {
     val maxMinutes = data.maxOfOrNull { it.minutes }?.coerceAtLeast(1) ?: 1
-    val barColor = Primary
 
     // 进入页面时柱状图从 0 生长到目标高度（图表生长动画，0f→1f 单次推进）
     val growProgress = rememberPlayOnceAnimation(durationMillis = 750)
@@ -393,18 +397,45 @@ private fun WeeklyChart(
             horizontalArrangement = Arrangement.SpaceEvenly,
             verticalAlignment = Alignment.Bottom,
         ) {
-            data.forEach { day ->
+            data.forEachIndexed { index, day ->
+                val isToday = index == data.lastIndex
                 val heightRatio = day.minutes.toFloat() / maxMinutes
+                // 改版C：今日柱即使未达标也保持"进行中"的视觉高度
+                //（不低于昨日/前日较高者的 60%），不再是一根贴地的短柱
+                val effectiveRatio = if (isToday) {
+                    val recentMax = data.dropLast(1).takeLast(2)
+                        .maxOfOrNull { it.minutes }?.toFloat() ?: 0f
+                    heightRatio.coerceAtLeast((recentMax / maxMinutes) * 0.6f)
+                } else {
+                    heightRatio
+                }
+                // 颜色规则（§4.5.1）：今日 primary-container 高亮；
+                // 已发生日达标=primary 深绿、未达标=outline 灰
+                val barColor = when {
+                    isToday -> PrimaryLight
+                    day.minutes >= DAILY_GOAL_MINUTES -> Primary
+                    else -> BorderStrong
+                }
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Bottom,
                     modifier = Modifier.weight(1f),
                 ) {
-                    if (day.minutes > 0) {
+                    if (isToday) {
+                        // 今日柱顶给带语义的文案，替代孤立数字（原图"34"含义不明）
+                        Text(
+                            "今日 +${day.minutes} min",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            fontWeight = FontWeight.Medium,
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                    } else if (day.minutes >= DAILY_GOAL_MINUTES) {
+                        // 仅达标日显示数值，未达标日不显示（降低负反馈噪音）
                         Text(
                             "${day.minutes}",
                             style = MaterialTheme.typography.labelSmall,
-                            color = barColor,
+                            color = MaterialTheme.colorScheme.onSurface,
                             fontWeight = FontWeight.Bold,
                         )
                         Spacer(modifier = Modifier.height(4.dp))
@@ -413,10 +444,10 @@ private fun WeeklyChart(
                         modifier = Modifier
                             .fillMaxWidth(0.5f)
                             .fillMaxHeight(
-                                (heightRatio * growProgress).coerceAtLeast(0.03f),
+                                (effectiveRatio * growProgress).coerceAtLeast(0.03f),
                             )
                             .clip(RoundedCornerShape(topStart = 4.dp, topEnd = 4.dp))
-                            .background(barColor.copy(alpha = if (heightRatio > 0) 0.85f else 0.15f)),
+                            .background(barColor),
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
@@ -438,9 +469,11 @@ private fun RecentBookCard(
 ) {
     Card(
         modifier = Modifier
-            .width(124.dp)
+            // 改版C：横向卡 144dp 宽（§4.5.3 horizontal-card 规格）；
+            // 首卡 16dp 对齐 + 末卡右露 16dp 由 LazyRow contentPadding 保证
+            .width(144.dp)
             .clickable(onClick = onClick),
-        shape = RoundedCornerShape(14.dp),
+        shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
 
     ) {
@@ -452,14 +485,14 @@ private fun RecentBookCard(
                 author = book.author,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(120.dp),
+                    .height(128.dp),
             )
             Spacer(modifier = Modifier.height(8.dp))
             LinearProgressIndicator(
                 progress = book.readProgress,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(3.dp)
+                    .height(4.dp)
                     .clip(RoundedCornerShape(2.dp)),
                 color = Primary,
                 trackColor = Primary.copy(alpha = 0.15f),

@@ -2,7 +2,9 @@ package com.eareyereading.ui.screens.reader
 
 import android.widget.Toast
 import androidx.compose.animation.*
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.*
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
@@ -327,12 +329,17 @@ fun ReaderScreen(
                         }
                     }
                     // 播放 / 暂停（NORMAL 模式下等价于从当前段开始自动朗读）
+                    // §4.6.2 关键重设计：播放是主操作——放大到 28dp + 强调色 +
+                    // 实心图标，与其余 24dp 中性图标拉开视觉权重（原图 6 个图标
+                    // 权重完全一致，用户无法判断哪个是主操作）
                     IconButton(onClick = { viewModel.togglePlay() }) {
                         Icon(
                             // isTtsPlaying 也要算播放中：挖空/听写等模式走单段朗读
                             if (uiState.isPlaying || uiState.isAutoReading || uiState.isTtsPlaying)
                                 Icons.Default.Pause else Icons.Default.PlayArrow,
                             "播放",
+                            tint = LocalReaderAccent.current,
+                            modifier = Modifier.size(28.dp),
                         )
                     }
                     // 书签
@@ -3095,8 +3102,7 @@ fun ReaderSettingsDialog(
                 onValueChange = { onFontSizeChange(it.toInt()) },
                 valueRange = 12f..32f,
                 steps = 19,
-                minLabel = "12sp",
-                maxLabel = "32sp",
+                preview = SliderPreview.FONT_SIZE,
             )
             SwitchSettingRow(
                 title = "左右翻页",
@@ -3115,8 +3121,7 @@ fun ReaderSettingsDialog(
                 onValueChange = { onSpeedChange(it.toInt()) },
                 valueRange = 100f..800f,
                 steps = 13,
-                minLabel = "100",
-                maxLabel = "800",
+                preview = SliderPreview.RSVP_SPEED,
             )
             SettingSliderRow(
                 label = "加粗强度",
@@ -3125,8 +3130,7 @@ fun ReaderSettingsDialog(
                 onValueChange = { onStrengthChange(it.toInt()) },
                 valueRange = 1f..5f,
                 steps = 3,
-                minLabel = "30%",
-                maxLabel = "70%",
+                preview = SliderPreview.BOLD,
             )
 
             // ── 翻译 ──────────────────────────────
@@ -3137,8 +3141,9 @@ fun ReaderSettingsDialog(
                 value = translationAlpha,
                 onValueChange = onTranslationAlphaChange,
                 valueRange = 0.3f..1f,
-                minLabel = "30%",
-                maxLabel = "100%",
+                // 5% 一档（30%→100% 共 14 档），thumb 吸附刻度点
+                steps = 13,
+                preview = SliderPreview.ALPHA,
             )
 
             // ── 词色 ──────────────────────────────
@@ -3154,7 +3159,8 @@ fun ReaderSettingsDialog(
                 onToggle = onKnownWordsHighlightToggle,
             )
             // Collins 词级颜色图例：纯展示徽章（原 AssistChip 空点击有水波纹，
-            // 且 weight 等分在窄屏会挤压截断），FlowRow 自动换行
+            // 且 weight 等分在窄屏会挤压截断），FlowRow 自动换行。
+            // §4.6.1：等级 chip 用难度色 50% 透明底 + 药丸圆角 + 对应 on 色
             if (showWordLevelColors) {
                 FlowRow(
                     modifier = Modifier
@@ -3163,22 +3169,22 @@ fun ReaderSettingsDialog(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     listOf(
-                        WordLevelCore to "核心",
-                        WordLevelIntmd to "进阶",
-                        WordLevelUpper to "提高",
-                        WordLevelAdv to "高阶",
-                        WordLevelRare to "学术",
-                    ).forEach { (color, label) ->
+                        L1 to OnSurface,
+                        L2 to OnSurface,
+                        L3 to OnSurface,
+                        L4 to OnPrimaryContainer,
+                        L5 to OnPrimaryContainer,
+                    ).forEachIndexed { index, (bg, fg) ->
                         Surface(
-                            shape = RoundedCornerShape(8.dp),
-                            color = color.copy(alpha = 0.15f),
+                            shape = RoundedCornerShape(50),
+                            color = bg.copy(alpha = 0.5f),
                         ) {
                             Text(
-                                label,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = color,
+                                listOf("核心", "进阶", "提高", "高阶", "学术")[index],
+                                style = MaterialTheme.typography.labelMedium,
+                                color = fg,
                                 fontWeight = FontWeight.Medium,
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp),
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
                             )
                         }
                     }
@@ -3202,8 +3208,30 @@ private fun SettingsGroupLabel(text: String) {
 }
 
 /**
- * 「标签左 + 当前值右」滑杆行：拖动时视线不必上移找数值；
- * 两端标注范围端点，用户可感知边界。
+ * 滑块预览条类型（§4.6.3「三个滑块视觉完全一致」修复）：
+ * 每个滑块上方有实时预览，用预览区分滑块用途——
+ * Readwise Reader 的实时预览 + Kindle Aa 菜单结合。
+ */
+private enum class SliderPreview {
+    /** 无预览 */
+    NONE,
+    /** 字号滑块："Aa" 样本（当前字号） */
+    FONT_SIZE,
+    /** RSVP 滑块：箭头密度（当前速度） */
+    RSVP_SPEED,
+    /** 加粗滑块：加粗 "Aa" */
+    BOLD,
+    /** 译文透明度滑块：带透明度的方块 */
+    ALPHA,
+}
+
+/**
+ * 「标签左 + 当前值右 + 预览条 + 滑块 + 刻度点」滑杆行（改版B）。
+ *
+ * - 拖动时视线不必上移找数值；
+ * - 上方预览条实时反映该滑块的效果（区分四个用途相同的滑块）；
+ * - 下方等距刻度点 + 当前值位置放大高亮（12×12dp primary，
+ *   300ms spring 弹性），thumb 松手自动吸附最近刻度（Slider steps）。
  */
 @Composable
 private fun SettingSliderRow(
@@ -3213,9 +3241,9 @@ private fun SettingSliderRow(
     onValueChange: (Float) -> Unit,
     valueRange: ClosedFloatingPointRange<Float>,
     steps: Int = 0,
-    minLabel: String = "",
-    maxLabel: String = "",
+    preview: SliderPreview = SliderPreview.NONE,
 ) {
+    val accent = LocalReaderAccent.current
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -3227,30 +3255,95 @@ private fun SettingSliderRow(
                 valueText,
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.SemiBold,
-                color = LocalReaderAccent.current,
+                color = accent,
             )
+        }
+        // 预览条：居中 28dp 高，内容随当前值实时变化
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(28.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            when (preview) {
+                SliderPreview.FONT_SIZE -> Text(
+                    "Aa",
+                    fontSize = value.coerceIn(12f, 26f).sp,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                SliderPreview.RSVP_SPEED -> Text(
+                    // 箭头密度随速度增加：100-200 一档 / 300-600 两档 / 700+ 三档
+                    buildString {
+                        repeat(((value - 100f) / 300f).toInt().coerceIn(0, 2) + 1) {
+                            if (it > 0) append(" ")
+                            append("→")
+                        }
+                    },
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                SliderPreview.BOLD -> Text(
+                    "Aa",
+                    fontWeight = FontWeight.Bold,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                SliderPreview.ALPHA -> Box(
+                    modifier = Modifier
+                        .size(width = 48.dp, height = 16.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(accent.copy(alpha = value.coerceIn(0f, 1f))),
+                )
+                SliderPreview.NONE -> Unit
+            }
         }
         Slider(
             value = value,
             onValueChange = onValueChange,
             valueRange = valueRange,
             steps = steps,
+            colors = SliderDefaults.colors(
+                thumbColor = accent,
+                activeTrackColor = accent,
+                inactiveTrackColor = MaterialTheme.colorScheme.outline,
+            ),
         )
-        if (minLabel.isNotBlank() || maxLabel.isNotBlank()) {
+        // 刻度点行：steps>0 时显示 steps+2 个等距 dot（§5.2 带刻度滑块）。
+        // 当前值 dot 放大为 12dp primary，弹性缩放（spring ~300ms）
+        if (steps > 0) {
+            val tickCount = steps + 2
+            val fraction = (
+                (value - valueRange.start) /
+                    (valueRange.endInclusive - valueRange.start)
+                ).coerceIn(0f, 1f)
+            val currentIndex = Math.round(fraction * (tickCount - 1))
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    // 与 M3 Slider thumb 行程对齐：两端各留半个 thumb 宽
+                    .padding(horizontal = 10.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(
-                    minLabel,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Text(
-                    maxLabel,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                repeat(tickCount) { index ->
+                    val isCurrent = index == currentIndex
+                    val dotSize by animateDpAsState(
+                        targetValue = if (isCurrent) 12.dp else 4.dp,
+                        animationSpec = spring(
+                            dampingRatio = Spring.DampingRatioMediumBouncy,
+                            stiffness = Spring.StiffnessMedium,
+                        ),
+                        label = "tickSize",
+                    )
+                    Box(
+                        modifier = Modifier
+                            .size(dotSize)
+                            .clip(CircleShape)
+                            .background(
+                                if (isCurrent) accent else MaterialTheme.colorScheme.outlineVariant,
+                            ),
+                    )
+                }
             }
         }
         Spacer(modifier = Modifier.height(4.dp))

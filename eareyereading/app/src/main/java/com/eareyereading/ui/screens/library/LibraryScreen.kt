@@ -21,7 +21,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -96,12 +95,21 @@ fun LibraryScreen(
             )
         },
         floatingActionButton = {
+            // 改版A（M3 Extended FAB 规范）：primary-container 配色（比 primary
+            // 柔和），文案由当前 Tab 决定——原实现两个 Tab 共用"导入书籍"，
+            // 文章 Tab 下语义错位（P4 反馈的阻塞级问题）
             ExtendedFloatingActionButton(
-                onClick = { filePicker.launch(arrayOf("application/epub+zip", "text/plain", "*/*")) },
+                onClick = {
+                    if (uiState.selectedTab == 0) {
+                        filePicker.launch(arrayOf("application/epub+zip", "text/plain", "*/*"))
+                    } else {
+                        viewModel.showUrlDialog()
+                    }
+                },
                 icon = { Icon(Icons.Default.Add, "导入") },
-                text = { Text("导入书籍") },
-                containerColor = MaterialTheme.colorScheme.primary,
-                contentColor = MaterialTheme.colorScheme.onPrimary,
+                text = { Text(if (uiState.selectedTab == 0) "导入书籍" else "添加文章") },
+                containerColor = MaterialTheme.colorScheme.primaryContainer,
+                contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
             )
         },
     ) { padding ->
@@ -242,6 +250,8 @@ fun LibraryScreen(
                                 color = Primary,
                                 modifier = Modifier.weight(1f),
                             )
+                            // streak 卡底色升为 primary-container：色彩承担语义
+                            //（绿=活跃），是用户情感焦点（多邻国火焰心理学）
                             StatCard(
                                 icon = Icons.Default.LocalFireDepartment,
                                 value = stats.streakDays,
@@ -249,6 +259,7 @@ fun LibraryScreen(
                                 label = "连续打卡",
                                 color = Warning,
                                 pulse = stats.streakDays > 0,
+                                highlight = true,
                                 modifier = Modifier.weight(1f),
                             )
                             StatCard(
@@ -444,7 +455,9 @@ fun LibraryScreen(
                         }
                     }
 
-                    item(key = "bottom_space") { Spacer(modifier = Modifier.height(80.dp)) }
+                    // 改版A：FAB 遮挡修复——列表末尾留 96dp（FAB 56dp + 安全距离），
+                    // 最后一项的进度百分比不再被悬浮按钮盖住
+                    item(key = "bottom_space") { Spacer(modifier = Modifier.height(96.dp)) }
                 }
             } else {
                 ArticleSquareScreen(
@@ -749,10 +762,15 @@ fun ClassicBookCard(
                 Surface(
                     modifier = Modifier.size(40.dp),
                     shape = RoundedCornerShape(10.dp),
-                    color = PrimaryLight,
+                    color = SurfaceHover,
                 ) {
                     Box(contentAlignment = Alignment.Center) {
-                        Text("📖", style = MaterialTheme.typography.titleLarge)
+                        Icon(
+                            Icons.Default.AutoStories,
+                            contentDescription = null,
+                            tint = Primary,
+                            modifier = Modifier.size(22.dp),
+                        )
                     }
                 }
                 Spacer(modifier = Modifier.width(10.dp))
@@ -1117,12 +1135,25 @@ fun ArticleSquareScreen(
                 val grouped = sources.groupBy { it.category }
                 grouped.forEach { (category, srcs) ->
                     item {
-                        Text(
-                            text = "${category.emoji} ${category.label}",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold,
+                        // 分组头：描线图标 + 文字（与卡片主题图标风格统一，
+                        // 不再用 emoji 当图标）
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier.padding(vertical = 4.dp),
-                        )
+                        ) {
+                            Icon(
+                                imageVector = sourceCategoryIcon(category),
+                                contentDescription = null,
+                                tint = OnSurfaceTertiary,
+                                modifier = Modifier.size(16.dp),
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = category.label,
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                            )
+                        }
                     }
                     items(srcs, key = { it.id }) { source ->
                         ArticleSourceCard(
@@ -1154,21 +1185,19 @@ fun ArticleSourceCard(
             modifier = Modifier.padding(18.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            // 图标方块：surface-container-high 底 + 主题色描线图标，
+            // 替代原先按分类散落的 5 种彩色 hue + emoji（与墨绿主系割裂）
             Surface(
                 shape = RoundedCornerShape(12.dp),
-                color = when (source.category) {
-                    com.eareyereading.domain.model.SourceCategory.NEWS -> Color(0xFF5B7FFF)
-                    com.eareyereading.domain.model.SourceCategory.TECH -> Color(0xFF00C853)
-                    com.eareyereading.domain.model.SourceCategory.SCIENCE -> Color(0xFFFF9800)
-                    com.eareyereading.domain.model.SourceCategory.CULTURE -> Color(0xFFE91E63)
-                    else -> Color(0xFF9E9E9E)
-                }.copy(alpha = 0.15f),
+                color = SurfaceHover,
                 modifier = Modifier.size(48.dp),
             ) {
                 Box(contentAlignment = Alignment.Center) {
-                    Text(
-                        text = source.icon ?: source.name.take(1),
-                        style = MaterialTheme.typography.titleMedium,
+                    Icon(
+                        imageVector = sourceCategoryIcon(source.category),
+                        contentDescription = source.category.label,
+                        tint = Primary,
+                        modifier = Modifier.size(24.dp),
                     )
                 }
             }
@@ -1213,6 +1242,17 @@ fun ArticleSourceCard(
         }
     }
 }
+
+/** 订阅源分类 → 单色描线图标（反模式 #11：emoji 不作为图标使用）。 */
+private fun sourceCategoryIcon(category: com.eareyereading.domain.model.SourceCategory) =
+    when (category) {
+        com.eareyereading.domain.model.SourceCategory.LEARNING -> Icons.Default.Headphones
+        com.eareyereading.domain.model.SourceCategory.NEWS -> Icons.Default.Newspaper
+        com.eareyereading.domain.model.SourceCategory.TECH -> Icons.Default.Computer
+        com.eareyereading.domain.model.SourceCategory.SCIENCE -> Icons.Default.Science
+        com.eareyereading.domain.model.SourceCategory.CULTURE -> Icons.Default.Public
+        com.eareyereading.domain.model.SourceCategory.CUSTOM -> Icons.Default.Star
+    }
 
 @Composable
 fun ArticleItemCard(
@@ -1294,15 +1334,18 @@ fun ArticleItemCard(
 
 @Composable
 fun DifficultyChip(level: Int) {
+    // 难度 chip 用语义状态色 10% 透明底 + 同色文字（§4.4.2）：
+    // 简单=mastered 绿 / 中等=learning 橙 / 困难=error 红，
+    // 替代原先 L1-L5 五种相近淡色（色相过近难扫读）
     val difficultyColors = listOf(
-        L4 to "⭐ 入门",
-        L2 to "⭐⭐ 简单",
-        Warning to "⭐⭐⭐ 中等",
-        L1 to "⭐⭐⭐⭐ 较难",
-        L1 to "⭐⭐⭐⭐⭐ 困难",
+        Success to "⭐ 入门",
+        Success to "⭐⭐ 简单",
+        StateLearning to "⭐⭐⭐ 中等",
+        Error to "⭐⭐⭐⭐ 较难",
+        Error to "⭐⭐⭐⭐⭐ 困难",
     )
     val (color, label) = difficultyColors.getOrElse(level - 1) { Accent to "⭐ 入门" }
-    Surface(shape = RoundedCornerShape(6.dp), color = color.copy(alpha = 0.12f)) {
+    Surface(shape = RoundedCornerShape(6.dp), color = color.copy(alpha = 0.10f)) {
         Text(
             text = label,
             style = MaterialTheme.typography.labelSmall,

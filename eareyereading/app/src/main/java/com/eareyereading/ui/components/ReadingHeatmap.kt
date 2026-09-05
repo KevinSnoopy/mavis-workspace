@@ -33,6 +33,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.eareyereading.ui.theme.EareyeReadingTheme
+import com.eareyereading.ui.theme.HeatmapEmpty
+import com.eareyereading.ui.theme.HeatmapLevel1
+import com.eareyereading.ui.theme.HeatmapLevel2
+import com.eareyereading.ui.theme.HeatmapLevel3
+import com.eareyereading.ui.theme.HeatmapLevel4
 import com.eareyereading.ui.theme.Primary
 
 /**
@@ -125,12 +130,12 @@ fun ReadingHeatmap(
     }
 }
 
-/** 热力格颜色档位常量：0 分钟用极浅底，阅读时长分四档加深（品牌棕的单色阶）。 */
-private val CELL_EMPTY = Primary.copy(alpha = 0.08f)
-private val CELL_LEVEL_1 = Primary.copy(alpha = 0.28f)
-private val CELL_LEVEL_2 = Primary.copy(alpha = 0.48f)
-private val CELL_LEVEL_3 = Primary.copy(alpha = 0.68f)
-private val CELL_LEVEL_4 = Primary.copy(alpha = 0.92f)
+/** 热力格颜色档位（§3.1.4）：主色 hue 的 5 阶明度阶梯，越深=活动越频繁。 */
+private val CELL_EMPTY = HeatmapEmpty
+private val CELL_LEVEL_1 = HeatmapLevel1
+private val CELL_LEVEL_2 = HeatmapLevel2
+private val CELL_LEVEL_3 = HeatmapLevel3
+private val CELL_LEVEL_4 = HeatmapLevel4
 
 /** 热力格颜色（返回预建常量，免每次调用分配新 Color）。 */
 private fun heatmapCellColor(minutes: Int): Color = when {

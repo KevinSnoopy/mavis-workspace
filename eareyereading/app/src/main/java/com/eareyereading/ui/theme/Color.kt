@@ -2,72 +2,86 @@ package com.eareyereading.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-// ── 精致文具风配色 ────────────────────────────────
+// ── 温润墨绿 + 暖白（单一色系，Material 3 角色制）────────
+// 设计判断：原「大地色 + 墨绿强调」双调性割裂，统一收敛到
+// 「温润墨绿 + 暖白」。primary 只承担 CTA / 当前态 / 进度填充。
 
 // Primary
-val Primary = Color(0xFF8B7355)       // 暖棕 · 皮具/文具主色
-val PrimaryDark = Color(0xFF6E5A43)   // 深暖棕
-val PrimaryLight = Color(0xFFF0EBE3)  // 暖棕浅底
+val Primary = Color(0xFF0E6B5E)        // 温润墨绿 · 主操作色
+val PrimaryDark = Color(0xFF00504A)    // 深墨绿 · 深色主题容器
+val PrimaryLight = Color(0xFFA6F2D8)   // primary-container · 选中底/强调底
+val OnPrimaryContainer = Color(0xFF002019) // 主色容器上的前景
 
-// Accent
-val Accent = Color(0xFFC4956A)        // 赤陶橙 · 暖调点缀
+// Secondary / Tertiary
+val Secondary = Color(0xFF4A635F)      // 次要色 · 次级按钮/辅助图标
+val Accent = Color(0xFFB85B00)         // tertiary 暖橙 · 高亮标记（平衡墨绿主调）
 
-// Background
-val Background = Color(0xFFFAF8F5)    // 象牙白 · 品质纸质感
-
-// Surface
+// Background / Surface
+val Background = Color(0xFFFBF7F1)     // 暖白页面背景（非纯白）
 val Surface = Color(0xFFFFFFFF)        // 卡片白
-val SurfaceSecondary = Color(0xFFF5F2ED) // 暖灰白 · 柔和背景
-val SurfaceHover = Color(0xFFEDE8E0)   // 悬停/选中态
+val SurfaceSecondary = Color(0xFFF2EBE0) // surface-container · 容器背景
+val SurfaceHover = Color(0xFFE8DFCF)   // surface-container-high · 凸起容器
 
 // Text
-val OnSurface = Color(0xFF3D3530)      // 暖深棕 · 正文，不是纯黑
-val OnSurfaceSecondary = Color(0xFF7A7067) // 暖灰棕 · 次要文字
-val OnSurfaceTertiary = Color(0xFFA69E94) // 暖浅灰 · 辅助文字
-val OnSurfaceQuaternary = Color(0xFFC8C1B8) // 更淡的暖灰 · 图标默认色
+val OnSurface = Color(0xFF1B1C18)      // 主前景 · 正文/标题
+val OnSurfaceSecondary = Color(0xFF6B7268) // on-surface-variant · 副标/说明
+val OnSurfaceTertiary = Color(0xFF767D74)  // 辅助文字（区块小标题）
+val OnSurfaceQuaternary = Color(0xFF9CA39A) // 图标默认色
 
 // Border
-val Border = Color(0xFFE8E4DC)         // 暖灰线 · 细边框
-val BorderStrong = Color(0xFFD4CFC5)   // 深一点儿的暖线
+val Border = Color(0xFFE6DECD)         // outline-variant · 细分割线
+val BorderStrong = Color(0xFFD4C9B4)   // outline · 卡片描边/滑杆轨道
 
-// ── Collins 五级色（改为暖调）──────────
-val L1 = Color(0xFFC9735B)   // 赤褐 · L1
-val L2 = Color(0xFFD4A853)   // 暖金 · L2
-val L3 = Color(0xFF9E8C5A)   // 橄榄 · L3
-val L4 = Color(0xFF7A9E7E)   // 灰绿 · L4
-val L5 = Color(0xFF6B8E9E)   // 青灰 · L5
-val KnownWord = Color(0xFF7A9E7E) // 已认识 · 灰绿
+// ── 难度等级色（同一主色 hue 的饱和度阶梯，§3.1.2）──────
+val L1 = Color(0xFFE8F1ED)   // 核心词 · 最浅
+val L2 = Color(0xFFA6D2C0)   // 进阶词
+val L3 = Color(0xFF5BA889)   // 提高词
+val L4 = Color(0xFF2E7D63)   // 高阶词
+val L5 = Color(0xFF0E6B5E)   // 学术词 · 最深（与主色同色）
+val KnownWord = Color(0xFF5BA889) // 已认识 · L3 绿
 
-// ── 语义色（暖调）──────────
-val Success = Color(0xFF7A9E7E)    // 灰绿 · 柔和自然
-val SuccessBg = Color(0xFFEEF3EE)
+// ── 语义色 ──────────────────────────────────────
+val Success = Color(0xFF2E7D32)    // 成功 · 打卡/复习完成
+val SuccessBg = Color(0xFFE7F1E8)
 
-val Warning = Color(0xFFD4A853)    // 暖金 · 温和
-val WarningBg = Color(0xFFFBF5EA)
+val Warning = Color(0xFFE65100)    // 警告 · 待复习
+val WarningBg = Color(0xFFFDEDE3)
 
-val Error = Color(0xFFC9735B)     // 赤褐 · 不刺眼
-val ErrorBg = Color(0xFFFBF0ED)
+val Error = Color(0xFFBA1A1A)      // 错误 · 删除/失败
+val ErrorBg = Color(0xFFFBE9E9)
 
-val Info = Color(0xFF6B8E9E)     // 青灰
-val InfoBg = Color(0xFFEDF3F5)
+val Info = Color(0xFF1E88E5)       // 信息 · 蓝
+val InfoBg = Color(0xFFE8F1FB)
+
+// ── 学习状态色（Anki New/Learning/Review 三色映射，§3.1.3）──
+val StateNew = Color(0xFF1E88E5)       // 新词 · 蓝
+val StateLearning = Color(0xFFFB8C00)  // 学习中 · 橙
+val StateMastered = Color(0xFF2E7D32)  // 已掌握 · 绿
+
+// ── 热力图色阶（主色 hue 5 阶明度，§3.1.4）────────────
+val HeatmapEmpty = Color(0xFFF2EBE0)
+val HeatmapLevel1 = Color(0xFFB8DCD0)
+val HeatmapLevel2 = Color(0xFF5BA889)
+val HeatmapLevel3 = Color(0xFF2E7D63)
+val HeatmapLevel4 = Color(0xFF0E6B5E)
 
 // ── 阅读主题色 ────────────────────────────────────
 val SepiaBg = Color(0xFFF5E6C8)
 val SepiaText = Color(0xFF5D4037)
-val DarkBg = Color(0xFF1A1A2E)
-val DarkText = Color(0xFFE8E8F0)
+val DarkBg = Color(0xFF14201C)     // 墨绿调深底（原蓝紫深底与品牌割裂）
+val DarkText = Color(0xFFE8EBE9)
 
 // ── 词性/功能色 ──────────────────────────────────
 val Highlight = Color(0xFFFFE082)     // 高亮 · 黄色
-val RsvpBold = Color(0xFF3D3530)     // RSVP 加粗部分
+val RsvpBold = OnSurface              // RSVP 加粗部分
 
-// ── 词频分级颜色 ──────────────────────────────
-val WordLevelCore = Color(0xFF7A9E7E)
-val WordLevelIntmd = Color(0xFF7A9E7E)
-val WordLevelUpper = Color(0xFF6B8E9E)
-val WordLevelAdv = Color(0xFFD4A853)
-val WordLevelRare = Color(0xFFC9735B)
-val WordLevelUnknown = Color(0xFFA69E94)
+// ── 词频分级颜色（正文文字用，同一色系可读阶梯）──────────
+val WordLevelCore = Color(0xFF2E7D63)
+val WordLevelIntmd = Color(0xFF0E6B5E)
+val WordLevelUpper = Color(0xFF4A635F)
+val WordLevelAdv = Color(0xFFB85B00)
+val WordLevelRare = Color(0xFFE65100)
+val WordLevelUnknown = Color(0xFF6B7268)
 
 // ── 固定常量 ──────────────────────────────────────
 val OnPrimary = Color(0xFFFFFFFF)  // 白色文字，在 Primary 背景上使用
@@ -75,14 +89,11 @@ val OnBackground = OnSurface        // 背景上的文字，同 OnSurface
 
 // ── 兼容性别名（保持其他文件引用不报错）──────────────
 
-@Deprecated("Use Primary", ReplaceWith("Primary"))
+@Deprecated("Use PrimaryDark", ReplaceWith("PrimaryDark"))
 val PrimaryVariant = PrimaryDark
-
-@Deprecated("Use Accent or Success", ReplaceWith("Accent"))
-val Secondary = Accent
 
 @Deprecated("Use Error", ReplaceWith("Error"))
 val SecondaryVariant = Error
 
-@Deprecated("Use Background", ReplaceWith("Background"))
+@Deprecated("Use SurfaceSecondary", ReplaceWith("SurfaceSecondary"))
 val SurfaceVariant = SurfaceSecondary
