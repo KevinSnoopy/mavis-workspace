@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  听阅 — 启动图 Splash（Android 12+）
+  规范：240dp 画布，安全区中心 160dp 直径圆。
+  几何：把主图标 108dp 内容缩放到 132x100 居中于 (120, 116)，
+       上方 + 下方各留 66 / 74 dp 充足留白（系统会显示品牌名）。
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="240dp"
+    android:height="240dp"
+    android:viewportWidth="240"
+    android:viewportHeight="240">
+
+    <!-- 墨绿对角渐变底 -->
+    <path android:pathData="M0,0h240v240H0z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="linear"
+                android:startX="0" android:startY="0"
+                android:endX="240" android:endY="240">
+                <item android:offset="0" android:color="#0E6B5E"/>
+                <item android:offset="1" android:color="#0B473F"/>
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- 主图标（中心 (120, 116)，宽 132 高 100）-->
+    <path
+        android:fillColor="#F1FCFA"
+        android:pathData="M120,66 C96,66 60,84 60,116 C60,148 96,166 120,166 L116.8,166 L116.8,66 Z"/>
+    <path
+        android:fillColor="#F1FCFA"
+        android:pathData="M120,66 C144,66 180,84 180,116 C180,148 144,166 120,166 L123.2,166 L123.2,66 Z"/>
+    <path
+        android:fillColor="#0D594F"
+        android:pathData="M107,116 A13,13 0 1,1 133,116 A13,13 0 1,1 107,116 Z"/>
+</vector>

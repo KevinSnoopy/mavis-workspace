@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"
+     fill="none" stroke="currentColor" stroke-width="1.75"
+     stroke-linecap="round" stroke-linejoin="round">
+  <!-- Settings — 齿轮（区别于 Material Icons：更紧凑、更正圆）-->
+  <circle cx="12" cy="12" r="3"/>
+  <!-- 八齿，每齿 45° -->
+  <path d="M 12 2 L 12 5"/>
+  <path d="M 12 19 L 12 22"/>
+  <path d="M 2 12 L 5 12"/>
+  <path d="M 19 12 L 22 12"/>
+  <path d="M 4.93 4.93 L 7.05 7.05"/>
+  <path d="M 16.95 16.95 L 19.07 19.07"/>
+  <path d="M 4.93 19.07 L 7.05 16.95"/>
+  <path d="M 16.95 7.05 L 19.07 4.93"/>
+</svg>

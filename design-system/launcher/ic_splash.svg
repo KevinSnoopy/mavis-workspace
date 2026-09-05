@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Splash 图标 SVG 源（与 ic_splash.xml 一致，用于预览与导出 PNG）-->
+<svg xmlns="http://www.w3.org/2000/svg" width="240" height="240" viewBox="0 0 240 240">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%"   stop-color="#0E6B5E"/>
+      <stop offset="100%" stop-color="#0B473F"/>
+    </linearGradient>
+  </defs>
+  <rect width="240" height="240" fill="url(#bg)"/>
+  <path fill="#F1FCFA"
+        d="M120,66 C96,66 60,84 60,116 C60,148 96,166 120,166 L116.8,166 L116.8,66 Z"/>
+  <path fill="#F1FCFA"
+        d="M120,66 C144,66 180,84 180,116 C180,148 144,166 120,166 L123.2,166 L123.2,66 Z"/>
+  <path fill="#0D594F"
+        d="M107,116 A13,13 0 1,1 133,116 A13,13 0 1,1 107,116 Z"/>
+</svg>

@@ -1,0 +1,1433 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light" data-page-node-id="lZc2SMNiKXCBR8qOu3gWTh">
+<head data-page-node-id="zhG7ng6UBpNZseuofBytdF">
+<meta charset="UTF-8" data-page-node-id="YCi0hJbhJAkiX5gXhW60UJ">
+<meta name="viewport" content="width=device-width, initial-scale=1.0" data-page-node-id="2Ve2hvCc8jjMKZEWq63krq">
+<title>听阅 EareyeReading · 设计系统原型 v1.0</title>
+<link rel="stylesheet" href="tokens.css" data-page-node-id="y9EwxRCTYjWmBmbhvCsPWB">
+<link rel="stylesheet" href="fonts-local.css" data-page-node-id="yGhzvxcvcIMe8iFtAPDWUn">
+<link rel="stylesheet" href="prototype.css" data-page-node-id="sEbI1wsHGWKHKhjdEc3pHe">
+</head>
+<body data-page-node-id="lqARShVFj5wG2tOI4gTFq8">
+
+<!-- ======================== 顶栏 ======================== -->
+<header class="app-bar" data-page-node-id="ldibOl4l1F0Do5xathrlb9">
+  <div class="app-bar__brand" data-page-node-id="Wcvx37RSBGvD1TaK4BrEOs">
+    <div class="app-bar__brand-mark" data-page-node-id="OJ0eGxzw3fKANZR6Q31dJY">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" data-page-node-id="BCyNy4IzYYTbuViUfJXO6L">
+        <path d="M12 4C9.2 4 7 6.2 7 9s2.2 5 5 5 5-2.2 5-5-2.2-5-5-5zm0 7c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2z" data-page-node-id="kZFbUmUe0RVuzw8m1wZ9aL"/>
+        <path d="M3 13h2c.6 0 1-.4 1-1s-.4-1-1-1H3c-.6 0-1 .4-1 1s.4 1 1 1zm16 0h2c.6 0 1-.4 1-1s-.4-1-1-1h-2c-.6 0-1 .4-1 1s.4 1 1 1zm-8 6c.6 0 1-.4 1-1v-2c0-.6-.4-1-1-1s-1 .4-1 1v2c0 .6.4 1 1 1z" opacity=".65" data-page-node-id="EItDPrwE0AAgb4ZOXkDFpM"/>
+      </svg>
+    </div>
+    听阅 EareyeReading
+  </div>
+  <div class="app-bar__sub" data-page-node-id="DNWib3OhaaFHYe2oV2Of37">设计系统原型 · v1.0 · 2026-09</div>
+  <div class="app-bar__right" data-page-node-id="4CAk5147cVlcA8NDSOBEmY">
+    <div class="theme-switch" role="tablist" data-page-node-id="f0PcXOz8FCllw5cmnDANcs">
+      <button data-theme-target="light" aria-pressed="true" data-page-node-id="3P6gNTuM0lRUb9nySymFbz">亮色</button>
+      <button data-theme-target="sepia" aria-pressed="false" data-page-node-id="661zPN09FWz2sSEaTCw4eq">Sepia</button>
+      <button data-theme-target="dark" aria-pressed="false" data-page-node-id="oG4h4wjGYRgEnsXrjCl4sp">深色</button>
+    </div>
+  </div>
+</header>
+
+<div class="shell" data-page-node-id="KEH9FLw9oJhYJOHcPKaEjO">
+  <!-- ======================== 左：导航 ======================== -->
+  <nav class="nav" data-page-node-id="1UxZRBL6bXzBrU8a42VsgV">
+    <div class="nav__group" data-page-node-id="3rmDvDlYTaHptYXK2Cxu82">
+      <div class="nav__group-title" data-page-node-id="AuEmGYEFDzhBsD6erOOrmE">主页面 · 5</div>
+      <button class="nav__item" aria-current="true" data-screen="home" data-page-node-id="EkbejyaEXPmbA8o27EmG96">
+        <svg viewBox="0 0 24 24" fill="currentColor" data-page-node-id="2ZRwSxXtNApWc0azPJwQrK"><path d="M12 3l9 8h-3v9h-4v-6h-4v6H6v-9H3z" data-page-node-id="h5aeI3bIKyELKp0ZrAHFYH"/></svg>
+        首页 Home
+      </button>
+      <button class="nav__item" data-screen="library" data-page-node-id="nrbmtR7XRwlfa8EMo6zft2">
+        <svg viewBox="0 0 24 24" fill="currentColor" data-page-node-id="Hmaqzdicovz2lawwF7YESY"><path d="M4 6h2v12H4zm3 0h1v12H7zm2 0h3v12H9zm4 0h1v12h-1zm2 0h2v12h-2zm3 0h2v12h-2z" data-page-node-id="CPsbrqHRsV551d7DywDysc"/></svg>
+        书库 Library
+      </button>
+      <button class="nav__item" data-screen="vocabulary" data-page-node-id="GnOf5eagASpecL8pVg4ypv">
+        <svg viewBox="0 0 24 24" fill="currentColor" data-page-node-id="uz1c90XT2TUl5FdI2fw2FZ"><path d="M12 3L1 9l4 2.2v6L12 21l7-3.8v-6L23 9zM5 13.2v-3.4l7 3.9 7-3.9v3.4l-7 3.8z" data-page-node-id="NIrR4cSwJFiVcg99tFamJ5"/></svg>
+        词汇 Vocabulary
+      </button>
+      <button class="nav__item" data-screen="review" data-page-node-id="WrQ9vheQen6zbjtfSB3Yrl">
+        <svg viewBox="0 0 24 24" fill="currentColor" data-page-node-id="wXlVjhNZPQdczo7FnbQep0"><path d="M17.6 6.3A8 8 0 1 0 19.8 14h-2.1a6 6 0 1 1-1.4-7.1L13 10h7V3z" data-page-node-id="pTpeg7iYw9dpbrbkF2DRk1"/></svg>
+        复习 Review
+      </button>
+      <button class="nav__item" data-screen="settings" data-page-node-id="sfzC54mdMahId1OJNXZ36j">
+        <svg viewBox="0 0 24 24" fill="currentColor" data-page-node-id="ODt6ClBlScd4Ny9DowLT8Z"><path d="M19.4 13a7.5 7.5 0 0 0 0-2l2-1.6-2-3.4-2.4.9a7.5 7.5 0 0 0-1.7-1L14.7 3h-4l-.5 2.9a7.5 7.5 0 0 0-1.7 1l-2.4-.9-2 3.4 2 1.6a7.5 7.5 0 0 0 0 2l-2 1.6 2 3.4 2.4-.9a7.5 7.5 0 0 0 1.7 1l.5 2.9h4l.5-2.9a7.5 7.5 0 0 0 1.7-1l2.4.9 2-3.4zM12.7 15a3 3 0 1 1 0-6 3 3 0 0 1 0 6z" data-page-node-id="vCE77Et4i724W8t2GjlAbN"/></svg>
+        设置 Settings
+      </button>
+    </div>
+
+    <div class="nav__group" data-page-node-id="Er6nhwyYGr6aB5AF1F9Owt">
+      <div class="nav__group-title" data-page-node-id="LqEHgSH0iUXg86alnB8buL">子页面 · 3</div>
+      <button class="nav__item" data-screen="reader" data-page-node-id="TFwqwNE4LXoDfBaBpGFYyZ">
+        <svg viewBox="0 0 24 24" fill="currentColor" data-page-node-id="No66oYF3GB9BLsP9zKhp6a"><path d="M21 5c-2-1-4.5-1-7 .5L12 6.5 10 5.5C7.5 4 5 4 3 5v14c2-1 4.5-1 7 .5l2 1 2-1c2.5-1.5 5-1.5 7-.5zM11 18.5c-2-1-4-1-6-.3V6.8c2-.7 4-.7 6 .3zm8-.3c-2-.7-4-.7-6 .3V7c2-1 4-1 6-.3z" data-page-node-id="IbZTbCJjhNo9kzST5jCGqG"/></svg>
+        阅读器 Reader
+      </button>
+      <button class="nav__item" data-screen="dictionary" data-page-node-id="8BObGDFnCl4yIb0sVGduyH">
+        <svg viewBox="0 0 24 24" fill="currentColor" data-page-node-id="mnURmxT8j7TCAmILmllvot"><path d="M4 4h16v3H4zm0 5h11v3H4zm0 5h11v3H4zm0 5h7v3H4z" data-page-node-id="tvcs0JNNN5rzIHiorPWkmK"/></svg>
+        词典管理
+      </button>
+      <button class="nav__item" data-screen="onboarding" data-page-node-id="meqD3UqZY0Mg5UfCWy1cea">
+        <svg viewBox="0 0 24 24" fill="currentColor" data-page-node-id="yPrqMLXqHhzT3PcctszMUD"><path d="M12 2l3 7h7l-5.5 4.5L18 21l-6-4-6 4 1.5-7.5L2 9h7z" data-page-node-id="hWN1eIyE8GZVlXJpxlY7oN"/></svg>
+        引导 Onboarding
+      </button>
+    </div>
+
+    <div class="nav__group" data-page-node-id="UBOEegwP2q1KbIiUzb3qh2">
+      <div class="nav__group-title" data-page-node-id="GHAbtujL3V4YVUpK3Rtls7">弹窗 · 3</div>
+      <button class="nav__item" data-screen="modal-word" data-page-node-id="wh1mBaNoBtjpA8JQkMivAW">
+        <svg viewBox="0 0 24 24" fill="currentColor" data-page-node-id="s8qqTRbL6Abw8qmY03ccvB"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm1 15h-2v-2h2zm0-4h-2V7h2z" data-page-node-id="It32VDd92BPnSjZX1qhsKq"/></svg>
+        词详情弹窗
+      </button>
+      <button class="nav__item" data-screen="modal-chapter" data-page-node-id="SasMaWTZsNAmLSC1P58JLE">
+        <svg viewBox="0 0 24 24" fill="currentColor" data-page-node-id="DMTBgeFppUaugObThGnOuv"><path d="M4 6h16v2H4zm0 5h16v2H4zm0 5h10v2H4z" data-page-node-id="rLy55hr7hLiNU6BVbtFKCT"/></svg>
+        章节选择
+      </button>
+      <button class="nav__item" data-screen="modal-delete" data-page-node-id="4PRhqLiF1fGZG1y0nORXbq">
+        <svg viewBox="0 0 24 24" fill="currentColor" data-page-node-id="0U2ZpQfPHBUcks19qFCM4d"><path d="M6 7h12v13a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2zm3-3h6l1 2h4v2H4V6h4z" data-page-node-id="9rMUm9pnUr2qScef4mxM5E"/></svg>
+        删除确认
+      </button>
+    </div>
+  </nav>
+
+  <!-- ======================== 中央：手机框 ======================== -->
+  <main class="stage" data-page-node-id="jel7JGoT9IWPVtRkVZMG3R">
+    <div class="phone" data-page-node-id="fxJg4Bws7JfBN4t1EYDy4r">
+      <div class="dynamic-island" data-page-node-id="lu83HYLlJWAWoRdKevaluN"></div>
+      <div class="phone__screen" data-page-node-id="cVyicgodyz5xqewKH5RTBN">
+
+        <!-- ============ 状态栏（共用） ============ -->
+        <div class="status-bar" data-page-node-id="RU9E6HLPLBREKGOXx84Rs8">
+          <span class="status-bar__time" data-page-node-id="0ZF7CajA7KUw3S86caqNRc">9:41</span>
+          <div class="status-bar__icons" data-page-node-id="jk2STtH1QvUfj3n9ERKkWF">
+            <svg viewBox="0 0 24 24" data-page-node-id="Dz5Xo6yl1TV6doh0z5wnrT"><path d="M2 22h20V11H2zm2-9h2v7H4zm4 0h2v7H8zm4 0h2v7h-2zm4 0h2v7h-2z" data-page-node-id="RIlzcBgzWOj4X7jCs8Z2oN"/></svg>
+            <svg viewBox="0 0 24 24" data-page-node-id="LB0AnrBUVo9YKCHk6JzMjo"><path d="M1 9l2 2c4.97-4.97 13.03-4.97 18 0l2-2C16.93 2.93 7.08 2.93 1 9zm8 8l3 3 3-3a4.24 4.24 0 0 0-6 0zm-4-4l2 2a7.07 7.07 0 0 1 10 0l2-2C15.14 9.14 8.87 9.14 5 13z" data-page-node-id="hjXwRu9LGREwP0yHHICCs1"/></svg>
+            <svg viewBox="0 0 24 24" data-page-node-id="jDnzhhxAEBsytscfttGSvH"><path d="M15 4V2H9v2H5v16h14V4zM9 6h6v1H9zm6 11h-2v2h-2v-2H9v-2h2v-2h2v2h2z" data-page-node-id="EchBpQJmC01p0LltmQQWVs"/></svg>
+          </div>
+        </div>
+
+        <!-- ============ 首页 ============ -->
+        <section class="screen is-active" data-screen="home" data-page-node-id="sVw1VQfBVWZDJwKg5BF7lR">
+          <div class="scroll" style="flex:1" data-page-node-id="MBGORYpordQnQU0kLIR1T2">
+            <!-- Hero 区域 -->
+            <div style="height:16px" data-page-node-id="HE10i8GjiwfEFo31gvpeDc"></div>
+            <div class="home__hero" data-page-node-id="2isPHz1OCfjakT45DEVcOZ">
+              <div class="home__streak" data-page-node-id="9er4RXFMI1CMbGm2SaC2wC">
+                <span style="font-size:14px" data-page-node-id="cZSGqutVMKuiMPKVmjr838">🔥</span>
+                <span class="home__streak-num" data-page-node-id="C0oPOCBkk6qS53cUjwNFLK">12</span> 天
+              </div>
+              <p class="home__hero-greeting" data-page-node-id="JKjSxhUpIZQ2wh8qjvAZ7A">下午好，Kevin</p>
+              <h1 class="home__hero-name" data-page-node-id="BO0o2ohAVP2FQMw7YS0ybD">今日坚持阅读 ✦</h1>
+              <p class="home__hero-quote" data-page-node-id="pM4keN5BzMcKYd56wOWL3A">"The only way to do great work is to love what you do."</p>
+            </div>
+
+            <!-- 数据卡片 2×2 -->
+            <div class="stat-grid" data-page-node-id="Jwm0zbaTP5nxzhaUroply1">
+              <div class="stat-card" data-page-node-id="YKdVe7UB75wPnINt0Z1SBN">
+                <div class="stat-card__icon stat-card__icon--primary" data-page-node-id="ThgHYt5pn6unetCGaYtLIm">
+                  <svg viewBox="0 0 24 24" data-page-node-id="04aXaF4deXP9lVWQ5Nq9zQ"><path d="M21 5c-2-1-4.5-1-7 .5L12 6.5 10 5.5C7.5 4 5 4 3 5v14c2-1 4.5-1 7 .5l2 1 2-1c2.5-1.5 5-1.5 7-.5zM11 18.5c-2-1-4-1-6-.3V6.8c2-.7 4-.7 6 .3zm8-.3c-2-.7-4-.7-6 .3V7c2-1 4-1 6-.3z" data-page-node-id="wD0WwcPW8jMbySYqr5kDei"/></svg>
+                </div>
+                <div class="stat-card__value" data-page-node-id="4MPCj7jy0qjGcEQ1yMA3n6">42 <span style="font-size:14px;color:var(--on-muted);font-weight:400" data-page-node-id="bfvpP6GGoJ0wuEQi4l6mcr">分钟</span></div>
+                <div class="stat-card__label" data-page-node-id="iezX8gB0C1bV7IVGYpHCHH">今日阅读时长</div>
+              </div>
+              <div class="stat-card" data-page-node-id="8SZx2o66Va5Rj5n7k2g0yp">
+                <div class="stat-card__icon stat-card__icon--accent" data-page-node-id="A0I7TBIk1vjlzDegZG1Ybe">
+                  <svg viewBox="0 0 24 24" data-page-node-id="2Gk6F2fnlFC38KOmID1KYH"><path d="M12 3 4 9v12h6v-7h4v7h6V9z" data-page-node-id="xwfXytuxE07TaUD8lO3r9m"/></svg>
+                </div>
+                <div class="stat-card__value" data-page-node-id="xWFAPXGnCbrZHM1Hw836ts">1280</div>
+                <div class="stat-card__label" data-page-node-id="tE1yGQOU5xCd65owekDHgC">累计字数</div>
+              </div>
+              <div class="stat-card" data-page-node-id="LFsOle71igB5heNwOYJrD3">
+                <div class="stat-card__icon stat-card__icon--success" data-page-node-id="sc6GxXHU7txxN0Ewj8AV9a">
+                  <svg viewBox="0 0 24 24" data-page-node-id="7OW1T0Mi7bAYzQwWK2OcOY"><path d="M12 2 1 9l4 2.2v6L12 21l7-3.8v-6L23 9zM5 13.2v-3.4l7 3.9 7-3.9v3.4l-7 3.8z" data-page-node-id="pvSeEA1VXKK7oZhmnhVyky"/></svg>
+                </div>
+                <div class="stat-card__value" data-page-node-id="fG1FZGJdeG5rC3Iith6SC1">38</div>
+                <div class="stat-card__label" data-page-node-id="hNPBa7aNFcNdoKnNJV6W4K">掌握词数</div>
+              </div>
+              <div class="stat-card" data-page-node-id="eO2gHBfWEgfMBsM54EMJUA">
+                <div class="stat-card__icon stat-card__icon--info" data-page-node-id="sBmmpUnOyYTHRoKYO4s7BQ">
+                  <svg viewBox="0 0 24 24" data-page-node-id="fFSAdxW9fJC4WNHnXAEYTu"><path d="M19 3H5C3.9 3 3 3.9 3 5v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V5c0-1.1-.9-2-2-2zM7 17H5v-2h2zm0-4H5v-2h2zm0-4H5V7h2zm10 8h-6v-2h6zm0-4h-6v-2h6zm0-4h-6V7h6z" data-page-node-id="uPhIa0U0yJkL1Tv8ifinfG"/></svg>
+                </div>
+                <div class="stat-card__value" data-page-node-id="pqoaWBBVoRfoGTu8uDlBBW">3</div>
+                <div class="stat-card__label" data-page-node-id="yjiGgM8Tyul2lF3halpErW">本周读完</div>
+              </div>
+            </div>
+
+            <!-- 继续阅读 -->
+            <div style="height:20px" data-page-node-id="RhpmExAXa7eComnleG6nYj"></div>
+            <div class="section" style="padding-top:0;padding-bottom:0" data-page-node-id="cW7XyiImgiBa9FpT2CkqRL">
+              <h3 class="section__title" data-page-node-id="xYR1360rUHUT8cDZFeyeED">继续阅读</h3>
+            </div>
+            <div class="continue-card" data-page-node-id="pi0PZmMc5f1GzHZvB7hlQI">
+              <div class="continue-card__cover" data-page-node-id="SJqlNSJYAIJ6e3Df8TEPRv">📖</div>
+              <div class="continue-card__body" data-page-node-id="XbSXlYwUyNTHMT2skBqfvX">
+                <h4 class="continue-card__title" data-page-node-id="pMppO9yjmdZHdbpUGfJbMH">Atomic Habits</h4>
+                <p class="continue-card__author" data-page-node-id="BNSFlWPkgTAaTlpwUzS9H0">James Clear</p>
+                <div class="continue-card__progress" data-page-node-id="ytwGC1tDFHZGFehu7dIW35">
+                  <div class="continue-card__bar" data-page-node-id="yjsrOlW1VM2bzRGDSFOAY4"><div class="continue-card__fill" data-page-node-id="57m0yhYHSEpIhHmCMZAJ0s"></div></div>
+                  <span class="continue-card__pct" data-page-node-id="a9br7vS24W23jc4C1zktan">64%</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- 热力图 -->
+            <div style="height:20px" data-page-node-id="uocznrgqN87e9kNLO2SamO"></div>
+            <div class="section" style="padding-top:0;padding-bottom:0" data-page-node-id="hx3lkd4lr1PGfADPiEcSIo">
+              <h3 class="section__title" data-page-node-id="MXGLa8EnxX6ICct9xJIbbZ">阅读节奏 · 近 15 周</h3>
+            </div>
+            <div class="heatmap" data-page-node-id="kEnECEu6ZSHJGMkjMDslAG">
+              <div class="heatmap__grid" id="heatmap" data-page-node-id="1OQzQi342QTpcT8xTK6ntY"></div>
+              <div class="heatmap__legend" data-page-node-id="TngTAFaaupoUGQY7rrtJ3x">
+                <span data-page-node-id="4NVxLI5gwy9uX6c2J8jjsJ">少</span>
+                <div class="heatmap__legend-cells" data-page-node-id="fZs4ruqt46xGhR7Vk11NfC">
+                  <span style="background:#EAF2EF" data-page-node-id="ZnYrAF0mzdtZHDaGoRALZg"></span>
+                  <span style="background:#BFE3D8" data-page-node-id="9JJLUfFfPhMaeyDiq8F3yD"></span>
+                  <span style="background:#7FC9B4" data-page-node-id="JPdv0OJXVqZAr5rvFKc8nF"></span>
+                  <span style="background:#3EA48B" data-page-node-id="ds2IBxwC4oOtbgVPz2TrM2"></span>
+                  <span style="background:#0E6B5E" data-page-node-id="MGhmS2NSNeQqmR20a6hSwx"></span>
+                </div>
+                <span data-page-node-id="GS9IY4dK5EWJnHIglKel7N">多</span>
+              </div>
+            </div>
+            <div style="height:24px" data-page-node-id="Hcj1npYUxPNyGsHEIwB0T5"></div>
+          </div>
+          <!-- 底部导航 -->
+          <nav class="bottom-bar" data-page-node-id="Q8RdjdyJ0wuiuXbNvNjeAH">
+            <button class="bottom-bar__item" aria-current="true" data-page-node-id="cj8RUmq7NDBfMSjpW0JJVY">
+              <svg viewBox="0 0 24 24" data-page-node-id="MqKU73ZuXqFlLy6zNHJxjG"><path d="M12 3l9 8h-3v9h-4v-6h-4v6H6v-9H3z" data-page-node-id="CrVdDcJrLCpDXvVvJLGzWA"/></svg>
+              <span data-page-node-id="q1ZRR4Dq9KbE37qTTIzf1Z">首页</span>
+            </button>
+            <button class="bottom-bar__item" data-jump="library" data-page-node-id="UsBX2hP0wohy2v2KJ5ixIo">
+              <svg viewBox="0 0 24 24" data-page-node-id="mQWptpBfZtNRyx2JS2E0fS"><path d="M4 6h2v12H4zm3 0h1v12H7zm2 0h3v12H9zm4 0h1v12h-1zm2 0h2v12h-2zm3 0h2v12h-2z" data-page-node-id="M1KXrFFbRVtS0kXsLuQCAG"/></svg>
+              <span data-page-node-id="VIszRqlIfvxb505BEgStCV">书库</span>
+            </button>
+            <button class="bottom-bar__item" data-jump="vocabulary" data-page-node-id="S3wdRQO3o2jdEiqvf94tKi">
+              <svg viewBox="0 0 24 24" data-page-node-id="aDNBxFHAdpUSAdlh2ql8At"><path d="M12 3L1 9l4 2.2v6L12 21l7-3.8v-6L23 9zM5 13.2v-3.4l7 3.9 7-3.9v3.4l-7 3.8z" data-page-node-id="t5xTf2O6nNUTnQFtRrwAXO"/></svg>
+              <span data-page-node-id="k4R9RuVNklKULrc8E7WMjd">词汇</span>
+            </button>
+            <button class="bottom-bar__item" data-jump="review" data-page-node-id="K5FDTO0oSUuDlJF1yMP0hw">
+              <svg viewBox="0 0 24 24" data-page-node-id="LlPesGDaqR6R3xBR7JaPa0"><path d="M17.6 6.3A8 8 0 1 0 19.8 14h-2.1a6 6 0 1 1-1.4-7.1L13 10h7V3z" data-page-node-id="EMdH7cHRajgZdVLYrlBTnU"/></svg>
+              <span data-page-node-id="YYIpMmH2kp0UkR9vnp5DWa">复习</span>
+            </button>
+            <button class="bottom-bar__item" data-jump="settings" data-page-node-id="osePKNCzd9taD8U99KIbWG">
+              <svg viewBox="0 0 24 24" data-page-node-id="CXl4uLYoeedrHvr062MRgF"><path d="M19.4 13a7.5 7.5 0 0 0 0-2l2-1.6-2-3.4-2.4.9a7.5 7.5 0 0 0-1.7-1L14.7 3h-4l-.5 2.9a7.5 7.5 0 0 0-1.7 1l-2.4-.9-2 3.4 2 1.6a7.5 7.5 0 0 0 0 2l-2 1.6 2 3.4 2.4-.9a7.5 7.5 0 0 0 1.7 1l.5 2.9h4l.5-2.9a7.5 7.5 0 0 0 1.7-1l2.4.9 2-3.4zM12.7 15a3 3 0 1 1 0-6 3 3 0 0 1 0 6z" data-page-node-id="ibBKhAQh3Vsoo4zpyLRxE0"/></svg>
+              <span data-page-node-id="pmFmFlhxSny7JPA96aDao1">设置</span>
+            </button>
+          </nav>
+        </section>
+
+        <!-- ============ 书库 ============ -->
+        <section class="screen" data-screen="library" data-page-node-id="q3rKAZOlfHfSeA3T0frjzm">
+          <div class="top-bar" data-page-node-id="GrZA8UUNS06eGbxntkCINh">
+            <h2 class="top-bar__title" data-page-node-id="Ano2nQKIf6Rdg88krjcf5A">书库</h2>
+            <button class="top-bar__action" data-open-dialog="dlg-category-manage" data-page-node-id="hXar9MIuD56g4wKJCQCWna" aria-label="分类管理">
+              <svg viewBox="0 0 24 24" data-page-node-id="eWfl7Mx6iEgAiIw4U8Ospl"><path fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16M9 6v0M9 12v0M9 18v0"/></svg>
+            </button>
+          </div>
+          <div class="scroll" style="flex:1" data-page-node-id="COGt3vJGx4tLEskiW1ouca">
+            <div class="search-bar" data-page-node-id="KJQID58rohzr8EwpyBRkFw">
+              <svg viewBox="0 0 24 24" data-page-node-id="FM7NoT9xzqhKWmrUQJ3FHn"><path d="M15.5 14h-.8l-.3-.3a6.5 6.5 0 1 0-.7.7l.3.3v.8l5 5 1.5-1.5zm-6 0a4 4 0 1 1 0-8 4 4 0 0 1 0 8z" data-page-node-id="ApHCgJC59HpxoTzbByxMy9"/></svg>
+              <input placeholder="搜索书名 / 作者 / 单词" data-page-node-id="BW6HPgs7ee6iv3Ty3OXkGD" />
+            </div>
+            <!-- 分类胶囊条（用户自定义分类） -->
+            <div class="category-strip" data-page-node-id="cat-strip-1">
+              <button class="category-chip" aria-pressed="true" data-page-node-id="cat-all">
+                <span class="category-chip__icon" style="background:var(--primary-500)"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"/></svg></span>
+                全部 <span class="category-chip__count">24</span>
+              </button>
+              <button class="category-chip" aria-pressed="false" data-page-node-id="cat-eng">
+                <span class="category-chip__icon" style="background:#0E6B5E"><svg viewBox="0 0 24 24"><path d="M4 19V6a2 2 0 0 1 2-2h12v15M4 19a2 2 0 0 0 2 2h12M4 19a2 2 0 0 1 2-2h12" fill="none" stroke="#fff" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+                英语学习 <span class="category-chip__count">8</span>
+              </button>
+              <button class="category-chip" aria-pressed="false" data-page-node-id="cat-lit">
+                <span class="category-chip__icon" style="background:#B8854A"><svg viewBox="0 0 24 24"><path d="M12 2l3 7 7 .5-5.5 4.5L18 21l-6-4-6 4 1.5-7L2 9.5 9 9z" fill="none" stroke="#fff" stroke-width="1.75" stroke-linejoin="round"/></svg></span>
+                文学小说 <span class="category-chip__count">6</span>
+              </button>
+              <button class="category-chip" aria-pressed="false" data-page-node-id="cat-biz">
+                <span class="category-chip__icon" style="background:#1A5276"><svg viewBox="0 0 24 24"><path d="M3 13l4-4 4 4 5-5 5 5M3 18h18" fill="none" stroke="#fff" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+                商业思维 <span class="category-chip__count">5</span>
+              </button>
+              <button class="category-chip" aria-pressed="false" data-page-node-id="cat-sci">
+                <span class="category-chip__icon" style="background:#5B3E8B"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3" fill="none" stroke="#fff" stroke-width="1.75"/><path d="M2 12h3M19 12h3M12 2v3M12 19v3M5 5l2 2M17 17l2 2M5 19l2-2M17 7l2-2" fill="none" stroke="#fff" stroke-width="1.75" stroke-linecap="round"/></svg></span>
+                科学认知 <span class="category-chip__count">3</span>
+              </button>
+              <button class="category-chip" aria-pressed="false" data-page-node-id="cat-tech">
+                <span class="category-chip__icon" style="background:#B85A1A"><svg viewBox="0 0 24 24"><path d="M13 2L4 14h7l-1 8 9-12h-7z" fill="none" stroke="#fff" stroke-width="1.75" stroke-linejoin="round"/></svg></span>
+                科技前沿 <span class="category-chip__count">2</span>
+              </button>
+              <button class="category-chip category-chip--add" data-open-dialog="dlg-category-edit" data-page-node-id="cat-add">
+                <svg viewBox="0 0 24 24" style="width:14px;height:14px"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6z" fill="currentColor"/></svg>
+                新建分类
+              </button>
+            </div>
+            <div class="tabs" data-page-node-id="lPcnlh6zF6J1jNiWCumiyk">
+              <button class="tab" aria-selected="false" data-page-node-id="lDZQLYlQY7mltiDZF1s9Lw">全部 24</button>
+              <button class="tab" aria-selected="true" data-page-node-id="cWHo9q90OkKPeZElloIR18">在读 5</button>
+              <button class="tab" aria-selected="false" data-page-node-id="t8eTisJGs1EZo437IQ6Vrt">已完成 16</button>
+              <button class="tab" aria-selected="false" data-page-node-id="5RdhVirtMxJLegMhrHwa01">未读 3</button>
+            </div>
+            <div class="book-grid" data-page-node-id="hnqJhGzYQOGJuFb4CMbiL0">
+              <div class="book-card" data-page-node-id="8nNSE2i4y9LlZ2s1DLr0WN">
+                <div class="book-cover book-cover--green" data-page-node-id="NNr6bZt90Ebsf23ENrEvZA">
+                  <div class="book-cover__title" data-page-node-id="DygCKLD5XTurSsayG3A9jn">Atomic Habits</div>
+                  <div class="book-cover__author" data-page-node-id="2s9gEVb5eSVMPhRyyQPoiW">James Clear</div>
+                  <div class="book-cover__progress" data-page-node-id="P6wuEUcGCIsdxMGw5Bab0R"><div class="book-cover__progress-fill" style="width:64%" data-page-node-id="x4EgplrkoGybjXBrMpQSXC"></div></div>
+                </div>
+                <h4 class="book-card__title" data-page-node-id="mRQGFiB7bqy2Z9W2bUWfua">Atomic Habits</h4>
+                <p class="book-card__author" data-page-node-id="k2zAHsOrHDyIncZXC5EImS">James Clear</p>
+              </div>
+              <div class="book-card" data-page-node-id="5CPVH81cGMBHw23sF4DTEK">
+                <div class="book-cover book-cover--sepia" data-page-node-id="vC4rpp5HDhOM9j6Le8rCdU">
+                  <div class="book-cover__title" data-page-node-id="3urTIcsDQd1glNttw5g3c4">The Alchemist</div>
+                  <div class="book-cover__author" data-page-node-id="kPbE9fAmoTbMctKFE1YxtZ">Paulo Coelho</div>
+                </div>
+                <h4 class="book-card__title" data-page-node-id="GyJmyBYpgrlAnpLvC4Mva3">The Alchemist</h4>
+                <p class="book-card__author" data-page-node-id="OVMxEUWSvtkFGE8oxn8SgY">Paulo Coelho</p>
+              </div>
+              <div class="book-card" data-page-node-id="jAw7hGG3MTjpELAD2vkD0O">
+                <div class="book-cover book-cover--blue" data-page-node-id="rjlCNyFF8GZGmhMDPoocGH">
+                  <div class="book-cover__title" data-page-node-id="HYBHuBOLMljPCaIhFHko7z">Deep Work</div>
+                  <div class="book-cover__author" data-page-node-id="oTPJUkhaX99XekHlLGrngx">Cal Newport</div>
+                  <div class="book-cover__progress" data-page-node-id="JdtssdsmQhokMoBxpE4IwP"><div class="book-cover__progress-fill" style="width:32%" data-page-node-id="HcgyMLZsqtLa2TNyxm5FCw"></div></div>
+                </div>
+                <h4 class="book-card__title" data-page-node-id="YzKV9TyjILGh1BHtyXLuio">Deep Work</h4>
+                <p class="book-card__author" data-page-node-id="wdGgShvChMuDTEh4Xr5H7d">Cal Newport</p>
+              </div>
+              <div class="book-card" data-page-node-id="j8pBvDueHTQ146vaSa4GxL">
+                <div class="book-cover book-cover--purple" data-page-node-id="BjDAV4hwKu3arpVZ7wR56q">
+                  <div class="book-cover__title" data-page-node-id="FQnSEaMsgyLVBonM1FNlgr">1984</div>
+                  <div class="book-cover__author" data-page-node-id="Y8UTTCvlwrosoukTJ9rYBK">George Orwell</div>
+                </div>
+                <h4 class="book-card__title" data-page-node-id="5NKKIuRUjs5F29bRQB19ox">1984</h4>
+                <p class="book-card__author" data-page-node-id="3PW6bPO1GdQ8twUgRg69p6">George Orwell</p>
+              </div>
+              <div class="book-card" data-page-node-id="4YNnLw8ZIdqajglmVyW0kG">
+                <div class="book-cover" data-page-node-id="y4zlcVMQtrRd6hrx53jTLJ">
+                  <div class="book-cover__title" data-page-node-id="DK3sLNGTEO6nVGb2iJJxP1">Sapiens</div>
+                  <div class="book-cover__author" data-page-node-id="dofjbYfKVOG2D1NaXsS6D7">Yuval Noah Harari</div>
+                </div>
+                <h4 class="book-card__title" data-page-node-id="WRVZSCMylMZ3AXHcdu3sI5">Sapiens</h4>
+                <p class="book-card__author" data-page-node-id="1t3V7ZLouz5K8xoU3iwFan">Yuval Noah Harari</p>
+              </div>
+              <div class="book-card" data-page-node-id="5Cbi0Td2lmz6e1G4lO0JCP">
+                <div class="book-cover book-cover--green" data-page-node-id="oaz6hTiVGCvyTmJisWVt8M">
+                  <div class="book-cover__title" data-page-node-id="j7zY9cF4j8TV3imHhRITPn">Thinking, Fast and Slow</div>
+                  <div class="book-cover__author" data-page-node-id="NCn7yOTrCysakrKxxyL32O">Daniel Kahneman</div>
+                </div>
+                <h4 class="book-card__title" data-page-node-id="pzJway2VoDikcibMlDXvfn">Thinking, Fast and Slow</h4>
+                <p class="book-card__author" data-page-node-id="DZUVIIZPdSnmKZHzb2Xcdx">Daniel Kahneman</p>
+              </div>
+            </div>
+          </div>
+          <button class="fab" data-open-dialog="dlg-add-book-step1" data-page-node-id="a16wWEssDjhOIan7jBxMRS" aria-label="添加书籍">
+            <svg viewBox="0 0 24 24" data-page-node-id="nDKsAsdubZuh6iuAlL7Jji"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6z" data-page-node-id="bP1hUFYZ0Penc0fykisXER"/></svg>
+          </button>
+          <nav class="bottom-bar" data-page-node-id="uzXTTLwQAAvCRwjkMTnifO">
+            <button class="bottom-bar__item" data-jump="home" data-page-node-id="0lKNeoaOJE6qDJoz43Uh5r">
+              <svg viewBox="0 0 24 24" data-page-node-id="uczkNoFodoyWH54KnuFFfj"><path d="M12 3l9 8h-3v9h-4v-6h-4v6H6v-9H3z" data-page-node-id="1yttaq5odKocRo0HBunslH"/></svg>
+              <span data-page-node-id="FEp7kRF80amprpHWvX3AuG">首页</span>
+            </button>
+            <button class="bottom-bar__item" aria-current="true" data-page-node-id="aDGhYtrhHHBc8NXnfcl8nP">
+              <svg viewBox="0 0 24 24" data-page-node-id="s72qnwtSWADaJ16J8ANVbO"><path d="M4 6h2v12H4zm3 0h1v12H7zm2 0h3v12H9zm4 0h1v12h-1zm2 0h2v12h-2zm3 0h2v12h-2z" data-page-node-id="nxruVbZw4MZkBClV9sAWOg"/></svg>
+              <span data-page-node-id="FBWd8nErQiFVoLQrHeQbFA">书库</span>
+            </button>
+            <button class="bottom-bar__item" data-jump="vocabulary" data-page-node-id="J0CPbcEYDAcU7uKXpEFCMn">
+              <svg viewBox="0 0 24 24" data-page-node-id="CU6WPYzq59TWCCe3M42AId"><path d="M12 3L1 9l4 2.2v6L12 21l7-3.8v-6L23 9zM5 13.2v-3.4l7 3.9 7-3.9v3.4l-7 3.8z" data-page-node-id="AcCytjuGHq0QXluqBCsZqB"/></svg>
+              <span data-page-node-id="guTru9DtKGgRRtSFXxDaTC">词汇</span>
+            </button>
+            <button class="bottom-bar__item" data-jump="review" data-page-node-id="jwHtcnP32usVnf507UCDkN">
+              <svg viewBox="0 0 24 24" data-page-node-id="Faei3vimIi5wgxZJ3L9sZc"><path d="M17.6 6.3A8 8 0 1 0 19.8 14h-2.1a6 6 0 1 1-1.4-7.1L13 10h7V3z" data-page-node-id="Ozc5EAxt5ILjetLK7X0eO0"/></svg>
+              <span data-page-node-id="vEZs0K06DoSDZQYEGW15fN">复习</span>
+            </button>
+            <button class="bottom-bar__item" data-jump="settings" data-page-node-id="DwUFDAsFaAgK13Vufxsdwy">
+              <svg viewBox="0 0 24 24" data-page-node-id="uuzqKkSyriWPmUjpyDAQkr"><path d="M19.4 13a7.5 7.5 0 0 0 0-2l2-1.6-2-3.4-2.4.9a7.5 7.5 0 0 0-1.7-1L14.7 3h-4l-.5 2.9a7.5 7.5 0 0 0-1.7 1l-2.4-.9-2 3.4 2 1.6a7.5 7.5 0 0 0 0 2l-2 1.6 2 3.4 2.4-.9a7.5 7.5 0 0 0 1.7 1l.5 2.9h4l.5-2.9a7.5 7.5 0 0 0 1.7-1l2.4.9 2-3.4zM12.7 15a3 3 0 1 1 0-6 3 3 0 0 1 0 6z" data-page-node-id="gX0IvpFHqQzCN53EHNTIVL"/></svg>
+              <span data-page-node-id="gb69vdFPfXD1bG3kCQWjOc">设置</span>
+            </button>
+          </nav>
+        </section>
+
+        <!-- ============ 词汇 ============ -->
+        <section class="screen" data-screen="vocabulary" data-page-node-id="l1GEKpJXSqJXWJyJUjA9Mv">
+          <div class="top-bar" data-page-node-id="6dZZb8pefurmAgm6hsnr42">
+            <h2 class="top-bar__title" data-page-node-id="xzWrHlZjAtfU5tIsi0T0HT">生词本</h2>
+            <button class="top-bar__action" data-page-node-id="2BmTBXdxX0asaiTm1Bb3pR">
+              <svg viewBox="0 0 24 24" data-page-node-id="ICgDbD6DzsKteFRkS9B5kD"><path d="M15.5 14h-.8l-.3-.3a6.5 6.5 0 1 0-.7.7l.3.3v.8l5 5 1.5-1.5zm-6 0a4 4 0 1 1 0-8 4 4 0 0 1 0 8z" data-page-node-id="4sHFIKqsc8Hd0cYnrpECsd"/></svg>
+            </button>
+          </div>
+          <div class="vocab-tabs" data-page-node-id="GPbFb9D5r8l5USvX9LlGks">
+            <button class="vocab-tab" aria-selected="false" data-page-node-id="HrKeSu9mUVHvt4WJ4s1A8L">全部 <span class="vocab-tab__count" data-page-node-id="HX0KaLOUyESbNKoJglcJuI">128</span></button>
+            <button class="vocab-tab" aria-selected="true" data-page-node-id="15OrX1E7P9NCmhk52E4ZGh">学习中 <span class="vocab-tab__count" data-page-node-id="NVbtn8bJyjXwdje2A7i2OD">42</span></button>
+            <button class="vocab-tab" aria-selected="false" data-page-node-id="oCaOnwu5mnD9cAsXgEUVb3">已掌握 <span class="vocab-tab__count" data-page-node-id="3HdX8nrf1LXBuDUINvfhq0">86</span></button>
+            <button class="vocab-tab" aria-selected="false" data-page-node-id="xqSfYnilOsANv4IQBlSPU2">生疏 <span class="vocab-tab__count" data-page-node-id="rq18nJgXZhokOoHc6ataeB">5</span></button>
+          </div>
+          <div class="scroll" style="flex:1" data-page-node-id="6PBnaZPXCwiPCRoX3soOpZ">
+            <div class="vocab-row" data-page-node-id="NQD4SP1KelTVIZTdey43yI">
+              <div data-page-node-id="xekJa2r8NYJzpFej3WIioc">
+                <p class="vocab-row__word" data-page-node-id="jHmAnnEUxxxrDFDaRhHa6c">ephemeral</p>
+                <p class="vocab-row__def" data-page-node-id="5qxl9u78AiLrasad0sKRmW">adj. 短暂的；瞬息的</p>
+              </div>
+              <div class="vocab-row__meta" data-page-node-id="YiOcZyKL0UQNuNm8MXuj8r">
+                <span class="level-chip level-3" data-page-node-id="N1TQUdcT2pOPNlrFMJ5SHa">L3</span>
+                <button class="vocab-row__icon" data-page-node-id="L0jtbJemhywEZii5HeDtqB">
+                  <svg viewBox="0 0 24 24" data-page-node-id="sMTPzUFbOAjT6uaBcGtx9o"><path d="M8 5v14l11-7z" data-page-node-id="w32oKyQ5XauqddeaFJOuY4"/></svg>
+                </button>
+              </div>
+            </div>
+            <div class="vocab-row" data-page-node-id="NBzSKlhHV4QMkhHpBwLDgV">
+              <div data-page-node-id="F3su6BYd1V38Eyf59MxRvN">
+                <p class="vocab-row__word" data-page-node-id="w96heg2dlPcpsw4gggeBM3">ubiquitous</p>
+                <p class="vocab-row__def" data-page-node-id="WZ3PFOLNgMjdqWjZPWDDTP">adj. 普遍存在的；无所不在的</p>
+              </div>
+              <div class="vocab-row__meta" data-page-node-id="B826yO4M0kRpoTuqg7dp8V">
+                <span class="level-chip level-4" data-page-node-id="k27NEb8rxBmMrgAdmRP2zm">L4</span>
+                <button class="vocab-row__icon" data-page-node-id="AfQFFPgPG350ajvSAluS2u">
+                  <svg viewBox="0 0 24 24" data-page-node-id="a2qO7tuogpfZ7BpsYVMO7Z"><path d="M8 5v14l11-7z" data-page-node-id="LBvCNR4zQsDUXq1aBvLxvi"/></svg>
+                </button>
+              </div>
+            </div>
+            <div class="vocab-row" data-page-node-id="DyokveDAl3ou2QDIJ1h1Hn">
+              <div data-page-node-id="n38dbSrqP8if5v8TFNitw5">
+                <p class="vocab-row__word" data-page-node-id="C6ZgfsSvagEYdUJyLodWTM">paradigm</p>
+                <p class="vocab-row__def" data-page-node-id="hlX4NIne74AwYomibmYfcv">n. 范式；典范</p>
+              </div>
+              <div class="vocab-row__meta" data-page-node-id="TJSTjezjuXye7YG9kr5evI">
+                <span class="level-chip level-4" data-page-node-id="BJlg8PFD1V4lAEsjiqEyNM">L4</span>
+                <button class="vocab-row__icon" data-page-node-id="lbvDWCJ80nhWSi50W1fvd7">
+                  <svg viewBox="0 0 24 24" data-page-node-id="yNMqqbUFLvPIGLeLtH7W2m"><path d="M8 5v14l11-7z" data-page-node-id="PQuHSVEOY3AH9iuNTOa4Bj"/></svg>
+                </button>
+              </div>
+            </div>
+            <div class="vocab-row" data-page-node-id="hUYtp20FcnZzFIBgAmAVhD">
+              <div data-page-node-id="Obs32shX6dYftekGyBEXkv">
+                <p class="vocab-row__word" data-page-node-id="Y0Aw4FzWYyq7FU432IxmFH">run</p>
+                <p class="vocab-row__def" data-page-node-id="7UpLYGGSgjs8NHx1caop1K">v. 奔跑；运行 n. 跑步</p>
+              </div>
+              <div class="vocab-row__meta" data-page-node-id="7BIwcDKo3deAObjvcrm05E">
+                <span class="level-chip level-1" data-page-node-id="YQlL2wGWcJsAmreNFNuymA">L1</span>
+                <button class="vocab-row__icon" data-page-node-id="aLumJCUesh6CGfrgRNYrcD">
+                  <svg viewBox="0 0 24 24" data-page-node-id="I9ghK7GXjEyZ7D1rU5Ner9"><path d="M8 5v14l11-7z" data-page-node-id="s0V2edWsqCay8pGfZgnEcE"/></svg>
+                </button>
+              </div>
+            </div>
+            <div class="vocab-row" data-page-node-id="z2mafCxzk7K6dOLgFVHOtt">
+              <div data-page-node-id="3Pfqj7fTcfMvZUnXlqUQCG">
+                <p class="vocab-row__word" data-page-node-id="PeCCnevgzIHc2ynaCxVviR">serendipity</p>
+                <p class="vocab-row__def" data-page-node-id="lH7sHRU3ZlQnqXuyoNPspu">n. 意外发现美好事物的能力</p>
+              </div>
+              <div class="vocab-row__meta" data-page-node-id="90P98olAoR90mPgnIQcJn7">
+                <span class="level-chip level-5" data-page-node-id="4hKrZEaPyuQipsF8l7Gya2">L5</span>
+                <button class="vocab-row__icon" data-page-node-id="kFd5FxTYkZCvL1XITEkgXd">
+                  <svg viewBox="0 0 24 24" data-page-node-id="F9Z14hrBByHw3r8L7GOv1o"><path d="M8 5v14l11-7z" data-page-node-id="MywBLzFoXBniKs2G6A6vOL"/></svg>
+                </button>
+              </div>
+            </div>
+            <div class="vocab-row" data-page-node-id="6t3imdAjm3EnyMrLuvohuZ">
+              <div data-page-node-id="v16DNDTfbYQY27mNp97nRw">
+                <p class="vocab-row__word" data-page-node-id="srou2nANcNHHuYcM8eVsTy">cognitive</p>
+                <p class="vocab-row__def" data-page-node-id="oNPIwWKUIyjJFptJD9hLha">adj. 认知的；认识的</p>
+              </div>
+              <div class="vocab-row__meta" data-page-node-id="nyzks8f8mUSpFluTJwSNQ6">
+                <span class="level-chip level-3" data-page-node-id="SsIBy81LH0OgY39ueSGN1d">L3</span>
+                <button class="vocab-row__icon" data-page-node-id="ZDO1EpNbseiFRIQw5NcCO2">
+                  <svg viewBox="0 0 24 24" data-page-node-id="IqL6AZDPF6wBdmGkkTaUy8"><path d="M8 5v14l11-7z" data-page-node-id="ZuBWMaxkHmtxI1lCA2AmhK"/></svg>
+                </button>
+              </div>
+            </div>
+          </div>
+          <nav class="bottom-bar" data-page-node-id="as0vtdOWNtr2IEgtaRG6tz">
+            <button class="bottom-bar__item" data-jump="home" data-page-node-id="R7LCcbKdp26w7r8QCy3bX9">
+              <svg viewBox="0 0 24 24" data-page-node-id="UfMny3AcOPuXEXW7Y2wM7j"><path d="M12 3l9 8h-3v9h-4v-6h-4v6H6v-9H3z" data-page-node-id="7E0o2W0RKKA2hrN7oY1OHd"/></svg>
+              <span data-page-node-id="J9xyQqj58QMppcAJbswJAs">首页</span>
+            </button>
+            <button class="bottom-bar__item" data-jump="library" data-page-node-id="yJSQ5hJvcOfN6NOFJVu8Pd">
+              <svg viewBox="0 0 24 24" data-page-node-id="nCtdSTVCLeoAXOekPRYDcl"><path d="M4 6h2v12H4zm3 0h1v12H7zm2 0h3v12H9zm4 0h1v12h-1zm2 0h2v12h-2zm3 0h2v12h-2z" data-page-node-id="yFt5WUiRmovJ9WtJoX85Gk"/></svg>
+              <span data-page-node-id="DHUVkNw4JY5m2MSubYpFKs">书库</span>
+            </button>
+            <button class="bottom-bar__item" aria-current="true" data-page-node-id="L3L6yl32Tn2W69odR0TqtH">
+              <svg viewBox="0 0 24 24" data-page-node-id="z0VgGZ5xf4K8ob6rpPD702"><path d="M12 3L1 9l4 2.2v6L12 21l7-3.8v-6L23 9zM5 13.2v-3.4l7 3.9 7-3.9v3.4l-7 3.8z" data-page-node-id="ebkFqJA1DclO7JI0lJIi0D"/></svg>
+              <span data-page-node-id="BXXLDd2FcECfX8sHmfSPDB">词汇</span>
+            </button>
+            <button class="bottom-bar__item" data-jump="review" data-page-node-id="Pfej6pktGNPUId8zW6b1EH">
+              <svg viewBox="0 0 24 24" data-page-node-id="cRk0Wtpm8bvtT0xAydy9ll"><path d="M17.6 6.3A8 8 0 1 0 19.8 14h-2.1a6 6 0 1 1-1.4-7.1L13 10h7V3z" data-page-node-id="HSKs4akrY2XUVXNlQVpTHQ"/></svg>
+              <span data-page-node-id="6gJ76HK2OHmqb3e3EpuF1x">复习</span>
+            </button>
+            <button class="bottom-bar__item" data-jump="settings" data-page-node-id="suqvlG9oqd8MWtnosbkHGd">
+              <svg viewBox="0 0 24 24" data-page-node-id="xyAMfTSmiXNcm7aGyxMZFA"><path d="M19.4 13a7.5 7.5 0 0 0 0-2l2-1.6-2-3.4-2.4.9a7.5 7.5 0 0 0-1.7-1L14.7 3h-4l-.5 2.9a7.5 7.5 0 0 0-1.7 1l-2.4-.9-2 3.4 2 1.6a7.5 7.5 0 0 0 0 2l-2 1.6 2 3.4 2.4-.9a7.5 7.5 0 0 0 1.7 1l.5 2.9h4l.5-2.9a7.5 7.5 0 0 0 1.7-1l2.4.9 2-3.4zM12.7 15a3 3 0 1 1 0-6 3 3 0 0 1 0 6z" data-page-node-id="46slLOyQ5jTrPGV5VM8QaF"/></svg>
+              <span data-page-node-id="kfsThUdeqK8YneZdHe5n1W">设置</span>
+            </button>
+          </nav>
+        </section>
+
+        <!-- ============ 复习 ============ -->
+        <section class="screen" data-screen="review" data-page-node-id="mkgjtijzOXAPGAvjsauwUp">
+          <div class="top-bar" data-page-node-id="eBJEuSCXDTQQvGTXRwn76o">
+            <h2 class="top-bar__title" data-page-node-id="mm380eRO0hwaAKahluSmE4">今日复习</h2>
+            <button class="top-bar__action" data-page-node-id="3NT2PeWIT07Acq6NdNCYlv">
+              <svg viewBox="0 0 24 24" data-page-node-id="aH77BlxxjYFPzvYRaRJ46N"><path d="M12 6V3L8 7l4 4V8a5 5 0 1 1-5 5H5a7 7 0 1 0 7-7z" data-page-node-id="7aAUh0htKscuAZPfBv5Rio"/></svg>
+            </button>
+          </div>
+          <div class="scroll" style="flex:1" data-page-node-id="LBtXpDpnzzK83YtChCd3n3">
+            <div class="review-summary" data-page-node-id="TlYCw0SCo4iq7OROvo8OA3">
+              <p class="review-summary__title" data-page-node-id="QUDxJCO7mk9ZWXtx4GrJkY">距离每日目标还差</p>
+              <div class="review-summary__num" data-page-node-id="NaYLgrsk4HCqfJyaASxsDj">23</div>
+              <p class="review-summary__sub" data-page-node-id="FBoUiLNZlnxPSzb0PKsHBA">已完成 17 · 还需 23 · 坚持连击 12 天</p>
+            </div>
+            <div style="height:20px" data-page-node-id="TKRMk5HtiMkZrRkAQa4VuT"></div>
+            <div class="section" style="padding-top:0;padding-bottom:0" data-page-node-id="Qjm686LN9oKEOddDJDRrnL">
+              <h3 class="section__title" data-page-node-id="8Vc0nL5kFmFIIRfI80LibO">当前词条</h3>
+            </div>
+            <div class="review-card" data-page-node-id="PUMcYROQu6Utz2QJcSYcN3">
+              <h3 class="review-card__word" data-page-node-id="zJW5atPxAa4tnmJzjYNd4L">ephemeral</h3>
+              <p class="review-card__phonetic" data-page-node-id="O1FvmvUDTqQmLOnBCEntBe">/ɪˈfemərəl/</p>
+              <p class="review-card__hint" data-page-node-id="2Vutr57vkJDuRHO10PSLAO">根据记忆选择 · 答错将重新加入复习</p>
+              <div class="review-card__actions" data-page-node-id="vxPfOKr2EmE3bFQZOsmtpI">
+                <button class="review-action review-action--hard" data-page-node-id="NA4HPmyYlC90JkL4hXU0Rs">
+                  <span data-page-node-id="qmigmcxDnX8R1okIClm6rY">困难</span>
+                  <span class="review-action__sub" data-page-node-id="WsaPGE10N3N308fXDcxiRk">1 分钟后再来</span>
+                </button>
+                <button class="review-action" data-page-node-id="uCXSHnKEGqEs3thuH3SSfE">
+                  <span data-page-node-id="HmOYEL6ao8kdgXiuWBceKQ">记得模糊</span>
+                  <span class="review-action__sub" data-page-node-id="mjsgpXI7ftRCkMgXCLJkV9">6 分钟后</span>
+                </button>
+                <button class="review-action review-action--good" data-page-node-id="cXkhWLHb9vJ8dQFE7rIHBT">
+                  <span data-page-node-id="7jCUjUYD2kEElH7QSCG3kB">记得</span>
+                  <span class="review-action__sub" data-page-node-id="mEr4HLGteA08kKJ23qZye4">今天</span>
+                </button>
+                <button class="review-action review-action--easy" data-page-node-id="hcjQYGNKg8SmvECF8Rpz18">
+                  <span data-page-node-id="rnaiDNiOGZ16Cl4wt0Cp5U">轻松</span>
+                  <span class="review-action__sub" data-page-node-id="mkmUH1B2mY1cpm2D04uTAZ">4 天后</span>
+                </button>
+              </div>
+              <div style="margin-top:var(--space-4);padding-top:var(--space-3);border-top:1px solid var(--border)" data-page-node-id="GVe4h1fxJvorRRjEB9xgtj">
+                <button class="btn btn--ghost" style="font-size:13px" data-page-node-id="HaohY0Q6KnwSoM6KmlqVKM">
+                  <svg viewBox="0 0 24 24" data-page-node-id="m5F5497X4JcOT0bBz2Rs0I"><path d="M12 4.5C7 4.5 2.7 7.6 1 12c1.7 4.4 6 7.5 11 7.5s9.3-3.1 11-7.5c-1.7-4.4-6-7.5-11-7.5zM12 17a5 5 0 1 1 0-10 5 5 0 0 1 0 10zm0-8a3 3 0 1 0 0 6 3 3 0 0 0 0-6z" data-page-node-id="8Btd6j8vIP41cq1PZOHHWI"/></svg>
+                  显示释义
+                </button>
+              </div>
+            </div>
+            <div style="height:20px" data-page-node-id="HsAtH72DKbGFvrpKNf3s5i"></div>
+            <div class="section" style="padding-top:0;padding-bottom:0" data-page-node-id="U3yXWgdcMkPxcKTYq0z1op">
+              <h3 class="section__title" data-page-node-id="ALODWna3xMmStPQ0FP7AeN">复习节奏 · Anki 算法</h3>
+            </div>
+            <div style="margin:0 var(--space-5)" data-page-node-id="lpqbtdH47yWJXdQvda2DYS">
+              <div style="display:flex;justify-content:space-between;padding:var(--space-2) 0;border-bottom:1px solid var(--border);font-size:13px" data-page-node-id="12J63SpRhnANrD6ZPGzs1i">
+                <span style="color:var(--on-muted)" data-page-node-id="0tNlyYADinLLybTpxoH4Uu">新词</span>
+                <span data-page-node-id="xKmEppMR0hhfRIxQ9Q2U9k"><span class="chip chip--info" style="margin-right:8px" data-page-node-id="113ix7u0ewKxwdDLVm1ZAC">5</span>0/5</span>
+              </div>
+              <div style="display:flex;justify-content:space-between;padding:var(--space-2) 0;border-bottom:1px solid var(--border);font-size:13px" data-page-node-id="6J1UjicydbEXE3vgpHEWrz">
+                <span style="color:var(--on-muted)" data-page-node-id="CmPIFzSeWP9hak4kW5o1KD">学习中</span>
+                <span data-page-node-id="1QcxGa4u3Mo38jf6UJzSzm"><span class="chip chip--warning" style="margin-right:8px" data-page-node-id="G1y0ucAOd8OdQGZ8FwDPA9">12</span>8/12</span>
+              </div>
+              <div style="display:flex;justify-content:space-between;padding:var(--space-2) 0;font-size:13px" data-page-node-id="LHfmmYV1tLxsFl3AElVgXP">
+                <span style="color:var(--on-muted)" data-page-node-id="zkOoIB1foPUTbP1872uVDO">已掌握</span>
+                <span data-page-node-id="J4eDdWsUeuxoUGNsR7Sn1W"><span class="chip chip--success" style="margin-right:8px" data-page-node-id="PkC6qg9xCnQGRIjsFRIgzq">9</span>4/9</span>
+              </div>
+            </div>
+            <div style="height:24px" data-page-node-id="4HN7mz7RWRiWspm9txYCud"></div>
+          </div>
+          <nav class="bottom-bar" data-page-node-id="TvBNnaRYYFuwVFPIWuhudD">
+            <button class="bottom-bar__item" data-jump="home" data-page-node-id="ZqV88wYKjWNITGzT0hnNxO">
+              <svg viewBox="0 0 24 24" data-page-node-id="AAzEFSkAzQfd5Kpc8s8heh"><path d="M12 3l9 8h-3v9h-4v-6h-4v6H6v-9H3z" data-page-node-id="wmG0zR3zHB3z6NQvkM6yNI"/></svg>
+              <span data-page-node-id="nyRhcOEReuQHEBNVVWKH3V">首页</span>
+            </button>
+            <button class="bottom-bar__item" data-jump="library" data-page-node-id="rCNOxweiMag9lRSQmkbmsf">
+              <svg viewBox="0 0 24 24" data-page-node-id="uGKvfYUi2tgaVQEUfRfgtK"><path d="M4 6h2v12H4zm3 0h1v12H7zm2 0h3v12H9zm4 0h1v12h-1zm2 0h2v12h-2zm3 0h2v12h-2z" data-page-node-id="D6R3Gdc8tTBSwa3GmNgBNQ"/></svg>
+              <span data-page-node-id="qyHdX0BinK6wPLxCin0I1x">书库</span>
+            </button>
+            <button class="bottom-bar__item" data-jump="vocabulary" data-page-node-id="aRxXt8OhHIew2SWFHI8Q2Y">
+              <svg viewBox="0 0 24 24" data-page-node-id="MtGQx8ymUSY9GCaeTA0aHz"><path d="M12 3L1 9l4 2.2v6L12 21l7-3.8v-6L23 9zM5 13.2v-3.4l7 3.9 7-3.9v3.4l-7 3.8z" data-page-node-id="6HzpeBsbbYvc2S4iwleIC2"/></svg>
+              <span data-page-node-id="dANUMSi4L8aRc7tHaPoQJ7">词汇</span>
+            </button>
+            <button class="bottom-bar__item" aria-current="true" data-page-node-id="zIyDrPwt5AtwRRqlHto1W0">
+              <svg viewBox="0 0 24 24" data-page-node-id="REIR6FtzCFZNemL2CZGsyg"><path d="M17.6 6.3A8 8 0 1 0 19.8 14h-2.1a6 6 0 1 1-1.4-7.1L13 10h7V3z" data-page-node-id="prG6emyLSqDUlWv7cOQEeG"/></svg>
+              <span data-page-node-id="edUWeDBCzkqWNFPYESQjAz">复习</span>
+            </button>
+            <button class="bottom-bar__item" data-jump="settings" data-page-node-id="m5b3glSkQN1bH5Wi7gX4of">
+              <svg viewBox="0 0 24 24" data-page-node-id="UTRD4c7TYUDHtNjwPx1DAE"><path d="M19.4 13a7.5 7.5 0 0 0 0-2l2-1.6-2-3.4-2.4.9a7.5 7.5 0 0 0-1.7-1L14.7 3h-4l-.5 2.9a7.5 7.5 0 0 0-1.7 1l-2.4-.9-2 3.4 2 1.6a7.5 7.5 0 0 0 0 2l-2 1.6 2 3.4 2.4-.9a7.5 7.5 0 0 0 1.7 1l.5 2.9h4l.5-2.9a7.5 7.5 0 0 0 1.7-1l2.4.9 2-3.4zM12.7 15a3 3 0 1 1 0-6 3 3 0 0 1 0 6z" data-page-node-id="vTskDofKEG6yQwfK3Ewnbs"/></svg>
+              <span data-page-node-id="8OlffopkseDWSC8DhFSqH0">设置</span>
+            </button>
+          </nav>
+        </section>
+
+        <!-- ============ 设置 ============ -->
+        <section class="screen" data-screen="settings" data-page-node-id="eNTSjUg9RM16H2JFC5w4Pf">
+          <div class="top-bar" data-page-node-id="GjS5b1EwiROqy4Q5rH7x20">
+            <h2 class="top-bar__title" data-page-node-id="rlMzPlFmn079JE5GTeyFF0">设置</h2>
+          </div>
+          <div class="scroll" style="flex:1;padding:var(--space-5) 0" data-page-node-id="3zfUReKphUG5tBJSS6mPIh">
+            <div class="settings-group" data-page-node-id="5jQK5xDKJ5vB328WIkWOQk">
+              <div class="settings-group__title" data-page-node-id="oewHAQAx3KApQzFhldsvUA">外观</div>
+              <div class="settings-row" data-page-node-id="KvXkFRb2fGnRPeNKVH4bs8">
+                <div class="settings-row__icon" data-page-node-id="DWqW9xBL7GiRIH4fbYznbL"><svg viewBox="0 0 24 24" data-page-node-id="jW90Z2lRUoY6YzzQjpRqo0"><path d="M12 4V1L8 5l4 4V6a6 6 0 1 1-6 6H4a8 8 0 1 0 8-8z" data-page-node-id="BoHSpFHLdvv7hGuwKyHa3Q"/></svg></div>
+                <div class="settings-row__label" data-page-node-id="EzbCzIhB95szzpzfJkOoux">主题</div>
+                <div class="theme-radio" data-page-node-id="9J2vl0r0WxKG5RVuWBS55c">
+                  <button aria-pressed="true" data-page-node-id="DpcJayHQwkKUIXK3FRtoHT">亮</button>
+                  <button aria-pressed="false" data-page-node-id="LzohihVYbjfJGoEciNnlFt">Sepia</button>
+                  <button aria-pressed="false" data-page-node-id="Oh83MZ5Dt3IhedKddg3Mtn">暗</button>
+                </div>
+              </div>
+              <div class="settings-row" data-page-node-id="rCQv0w3PGXvQIbTc6tFhRu">
+                <div class="settings-row__icon" data-page-node-id="d4Z34vSPiDwDsRA5ZLuTHD"><svg viewBox="0 0 24 24" data-page-node-id="ZgcWBdSVyeVNNjn5ThYq6B"><path d="M5 4v3h5.5v12h3V7H19V4z" data-page-node-id="4t6RU9tVFaKcKT68abf85B"/></svg></div>
+                <div class="settings-row__label" data-page-node-id="yZ29FRp6vzDuV8F8C1SWw7">正文字号</div>
+                <div class="settings-row__sub" data-page-node-id="vr7lFDzUkCGHAGESF85TiB">18 sp</div>
+              </div>
+              <div class="settings-row" data-page-node-id="EU4JoUSr45wXVCEm1t4LUj">
+                <div class="settings-row__icon" data-page-node-id="uq09PKqmOCinV8cSORjjl1"><svg viewBox="0 0 24 24" data-page-node-id="3LxrEN3LvtaqHGyFN3mPuJ"><path d="M3 5h18v2H3zm2 4h14v2H5zm2 4h10v2H7zm2 4h6v2H9z" data-page-node-id="pTJ6UnvMxFbv1AGJE3f219"/></svg></div>
+                <div class="settings-row__label" data-page-node-id="BlaAUQZXYUY1vbAQUjbX7S">行高</div>
+                <div class="settings-row__sub" data-page-node-id="jZNlaVDqVuHQc77ZSHk089">1.65</div>
+              </div>
+            </div>
+
+            <div class="settings-group" data-page-node-id="sepc6q74AmnJpN0ObsdM1d">
+              <div class="settings-group__title" data-page-node-id="7GCkhGTBVyUnVBJ5uJTavo">阅读偏好</div>
+              <div class="settings-row" data-page-node-id="DzYm64M7xFZPFbik0CGgsD">
+                <div class="settings-row__icon" data-page-node-id="kaGe4laKZuHi5M6mMgSD7V"><svg viewBox="0 0 24 24" data-page-node-id="EBSFH1UW49oLERKBO8KDys"><path d="M3.9 12a3.1 3.1 0 1 1 6.2 0 3.1 3.1 0 0 1-6.2 0zm10 0a3.1 3.1 0 1 1 6.2 0 3.1 3.1 0 0 1-6.2 0z" data-page-node-id="rwC5AxRWIxcb26AGZCC9Mo"/></svg></div>
+                <div class="settings-row__label" data-page-node-id="SG6c4QQjjaBSH8FX9MgwrC">显示译文</div>
+                <button class="switch" aria-checked="true" data-page-node-id="ITUkzoJBD6WTtCstaJJrYA"><div class="switch__thumb" data-page-node-id="SGlZBkJ7QyKJ95HBhWpyQa"></div></button>
+              </div>
+              <div class="settings-row" data-page-node-id="2myC4vl6YuQXw50a5TWbCA">
+                <div class="settings-row__icon" data-page-node-id="XmaFkmBIZNtYXsGcKFLFaB"><svg viewBox="0 0 24 24" data-page-node-id="wLXT6kyI1CGgmE7FhU7Ctq"><path d="M5 4v3h5.5v12h3V7H19V4z" data-page-node-id="9n8aPNYcXFpHGzf81KM83o"/></svg></div>
+                <div class="settings-row__label" data-page-node-id="L9MGMCCoGLCJUZuS95TqI2">生词自动高亮</div>
+                <button class="switch" aria-checked="true" data-page-node-id="vU4j1qklNfE6gLP4NPiRUm"><div class="switch__thumb" data-page-node-id="77J0SemvdPX7tK7He6gRdG"></div></button>
+              </div>
+              <div class="settings-row" data-page-node-id="JwrAt0jQDtoHsJhiIr3YKM">
+                <div class="settings-row__icon" data-page-node-id="hJJZjizvF78hre7dGMNBGZ"><svg viewBox="0 0 24 24" data-page-node-id="z0FbMgQRmaDTF6MR8QPHmP"><path d="M4 6h2v12H4zm3 0h1v12H7zm2 0h3v12H9zm4 0h1v12h-1zm2 0h2v12h-2zm3 0h2v12h-2z" data-page-node-id="WI6qyDubKKxLDtVitId3PY"/></svg></div>
+                <div class="settings-row__label" data-page-node-id="iT5fMw3CytZO4ic7jWoc1M">自动翻译全文</div>
+                <button class="switch" aria-checked="false" data-page-node-id="kKoLIy33FwmSu8aGcuc8Z1"><div class="switch__thumb" data-page-node-id="23lTZjqqjmWxRlGt5OG3rq"></div></button>
+              </div>
+            </div>
+
+            <div class="settings-group" data-page-node-id="ovuJIsHeiE6gaQCy6gVrId">
+              <div class="settings-group__title" data-page-node-id="8bAW6VFrRXT0FE5yAcT4Ku">朗读 (TTS)</div>
+              <div class="settings-row" data-page-node-id="rHEqO5R3jdrhTn3RtL9CHw">
+                <div class="settings-row__icon" data-page-node-id="H4PPxzSFuEdbrfhqH4hGVA"><svg viewBox="0 0 24 24" data-page-node-id="gmFkn6rldpPWHkOmsgNQTR"><path d="M3 9v6h4l5 5V4L7 9zm13.5 3a4.5 4.5 0 0 0-2.5-4v8a4.5 4.5 0 0 0 2.5-4z" data-page-node-id="awf4txWGokJLuD5Viiumux"/></svg></div>
+                <div class="settings-row__label" data-page-node-id="cs3VpK7Nq8fOwLLm0NBzeP">默认语音引擎</div>
+                <div class="settings-row__sub" data-page-node-id="mHOEinIdLe8AIn1iMZxd5Q">Android TTS</div>
+              </div>
+              <div class="settings-row" data-page-node-id="hNI7Zr2EQaEubqSnwOAjdP">
+                <div class="settings-row__icon" data-page-node-id="Vx6oR8E5lS6nzWHYjkU2oy"><svg viewBox="0 0 24 24" data-page-node-id="bqNwVktwsZ3ys0EEEFACib"><path d="M3 9v6h4l5 5V4L7 9zm13.5 3a4.5 4.5 0 0 0-2.5-4v8a4.5 4.5 0 0 0 2.5-4z" data-page-node-id="luTegkbGJNqMuvZ4AvLwSU"/></svg></div>
+                <div class="settings-row__label" data-page-node-id="AsBEwzmgFt4eswIQuxOHB4">内置离线模型</div>
+                <div class="settings-row__sub" data-page-node-id="pxGuaiFfhz5o8unBpOaG1U">已安装 · 38MB</div>
+              </div>
+              <div class="settings-row" data-page-node-id="5QRU1H7F50NAi4ceaMFYtw">
+                <div class="settings-row__icon" data-page-node-id="5TGYVhO5P7vEmYuq5JAogG"><svg viewBox="0 0 24 24" data-page-node-id="yqy6KUsgd1FABydiiyghw7"><path d="M12 1L3 5v6c0 5.5 3.8 10.7 9 12 5.2-1.3 9-6.5 9-12V5z" data-page-node-id="W1yytIQaFa8nLSbdJTyyvO"/></svg></div>
+                <div class="settings-row__label" data-page-node-id="Wz3BHyvFdDwGfnPCFpX5Mq">管理词典</div>
+              </div>
+            </div>
+
+            <div class="settings-group" data-page-node-id="elca7bH079iNT0AwlCAMyd">
+              <div class="settings-group__title" data-page-node-id="HCahGRCh10FyXEoSR7dNsg">数据与备份</div>
+              <div class="settings-row" data-page-node-id="3QmPvozewEFxFXw058LAbc">
+                <div class="settings-row__icon" data-page-node-id="DJNyYYJqKP0SNRGmdfengX"><svg viewBox="0 0 24 24" data-page-node-id="ItQnkNDYdf8hJdLsdbVt1Q"><path d="M19 12v7H5v-7H3v7a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7zm-6 .7l2.6-2.6L17 11.5l-5 5-5-5 1.4-1.4L11 12.7V4h2z" data-page-node-id="HKKGpIzCO3OHILteC4Uay7"/></svg></div>
+                <div class="settings-row__label" data-page-node-id="H8vIHRLQGGKZzgubh4ItX5">导出学习数据</div>
+              </div>
+              <div class="settings-row" data-page-node-id="CMIID9Fq7JpD4cTInX6MXJ">
+                <div class="settings-row__icon" data-page-node-id="ZsiBhJXIusEeEXcWKcMDlM"><svg viewBox="0 0 24 24" data-page-node-id="IGNlOEin1DKrT2WBUH5Wgf"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6z" data-page-node-id="kgCHJ7wpMzadWpwMKD9iav"/></svg></div>
+                <div class="settings-row__label" data-page-node-id="pGtKIk7mDCepU4gRlU4Nfo">导入书籍</div>
+              </div>
+              <div class="settings-row" data-page-node-id="N9PH1PE7d5w3zXJP7iiZAK">
+                <div class="settings-row__icon" data-page-node-id="AcR1MW8DHiR4phw53GdeTg"><svg viewBox="0 0 24 24" data-page-node-id="ipvDeRbxCCOhYcM9Axo6yi"><path d="M11 7h2v2h-2zm0 4h2v6h-2zm1-9a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm0 18a8 8 0 1 1 0-16 8 8 0 0 1 0 16z" data-page-node-id="u6s9pWhAzaxXsrpWC39HAW"/></svg></div>
+                <div class="settings-row__label" data-page-node-id="SbvxiJFaaL2g8NFssVNnlb">关于听阅</div>
+                <div class="settings-row__sub" data-page-node-id="wW3nvn0HnQaCBuWnY7wO8L">v1.2.0</div>
+              </div>
+            </div>
+            <div style="height:24px" data-page-node-id="Ms9IDnk6JR1XPLdNw8EDgI"></div>
+          </div>
+        </section>
+
+        <!-- ============ 阅读器 ============ -->
+        <section class="screen" data-screen="reader" data-page-node-id="8hnEbRNy6Gh1IyLXSdw35n">
+          <div class="reader__topbar" data-page-node-id="W9mSAEOdeeQMKSWbY74jHy">
+            <button class="reader__topbar-action" data-page-node-id="1KBL9SYwB4P6fginUaHrw6">
+              <svg viewBox="0 0 24 24" data-page-node-id="0H5gg6peUHfg0j487UZ2SD"><path d="M20 11H7.8l5.6-5.6L12 4l-8 8 8 8 1.4-1.4L7.8 13H20z" data-page-node-id="3wnvWOl1vxqSDVwdT7WCid"/></svg>
+            </button>
+            <div class="reader__topbar-title" data-page-node-id="7IEfUhrX9cIyQ7C3wQATCs">Chapter 3 · The Compounding of Habits</div>
+            <button class="reader__topbar-action" data-page-node-id="heFcMhoGHhOZ8GCVhHD62p">
+              <svg viewBox="0 0 24 24" data-page-node-id="zB1FiqgzUlLB2ZTnEzd9Fl"><path d="M3 18h18v-2H3zm0-5h18v-2H3zm0-7v2h18V6z" data-page-node-id="u1uPYZe23NV9TWnL9STXMW"/></svg>
+            </button>
+            <button class="reader__topbar-action" data-page-node-id="CXWkonew3uMumBR9ubfYK4">
+              <svg viewBox="0 0 24 24" data-page-node-id="1CDxWrZBHpyWF4tDMVDeuW"><path d="M12 8a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm0 6a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm0 6a2 2 0 1 0 0 4 2 2 0 0 0 0-4z" data-page-node-id="JinIEBtXVYlekAs9etlXlk"/></svg>
+            </button>
+          </div>
+          <div class="reader__body" data-page-node-id="KSy5fynLFTaRYtjV9nvujS">
+            <h2 class="reader__chapter-title" data-page-node-id="kMdhQWk5PBmvdrJ27QJdzA">Chapter 3</h2>
+            <p class="reader__chapter-sub" data-page-node-id="lkn4u95o4CVy4ndyMa9oh1">The Compounding of Habits · 共 12 页 · 约 8 分钟</p>
+            <p class="reader__p" data-page-node-id="OcMPlprps6UCs1Cljm9NdG">
+              <span class="reader__word--known" data-word="habits" data-page-node-id="238BotEVorCqxDhH2bTWWh">Habits</span> are the compound interest of self-improvement.
+              The same way that money multiplies through compound interest, the effects of your
+              <span class="reader__word--known" data-page-node-id="KWVacqV1eirO9LbbwVASZB">habits</span> multiply as you repeat them.
+            </p>
+            <div class="reader__translation" data-page-node-id="7JjrYhQHWPy85Akn6aBs71">习惯是自我提升的复利。金钱通过复利倍增，你的行为习惯也以同样的方式在重复中倍增。</div>
+            <p class="reader__p reader__p--highlight" data-page-node-id="z8Hkf3AZd53xz0cLpgYpVY">
+              People think they lack motivation. What they actually
+              <span class="reader__word--unknown" data-word="ephemeral" data-page-node-id="DWRjopsW8BUgPEvBQflCXJ">lack</span> is clarity, and
+              <span class="reader__word--unknown" data-word="ubiquitous" data-page-node-id="XIjDfU8qNSrbDEsMGV4Fxl">the</span> truth is, they don't have a system in place.
+            </p>
+            <div class="reader__translation" data-page-node-id="F8uDyYwCl5fhXrDRDIOPEY">人们以为缺少动力，其实缺少的是清晰的认识——事实上，他们没有一个成型的体系。</div>
+            <p class="reader__p" data-page-node-id="zGPaj0sLw8cDrBPdNrvvLI">
+              Getting one percent better every day counts for a lot when you look at it over the span of
+              <span class="reader__word--unknown" data-word="paradigm" data-page-node-id="gHvnxmgJ32z3gkm075mVn4">a</span> year. But when you do the opposite, when
+              you're one percent worse every day, it compounds.
+            </p>
+            <p class="reader__p" data-page-node-id="H5jDGKuXkzWN8jatu04RDJ">
+              You find yourself stuck in a rut so familiar that you can no longer see the
+              <span class="reader__word--unknown" data-page-node-id="H3AnfeRv7TRkMtYHdTVZEW">rut</span> you're in.
+            </p>
+            <div class="reader__translation" data-page-node-id="r84Ac5jboKWemCEvpq35QB">你发现自己困在一个熟悉的窠臼里，久而久之连窠臼本身都看不见了。</div>
+          </div>
+          <div class="reader__controls" data-page-node-id="Is1NemfagIqObu8zOftual">
+            <button class="reader__ctrl" data-page-node-id="6wPAZBECcjV3LeGogDtdIM">
+              <svg viewBox="0 0 24 24" data-page-node-id="saLDJB2IhFpumdFHA3Chlf"><path d="M19 5v14l-7-7zM5 5h2v14H5z" data-page-node-id="o7IOmrbZvDEqvmDFckEgcV"/></svg>
+            </button>
+            <button class="reader__ctrl" data-page-node-id="eZ1KBvh8tEmtiDN6YDcxXz">
+              <svg viewBox="0 0 24 24" data-page-node-id="ZiRUP4NTPE26QkehiyCcEV"><path d="M12 5V2L8 6l4 4V7a5 5 0 1 1-5 5H5a7 7 0 1 0 7-7z" data-page-node-id="miqFT0wxnY65adp1WHlm8R"/></svg>
+            </button>
+            <div style="flex:1" data-page-node-id="loYBHv7EtRApDJIyBiglkn"></div>
+            <button class="reader__ctrl reader__ctrl--active" data-page-node-id="uG04zfcBk2suvbtxD1fuVS">
+              <svg viewBox="0 0 24 24" data-page-node-id="bqYVX9RCovuSWUV3oh43kA"><path d="M12 4a8 8 0 1 0 0 16 8 8 0 0 0 0-16zM10 16V8l6 4z" data-page-node-id="jDkIUjOU4y9NJj9B3TOOvL"/></svg>
+            </button>
+            <div style="flex:1" data-page-node-id="xAwZcJmOUI0mgDo2VzRIsF"></div>
+            <button class="reader__ctrl" data-page-node-id="KDFo9eEY5tYRHZIcpf6hDs">
+              <svg viewBox="0 0 24 24" data-page-node-id="v96U7AvVQ5hLe4KHA5aJCE"><path d="M3 9v6h4l5 5V4L7 9zm13.5 3a4.5 4.5 0 0 0-2.5-4v8a4.5 4.5 0 0 0 2.5-4z" data-page-node-id="H1ccLci2D9NLpoInEa4fSH"/></svg>
+            </button>
+            <button class="reader__ctrl" data-page-node-id="14vU8rTrghlYiDrL8gReui">
+              <svg viewBox="0 0 24 24" data-page-node-id="jWGPEUqm5hm0HgYxVmPC9B"><path d="M14 3v2h3.6L7.6 15H4v2h3.6L18 6.6V10h2V3z" data-page-node-id="fAO8ExUH1HUI4VXBdMt992"/></svg>
+            </button>
+            <button class="reader__ctrl" data-page-node-id="GTLFh1jAakoZaE6NcUn5J8">
+              <svg viewBox="0 0 24 24" data-page-node-id="vFsPphjFz24e2uXGhlrfk6"><path d="M7 7h10v3H7zm0 7h10v3H7z" data-page-node-id="Nc8C4sBI64zqR9EIXLKUDa"/></svg>
+            </button>
+          </div>
+          <div style="position:absolute;left:0;right:0;bottom:96px;display:flex;justify-content:center" data-page-node-id="0JMuAXd1slOelHss6Fm3YD">
+            <span class="reader__speed" data-page-node-id="760piIMa4s6XWXtZqrtLk9">1.0×</span>
+          </div>
+          <!-- 词浮层（演示状态） -->
+          <div class="word-popover" style="left:120px;top:280px" data-page-node-id="lVuIziaPFkv6Z3x7afBehM">
+            <p class="word-popover__word" data-page-node-id="ckZuxSplYvOETt91YNB6H4">ephemeral</p>
+            <p class="word-popover__phonetic" data-page-node-id="Aho8LIXMo5M4zH0C5KiFsU">/ɪˈfemərəl/</p>
+            <span class="word-popover__pos" data-page-node-id="7d0oewVhn4rhFO11SBd8zd">adj.</span>
+            <span class="level-chip level-3" data-page-node-id="8Ufev12wLsEn6eQgcA6Miw">L3</span>
+            <p class="word-popover__def" data-page-node-id="tkvx2NNsJyO85DdyMO8N91">短暂的；瞬息的；转瞬即逝的</p>
+            <div class="word-popover__actions" data-page-node-id="GAoFlJ12YSBZS3Pt51C6Zx">
+              <button class="word-popover__action" data-page-node-id="Tylq96IBVfZ6ItEfsHEHRV">📖 详细释义</button>
+              <button class="word-popover__action" data-page-node-id="8Euv0LeAhDHx8HA4MfoCn1">➕ 加入生词</button>
+            </div>
+          </div>
+        </section>
+
+        <!-- ============ 词典管理 ============ -->
+        <section class="screen" data-screen="dictionary" data-page-node-id="JGyBgSrIoUtPFvW7opMXwc">
+          <div class="top-bar" data-page-node-id="oP6n2tEbV5dHBNDjAYEnjU">
+            <button class="top-bar__action" data-page-node-id="y5EaHWIxclD18Pl0b7DECc">
+              <svg viewBox="0 0 24 24" data-page-node-id="nz9gRvBwdfkhocQqYUynas"><path d="M20 11H7.8l5.6-5.6L12 4l-8 8 8 8 1.4-1.4L7.8 13H20z" data-page-node-id="SauarihI8nZfUnbECuBlYa"/></svg>
+            </button>
+            <h2 class="top-bar__title" data-page-node-id="Mw2MxSNQLvA6swBjW6qkJM">词典管理</h2>
+            <button class="top-bar__action" data-page-node-id="pkum3sdOZl59the7CbCjyz">
+              <svg viewBox="0 0 24 24" data-page-node-id="Vpvp3RFS6n1jfULXxMOgKN"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6z" data-page-node-id="w944O4jMyBoc8ZGrnOa4j7"/></svg>
+            </button>
+          </div>
+          <div class="scroll" style="flex:1;padding:var(--space-3) 0" data-page-node-id="rjfMtp655hJGyAIor3tuhP">
+            <div class="dict-card" data-page-node-id="vM8JMNJ9ihFAjednGE23yN">
+              <div class="dict-card__top" data-page-node-id="zwKBdogNnJpZkgtIP4xD9Z">
+                <div class="avatar" style="background:linear-gradient(135deg,#82B4D6,#1A5276);color:#fff" data-page-node-id="MGcpF6iz8W3sgcSm6TK6Du">📘</div>
+                <p class="dict-card__name" data-page-node-id="Bt1vgg3JPlQUTmjb0hQ2xD">Android 14 系统翻译</p>
+                <span class="dict-card__badge dict-card__badge--system" data-page-node-id="PtjTiHDB06Eg8bR1s7Hljv">系统</span>
+              </div>
+              <p class="dict-card__meta" data-page-node-id="987x1hSUcKqftdO9w4Fiv8"><span data-page-node-id="feaVJ9V1QflaoSjAgjXHbD">英→中</span><span data-page-node-id="YFBYPHpqF6lhzLtX4X7hRP">·</span><span data-page-node-id="BY1WR7R2yAle5E3yAg49Bk">无需联网</span><span data-page-node-id="Uo8OQDXDQTtF9FJeCTYK3W">·</span><span data-page-node-id="mXrd5qqcwHP5yhIg3QowM2">免费</span></p>
+              <div class="dict-card__priority" data-page-node-id="ydi0LZlD5AHfK3Ru6suQpI">
+                <span data-page-node-id="FiORIPBDp4grZ1MCWlU5ro">优先级</span>
+                <div class="dict-card__priority-bars" data-page-node-id="vmC9pxCCacCUKcllhla5dw">
+                  <span class="on" data-page-node-id="giaSD4EzcD6cfbAEKtkyyM"></span><span class="on" data-page-node-id="oXG8V0mfJTlJS9FzpfgxpE"></span><span class="on" data-page-node-id="zEJ8jfHBDSPLGm6BUddYZF"></span><span class="on" data-page-node-id="GApuqScLMe3VLFzbmEgFAn"></span><span class="on" data-page-node-id="xi0BwRwLOrOcEmuYQYfkki"></span>
+                </div>
+              </div>
+            </div>
+            <div class="dict-card" data-page-node-id="rg8ANEvAcrmxpwUlQKP2y2">
+              <div class="dict-card__top" data-page-node-id="H09ucSlD4ltggse37gIYpO">
+                <div class="avatar" style="background:linear-gradient(135deg,#88D3C9,#0B473F);color:#fff" data-page-node-id="JGjHYaJkAB25DEZ16Z0DjJ">🧠</div>
+                <p class="dict-card__name" data-page-node-id="Gmk9OwQAxdxu1entNFYByF">Google ML Kit</p>
+                <span class="dict-card__badge dict-card__badge--offline" data-page-node-id="Lh1PssnLPSRXW8zOTAwTGL">需 GMS</span>
+              </div>
+              <p class="dict-card__meta" data-page-node-id="uJwBbuOylxVMhFiHwgOCWr"><span data-page-node-id="jcEYM6gBlZ4HGEdLKTsMwJ">英→中</span><span data-page-node-id="NOrDwIExOscxWYth6hlWiP">·</span><span data-page-node-id="nYxG72s6C72nIFrT5IiWI4">需联网</span><span data-page-node-id="mRv1GfLeC0jFj2e5ALikTD">·</span><span data-page-node-id="GwPBI9P27axgBAlynzIekm">境外机型</span></p>
+              <div class="dict-card__priority" data-page-node-id="QXTXKeClbJL46B9Jqs8JOG">
+                <span data-page-node-id="TiHq3B2PhQnegm7Wv0uO8s">优先级</span>
+                <div class="dict-card__priority-bars" data-page-node-id="XDYBrhmkUMoOryBHSNSZzI">
+                  <span class="on" data-page-node-id="anlGyDEBFcn950VD4M819V"></span><span class="on" data-page-node-id="84J2RwVcYLvZnYlwcIidUh"></span><span class="on" data-page-node-id="GF2o7g9ptp10dhDDvWNvYG"></span><span data-page-node-id="tGYDAD9TB5DtghswKQpNwT"></span><span data-page-node-id="0hF5XeSFe8cS8OCj9ARGNC"></span>
+                </div>
+              </div>
+            </div>
+            <div class="dict-card" data-page-node-id="dQJtDTIwwfyPctqroVdgC8">
+              <div class="dict-card__top" data-page-node-id="ctE84rLAYhGosPfcACWUvB">
+                <div class="avatar" style="background:linear-gradient(135deg,#ECA469,#7F3F0B);color:#fff" data-page-node-id="4L8WoYuxPpLTmIiDuzSeWy">📚</div>
+                <p class="dict-card__name" data-page-node-id="ugOrGw4DaRuTryROTqgsaF">本地词典</p>
+                <span class="dict-card__badge dict-card__badge--local" data-page-node-id="k0gVgBeiCQ9eDpBf8XH25K">离线</span>
+              </div>
+              <p class="dict-card__meta" data-page-node-id="euZb71hyVoTyBZZEUgc8Ni"><span data-page-node-id="Hb0yUiFTAwR8QdJMb705jf">英→中</span><span data-page-node-id="31YyFHWXwW2x7HCPpQFzMG">·</span><span data-page-node-id="SEd5j67GhtidfEwKieUSWd">1000+ 高频词</span><span data-page-node-id="wpf9zuJvsx543iqzeCA2rA">·</span><span data-page-node-id="WmftXMotoziji4XuDjE9Al">38MB</span></p>
+              <div class="dict-card__priority" data-page-node-id="jNPof3BsPdaBOyZO74qFgQ">
+                <span data-page-node-id="57gTtztI0QwGudIJwaTGpC">优先级</span>
+                <div class="dict-card__priority-bars" data-page-node-id="w9IThX7ZpD80WiANZCxdtm">
+                  <span class="on" data-page-node-id="1gA9ylDR8opNkGLUnESHcU"></span><span class="on" data-page-node-id="OAaRylMWeCnJVQB4CclYDx"></span><span data-page-node-id="diiV4Ag7Az7NMKVO1gmg9C"></span><span data-page-node-id="Gvonqrv4YXQhcZqBaMpO2A"></span><span data-page-node-id="HqaPS4PppzsXNAjebGDmTE"></span>
+                </div>
+              </div>
+            </div>
+            <div style="padding:var(--space-5) var(--space-5) 0;color:var(--on-muted);font-size:12px;line-height:1.6" data-page-node-id="eCLe5HBMlXRwicRHmFtQBN">
+              💡 系统会按优先级自动选择最优翻译方案。前两项无结果时，本地词典兜底。
+            </div>
+            <div style="height:24px" data-page-node-id="ypVsWkcHFObuF0EUqgnVnZ"></div>
+          </div>
+        </section>
+
+        <!-- ============ 引导 Onboarding ============ -->
+        <section class="screen" data-screen="onboarding" data-page-node-id="2H0OR8daKdBtfk2ebplnHJ">
+          <div class="onboarding" data-page-node-id="uUzSAATObvsGGBVMuFn1yb">
+            <button class="onboarding__skip" data-page-node-id="GDdVOCiRWdAHHaaAKR9A5Y">跳过</button>
+            <div class="onboarding__art" data-page-node-id="FvfU6k6aqum4rsoK1a4MtA">📖</div>
+            <h2 class="onboarding__title" data-page-node-id="qwE3paE1wGpDjfLgtH3LSX">让英文阅读<br data-page-node-id="9aDbLgNvHpC1d7JIOwUEYj"/>不再有生词</h2>
+            <p class="onboarding__body" data-page-node-id="o8DaWbV80cYkL0hDDRp9Mz">逐段译文 · 词频统计 · 生词本 · 全自动朗读。用 5 分钟开始你的第一本英文书。</p>
+            <div class="onboarding__dots" data-page-node-id="9oMFRm1yRqucGpTzBVc0H2">
+              <span class="onboarding__dot onboarding__dot--active" data-page-node-id="T64SxJNdBY9xG5GLDhNZEU"></span>
+              <span class="onboarding__dot" data-page-node-id="ZWwkLZO7vfFGlGqAOCVBmB"></span>
+              <span class="onboarding__dot" data-page-node-id="nyo0feVTWf3Z8377XDwTAj"></span>
+            </div>
+            <button class="btn btn--primary btn--lg" style="margin:0 auto" data-page-node-id="93layypDTgSRdDTRHE6GhR">
+              下一步
+              <svg viewBox="0 0 24 24" data-page-node-id="6VLvFm8Qznsa0lkKn0Dcka"><path d="M5 12h14m-7-7l7 5-7 5z" data-page-node-id="on78M9YDfGNhBZzC53wjNn"/></svg>
+            </button>
+          </div>
+        </section>
+
+        <!-- ============ 弹窗：词详情 ============ -->
+        <section class="screen" data-screen="modal-word" data-page-node-id="ENTJSTCpRBKtUtEzE5VgQI">
+          <div style="background:var(--bg);flex:1;display:flex;align-items:center;justify-content:center;color:var(--on-muted);font-size:14px" data-page-node-id="D0hiMUHY64oa35HgFb369o">
+            [首页背景，弹窗覆盖]
+          </div>
+          <div class="dialog-backdrop" data-page-node-id="O8jxTJr1Us0qhNousA0a6k">
+            <div class="dialog__sheet" data-page-node-id="2DzmnkXja99XaTMnG2CwsC">
+              <div class="dialog__handle" data-page-node-id="mkjlk5TGihkBICSyl7hcJK"></div>
+              <div style="display:flex;align-items:center;gap:var(--space-3);margin-bottom:var(--space-3)" data-page-node-id="ouN9rVGfChX0y9FXofuBO1">
+                <h3 class="dialog__title" style="margin:0;font-family:var(--font-read);font-size:28px" data-page-node-id="CggIsQUCryrziWlwhmpNWv">ephemeral</h3>
+                <span class="level-chip level-3" data-page-node-id="aWl54f3GB6nByMlQub07i0">L3</span>
+              </div>
+              <p style="color:var(--on-muted);font-family:var(--font-mono);margin:0 0 var(--space-4);font-size:14px" data-page-node-id="sOpsB56YKi8xIYRi8Cb3PK">/ɪˈfemərəl/ · 美式</p>
+              <div style="display:flex;gap:var(--space-2);margin-bottom:var(--space-3)" data-page-node-id="cAzClbpq0rgJjxHOD7P4ii">
+                <span class="word-popover__pos" data-page-node-id="EABSOICoXnW0Olg9InC0ZM">adj.</span>
+                <span class="chip" data-page-node-id="EsOmcv4vAwsqLKryQzblf7">书面</span>
+                <span class="chip" data-page-node-id="8BaEEgGZWW1keitNZX9qfE">GRE</span>
+              </div>
+              <p class="dialog__body" data-page-node-id="GrcUqMKEhySmBQUJvkawL3">短暂的；转瞬即逝的；瞬息的。<br data-page-node-id="2etpqNiSftEW18HoCIIhCQ"/>例：<em style="color:var(--on-bg);font-family:var(--font-read)" data-page-node-id="DxcJ91IdJ6yUtnZibrKSK4">"Fashion is ephemeral; style endures."</em></p>
+              <div style="background:var(--surface-2);padding:var(--space-3);border-radius:var(--radius-md);margin-bottom:var(--space-4);font-size:13px;line-height:1.6" data-page-node-id="YFzL8C4Gov5eXJZ2p3KNIY">
+                <div style="color:var(--on-muted);margin-bottom:4px;font-weight:600" data-page-node-id="NfMChgB7C6wJ6MisAyGaQr">近义词</div>
+                <div data-page-node-id="5miRQ3BItIcfW1fSDDJjmM">transient · fleeting · momentary · short-lived</div>
+              </div>
+              <div class="dialog__actions" data-page-node-id="RA3WvY79aCgbEGztjOYera">
+                <button class="btn btn--secondary" data-page-node-id="XGEluU249VIrOPJ9nODGcW">关闭</button>
+                <button class="btn btn--primary" data-page-node-id="b1jywEHFs8vWYogJJEhvC2">
+                  <svg viewBox="0 0 24 24" data-page-node-id="HbECh8yYyuvywTqPuQidLF"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6z" data-page-node-id="b8uAhDQNw1efm66BolnOxL"/></svg>
+                  加入生词本
+                </button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ============ 弹窗：章节选择 ============ -->
+        <section class="screen" data-screen="modal-chapter" data-page-node-id="CWKMIVTDiehoWtFJRNZBuW">
+          <div style="background:var(--bg);flex:1" data-page-node-id="YDITXBqb68W3nK5RSIpf0D"></div>
+          <div class="dialog-backdrop" data-page-node-id="KPlURRPd3h0K6LVEbDLLrd">
+            <div class="dialog__sheet" data-page-node-id="56Bk9TZNkoic2VdX6We9oG">
+              <div class="dialog__handle" data-page-node-id="9vjAZ8VRsTPdPkGAm4u6XE"></div>
+              <h3 class="dialog__title" data-page-node-id="e6omfygR3yYyFHJQlcphzN">选择章节</h3>
+              <p class="dialog__body" data-page-node-id="F8nAUtRZFR1mm7RNClF5Ge">Atomic Habits · 共 12 章</p>
+              <div class="chapter-list" data-page-node-id="Aa02PXNN9K4ohz44ya0AsJ">
+                <div class="chapter-item" data-page-node-id="mw4O4iIMD1VwkJLqg96meF">
+                  <span class="chapter-item__num" data-page-node-id="aJTydTB2o7akV08pFiv5vx">1</span>
+                  <span class="chapter-item__title" data-page-node-id="Sl1dP8JCsKPZuBHHCEDuTF">The Surprising Power of Atomic Habits</span>
+                  <span class="chapter-item__pages" data-page-node-id="9dx3KOC1aqhpwnxLyT3z77">12 页</span>
+                </div>
+                <div class="chapter-item" data-page-node-id="xFXxmD6S8ANryBAHDDmClw">
+                  <span class="chapter-item__num" data-page-node-id="Y8BNVBBBTPqxwCRiTFo068">2</span>
+                  <span class="chapter-item__title" data-page-node-id="dpIaKaaT9OpjKuVaDxvQct">How Your Habits Shape Your Identity</span>
+                  <span class="chapter-item__pages" data-page-node-id="2HpJceiPmWcPPz8eztUmoN">10 页</span>
+                </div>
+                <div class="chapter-item chapter-item--current" data-page-node-id="8kfVfAYTh4ZWoIuZ9vt7BZ">
+                  <span class="chapter-item__num" data-page-node-id="FEq3wu59W6wCjC5ixNxPwA">3</span>
+                  <span class="chapter-item__title" data-page-node-id="dbQKwzmh3bekuwd1Bg4bE3">The Compounding of Habits</span>
+                  <span class="chapter-item__pages" data-page-node-id="QJTxwN3iRb4dgjE5pXnYSH">12 页</span>
+                </div>
+                <div class="chapter-item" data-page-node-id="xl6whDzAqHiyF2s1nojFFg">
+                  <span class="chapter-item__num" data-page-node-id="2nMdE9zTuYWDazxuyPvlZ8">4</span>
+                  <span class="chapter-item__title" data-page-node-id="xtQ4Ca58KaLpGTeY3h85IU">The Four Laws of Behavior Change</span>
+                  <span class="chapter-item__pages" data-page-node-id="HtYJ7UDiZdvdj74OhvFCT9">14 页</span>
+                </div>
+                <div class="chapter-item" data-page-node-id="Wciq5XDoCYVcjcBKDYNYze">
+                  <span class="chapter-item__num" data-page-node-id="acd9cv3Q5QNWxWtVZPClQu">5</span>
+                  <span class="chapter-item__title" data-page-node-id="kRqLQOskqnByxtCCjmVJT2">The First Law: Make It Obvious</span>
+                  <span class="chapter-item__pages" data-page-node-id="Wnxg2Hcv1I7HvRqFk7IX79">16 页</span>
+                </div>
+                <div class="chapter-item" data-page-node-id="FPuAyFBF1XvEdRNBYnzVap">
+                  <span class="chapter-item__num" data-page-node-id="iC8vONJcPs2qHufJXxp8cb">6</span>
+                  <span class="chapter-item__title" data-page-node-id="ipZtuuXequTGLH0IRwEHti">The Second Law: Make It Attractive</span>
+                  <span class="chapter-item__pages" data-page-node-id="2XiNLiDEJ3DEJZI2nmPuSc">14 页</span>
+                </div>
+              </div>
+              <div class="dialog__actions" style="margin-top:var(--space-4)" data-page-node-id="FgwBDtZyOah3Rh5GNteYVC">
+                <button class="btn btn--ghost" data-page-node-id="RwJ5xl0lfD5fbOyBJIyjPn">取消</button>
+                <button class="btn btn--primary" data-page-node-id="0HF4HdVifxiHswEdYVWjTR">跳转</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ============ 弹窗：删除确认 ============ -->
+        <section class="screen" data-screen="modal-delete" data-page-node-id="2B5pqtYgP7gLC7dsbZnijQ">
+          <div style="background:var(--bg);flex:1" data-page-node-id="3XNCX4LORLhoUReTqBwE8S"></div>
+          <div class="dialog-backdrop" data-page-node-id="o7nid2c3SITZrjVD9CyPK1">
+            <div class="dialog__sheet" data-page-node-id="nSTnZ8aDtYfBdZZjAjChlo">
+              <div class="dialog__handle" data-page-node-id="3lIcBOsDt0ruKttz9JqcRz"></div>
+              <div style="display:flex;align-items:center;gap:var(--space-3);margin-bottom:var(--space-3)" data-page-node-id="6cXYAx3feEMRCMpV1U57hC">
+                <div style="width:48px;height:48px;border-radius:50%;background:var(--error-bg);color:var(--error);display:flex;align-items:center;justify-content:center" data-page-node-id="zO1TRO0GlPIU3rXVe1WZX2">
+                  <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor" data-page-node-id="IL0aHYDlh8sl3tUlGRsVVl"><path d="M6 7h12v13a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2zm3-3h6l1 2h4v2H4V6h4z" data-page-node-id="YAgD9MNwQfbFjmsoYUege6"/></svg>
+                </div>
+                <h3 class="dialog__title" data-page-node-id="lM7ceJu9zjPpf3FTSLQk0u">删除 28 个生词？</h3>
+              </div>
+              <p class="dialog__body" data-page-node-id="qXmwnTSDnvv1C7mQcvfqVh">
+                这些生词来自 <strong style="color:var(--on-bg)" data-page-node-id="7gx83rzX0Lntg3iQC9spfR">Atomic Habits</strong>，已保存 12 天。
+                删除后将从生词本移除，但会保留在历史记录中。
+              </p>
+              <div class="dialog__actions" data-page-node-id="3UAL5Fsjb1eOBukE1zF1cH">
+                <button class="btn btn--secondary" data-page-node-id="L81LntKBYViCfj9QrMpZXH">取消</button>
+                <button class="btn" style="background:var(--error);color:#fff" data-page-node-id="ADCtCI36Dp6dfR964SnEsL">删除</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ============ 弹窗：分类管理 ============ -->
+        <div class="dialog-backdrop is-hidden" id="dlg-category-manage" data-page-node-id="dlg-cat-mgmt">
+          <div class="dialog__sheet" data-page-node-id="dlg-cat-mgmt-sheet">
+            <div class="dialog__handle" data-page-node-id="dlg-cat-mgmt-h"></div>
+            <div class="dialog__head">
+              <button class="dialog__back" data-close-dialog aria-label="关闭"><svg viewBox="0 0 24 24"><path d="M19 12H5M12 19l-7-7 7-7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+              <h3 class="dialog__title">分类管理</h3>
+              <button class="btn-secondary" style="margin-left:auto;padding:6px 14px;font-size:13px" data-open-dialog="dlg-category-edit" data-close-then-open>新建</button>
+            </div>
+            <p class="dialog__body" style="margin-bottom:var(--space-3)">长按拖动排序，点击编辑修改图标和颜色。</p>
+            <div class="category-list" data-page-node-id="cat-mgmt-list">
+              <div class="category-row">
+                <span class="category-row__handle"><svg viewBox="0 0 24 24"><path d="M8 6h.01M8 12h.01M8 18h.01M16 6h.01M16 12h.01M16 18h.01" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span>
+                <span class="category-row__icon" style="background:#0E6B5E"><svg viewBox="0 0 24 24"><path d="M4 19V6a2 2 0 0 1 2-2h12v15M4 19a2 2 0 0 0 2 2h12M4 19a2 2 0 0 1 2-2h12" fill="none" stroke="#fff" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+                <div class="category-row__main"><p class="category-row__name">英语学习</p><p class="category-row__count">8 本</p></div>
+                <button class="category-row__edit" data-open-dialog="dlg-category-edit" data-close-then-open aria-label="编辑"><svg viewBox="0 0 24 24"><path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+              </div>
+              <div class="category-row">
+                <span class="category-row__handle"><svg viewBox="0 0 24 24"><path d="M8 6h.01M8 12h.01M8 18h.01M16 6h.01M16 12h.01M16 18h.01" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span>
+                <span class="category-row__icon" style="background:#B8854A"><svg viewBox="0 0 24 24"><path d="M12 2l3 7 7 .5-5.5 4.5L18 21l-6-4-6 4 1.5-7L2 9.5 9 9z" fill="none" stroke="#fff" stroke-width="1.75" stroke-linejoin="round"/></svg></span>
+                <div class="category-row__main"><p class="category-row__name">文学小说</p><p class="category-row__count">6 本</p></div>
+                <button class="category-row__edit" data-open-dialog="dlg-category-edit" data-close-then-open aria-label="编辑"><svg viewBox="0 0 24 24"><path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+              </div>
+              <div class="category-row">
+                <span class="category-row__handle"><svg viewBox="0 0 24 24"><path d="M8 6h.01M8 12h.01M8 18h.01M16 6h.01M16 12h.01M16 18h.01" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span>
+                <span class="category-row__icon" style="background:#1A5276"><svg viewBox="0 0 24 24"><path d="M3 13l4-4 4 4 5-5 5 5M3 18h18" fill="none" stroke="#fff" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+                <div class="category-row__main"><p class="category-row__name">商业思维</p><p class="category-row__count">5 本</p></div>
+                <button class="category-row__edit" data-open-dialog="dlg-category-edit" data-close-then-open aria-label="编辑"><svg viewBox="0 0 24 24"><path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+              </div>
+              <div class="category-row">
+                <span class="category-row__handle"><svg viewBox="0 0 24 24"><path d="M8 6h.01M8 12h.01M8 18h.01M16 6h.01M16 12h.01M16 18h.01" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span>
+                <span class="category-row__icon" style="background:#5B3E8B"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3" fill="none" stroke="#fff" stroke-width="1.75"/><path d="M2 12h3M19 12h3M12 2v3M12 19v3M5 5l2 2M17 17l2 2M5 19l2-2M17 7l2-2" fill="none" stroke="#fff" stroke-width="1.75" stroke-linecap="round"/></svg></span>
+                <div class="category-row__main"><p class="category-row__name">科学认知</p><p class="category-row__count">3 本</p></div>
+                <button class="category-row__edit" data-open-dialog="dlg-category-edit" data-close-then-open aria-label="编辑"><svg viewBox="0 0 24 24"><path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+              </div>
+              <div class="category-row">
+                <span class="category-row__handle"><svg viewBox="0 0 24 24"><path d="M8 6h.01M8 12h.01M8 18h.01M16 6h.01M16 12h.01M16 18h.01" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span>
+                <span class="category-row__icon" style="background:#B85A1A"><svg viewBox="0 0 24 24"><path d="M13 2L4 14h7l-1 8 9-12h-7z" fill="none" stroke="#fff" stroke-width="1.75" stroke-linejoin="round"/></svg></span>
+                <div class="category-row__main"><p class="category-row__name">科技前沿</p><p class="category-row__count">2 本</p></div>
+                <button class="category-row__edit" data-open-dialog="dlg-category-edit" data-close-then-open aria-label="编辑"><svg viewBox="0 0 24 24"><path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ============ 弹窗：新建 / 编辑分类 ============ -->
+        <div class="dialog-backdrop is-hidden" id="dlg-category-edit" data-page-node-id="dlg-cat-edit">
+          <div class="dialog__sheet" data-page-node-id="dlg-cat-edit-sheet">
+            <div class="dialog__handle"></div>
+            <div class="dialog__head">
+              <button class="dialog__back" data-close-dialog aria-label="返回"><svg viewBox="0 0 24 24"><path d="M19 12H5M12 19l-7-7 7-7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+              <h3 class="dialog__title">新建分类</h3>
+            </div>
+
+            <div class="form-field">
+              <label class="form-label" for="cat-name">分类名称</label>
+              <input id="cat-name" class="text-input" placeholder="如：英语学习" value="" />
+            </div>
+
+            <div class="form-field">
+              <label class="form-label">图标</label>
+              <div class="icon-picker" data-picker="icon">
+                <button class="icon-picker__item" aria-pressed="true" data-icon="book"><svg viewBox="0 0 24 24"><path d="M4 19V6a2 2 0 0 1 2-2h12v15M4 19a2 2 0 0 0 2 2h12M4 19a2 2 0 0 1 2-2h12" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+                <button class="icon-picker__item" aria-pressed="false" data-icon="star"><svg viewBox="0 0 24 24"><path d="M12 2l3 7 7 .5-5.5 4.5L18 21l-6-4-6 4 1.5-7L2 9.5 9 9z" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linejoin="round"/></svg></button>
+                <button class="icon-picker__item" aria-pressed="false" data-icon="heart"><svg viewBox="0 0 24 24"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1-1a5.5 5.5 0 0 0-7.8 7.8L12 21l8.8-8.5a5.5 5.5 0 0 0 0-7.8z" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linejoin="round"/></svg></button>
+                <button class="icon-picker__item" aria-pressed="false" data-icon="bolt"><svg viewBox="0 0 24 24"><path d="M13 2L4 14h7l-1 8 9-12h-7z" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linejoin="round"/></svg></button>
+                <button class="icon-picker__item" aria-pressed="false" data-icon="crown"><svg viewBox="0 0 24 24"><path d="M2 18h20M3 8l5 6 4-8 4 8 5-6v10H3z" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+                <button class="icon-picker__item" aria-pressed="false" data-icon="globe"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="1.75"/><path d="M2 12h20M12 2a15 15 0 0 1 0 20M12 2a15 15 0 0 0 0 20" fill="none" stroke="currentColor" stroke-width="1.75"/></svg></button>
+                <button class="icon-picker__item" aria-pressed="false" data-icon="note"><svg viewBox="0 0 24 24"><path d="M4 4h16v16H4zM8 8h8M8 12h8M8 16h5" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+                <button class="icon-picker__item" aria-pressed="false" data-icon="trophy"><svg viewBox="0 0 24 24"><path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0zM7 6H4v2a3 3 0 0 0 3 3M17 6h3v2a3 3 0 0 1-3 3" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+                <button class="icon-picker__item" aria-pressed="false" data-icon="coffee"><svg viewBox="0 0 24 24"><path d="M18 8h2a3 3 0 0 1 0 6h-2M6 8h10v6a4 4 0 0 1-4 4H10a4 4 0 0 1-4-4zM8 2v2M12 2v2M16 2v2" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+                <button class="icon-picker__item" aria-pressed="false" data-icon="compass"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="1.75"/><path d="M16 8l-2 6-6 2 2-6z" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linejoin="round"/></svg></button>
+                <button class="icon-picker__item" aria-pressed="false" data-icon="flame"><svg viewBox="0 0 24 24"><path d="M12 2s4 4 4 8a4 4 0 0 1-8 0c0-1 .5-2 1-2.5 0 2 1 3.5 3 3.5 0-2-1-4 0-9zM6 14a6 6 0 0 0 12 0" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linejoin="round"/></svg></button>
+                <button class="icon-picker__item" aria-pressed="false" data-icon="leaf"><svg viewBox="0 0 24 24"><path d="M21 3s-7 0-12 5-3 12-3 12 7 0 12-5 3-12 3-12zM6 18l6-6" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+              </div>
+            </div>
+
+            <div class="form-field">
+              <label class="form-label">颜色</label>
+              <div class="color-picker" data-picker="color">
+                <button class="color-picker__item" aria-pressed="true"  data-color="#0E6B5E" style="background:#0E6B5E"></button>
+                <button class="color-picker__item" aria-pressed="false" data-color="#B8854A" style="background:#B8854A"></button>
+                <button class="color-picker__item" aria-pressed="false" data-color="#1A5276" style="background:#1A5276"></button>
+                <button class="color-picker__item" aria-pressed="false" data-color="#5B3E8B" style="background:#5B3E8B"></button>
+                <button class="color-picker__item" aria-pressed="false" data-color="#B85A1A" style="background:#B85A1A"></button>
+                <button class="color-picker__item" aria-pressed="false" data-color="#9B3B3B" style="background:#9B3B3B"></button>
+                <button class="color-picker__item" aria-pressed="false" data-color="#1A6E50" style="background:#1A6E50"></button>
+                <button class="color-picker__item" aria-pressed="false" data-color="#4A5494" style="background:#4A5494"></button>
+                <button class="color-picker__item" aria-pressed="false" data-color="#8B3E8B" style="background:#8B3E8B"></button>
+                <button class="color-picker__item" aria-pressed="false" data-color="#4F5442" style="background:#4F5442"></button>
+              </div>
+            </div>
+
+            <div class="form-field" style="margin-bottom:var(--space-4)">
+              <label class="form-label">预览</label>
+              <div class="category-preview">
+                <span class="category-preview__chip" id="cat-preview-chip" style="background:#0E6B5E">
+                  <svg viewBox="0 0 24 24"><path d="M4 19V6a2 2 0 0 1 2-2h12v15M4 19a2 2 0 0 0 2 2h12M4 19a2 2 0 0 1 2-2h12" fill="none" stroke="#fff" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  <span id="cat-preview-name">英语学习</span>
+                </span>
+              </div>
+            </div>
+
+            <button class="btn-primary" data-close-dialog>保存分类</button>
+          </div>
+        </div>
+
+        <!-- ============ 弹窗：封面背景选择器 ============ -->
+        <div class="dialog-backdrop is-hidden" id="dlg-cover-picker" data-page-node-id="dlg-cover">
+          <div class="dialog__sheet" data-page-node-id="dlg-cover-sheet">
+            <div class="dialog__handle"></div>
+            <div class="dialog__head">
+              <button class="dialog__back" data-close-dialog aria-label="返回"><svg viewBox="0 0 24 24"><path d="M19 12H5M12 19l-7-7 7-7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+              <h3 class="dialog__title">选择封面背景</h3>
+            </div>
+
+            <div class="cover-segmented" data-segmented="cover-type">
+              <button class="cover-segmented__btn" aria-pressed="true"  data-seg="gradient">纯色渐变</button>
+              <button class="cover-segmented__btn" aria-pressed="false" data-seg="pattern">几何图案</button>
+              <button class="cover-segmented__btn" aria-pressed="false" data-seg="decor">装饰风格</button>
+            </div>
+
+            <div class="cover-grid" data-cover-pane="gradient">
+              <div class="cover-option cv-1" aria-pressed="true"><div class="cover-option__check"><svg viewBox="0 0 24 24"><path d="M5 12l5 5L20 7" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg></div><div class="cover-option__title">Atomic Habits</div><div class="cover-option__author">James Clear</div></div>
+              <div class="cover-option cv-2"  aria-pressed="false"><div class="cover-option__check"><svg viewBox="0 0 24 24"><path d="M5 12l5 5L20 7" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg></div><div class="cover-option__title">The Alchemist</div><div class="cover-option__author">Paulo Coelho</div></div>
+              <div class="cover-option cv-3"  aria-pressed="false"><div class="cover-option__check"><svg viewBox="0 0 24 24"><path d="M5 12l5 5L20 7" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg></div><div class="cover-option__title">Deep Work</div><div class="cover-option__author">Cal Newport</div></div>
+              <div class="cover-option cv-4"  aria-pressed="false"><div class="cover-option__check"><svg viewBox="0 0 24 24"><path d="M5 12l5 5L20 7" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg></div><div class="cover-option__title">1984</div><div class="cover-option__author">G. Orwell</div></div>
+              <div class="cover-option cv-5"  aria-pressed="false"><div class="cover-option__check"><svg viewBox="0 0 24 24"><path d="M5 12l5 5L20 7" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg></div><div class="cover-option__title">Sapiens</div><div class="cover-option__author">Y. N. Harari</div></div>
+              <div class="cover-option cv-6"  aria-pressed="false"><div class="cover-option__check"><svg viewBox="0 0 24 24"><path d="M5 12l5 5L20 7" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg></div><div class="cover-option__title">Educated</div><div class="cover-option__author">T. Westover</div></div>
+              <div class="cover-option cv-7"  aria-pressed="false"><div class="cover-option__check"><svg viewBox="0 0 24 24"><path d="M5 12l5 5L20 7" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg></div><div class="cover-option__title">Mindset</div><div class="cover-option__author">C. Dweck</div></div>
+              <div class="cover-option cv-8"  aria-pressed="false"><div class="cover-option__check"><svg viewBox="0 0 24 24"><path d="M5 12l5 5L20 7" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg></div><div class="cover-option__title">Grit</div><div class="cover-option__author">A. Duckworth</div></div>
+              <div class="cover-option cv-9"  aria-pressed="false"><div class="cover-option__check"><svg viewBox="0 0 24 24"><path d="M5 12l5 5L20 7" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg></div><div class="cover-option__title">Range</div><div class="cover-option__author">D. Epstein</div></div>
+              <div class="cover-option cv-10" aria-pressed="false"><div class="cover-option__check"><svg viewBox="0 0 24 24"><path d="M5 12l5 5L20 7" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg></div><div class="cover-option__title">Flow</div><div class="cover-option__author">M. Csikszent.</div></div>
+            </div>
+
+            <div class="cover-grid is-hidden" data-cover-pane="pattern">
+              <div class="cover-option cv-11" aria-pressed="false"><div class="cover-option__check"><svg viewBox="0 0 24 24"><path d="M5 12l5 5L20 7" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg></div><div class="cover-option__title">Atomic Habits</div><div class="cover-option__author">James Clear</div></div>
+              <div class="cover-option cv-12" aria-pressed="false"><div class="cover-option__check"><svg viewBox="0 0 24 24"><path d="M5 12l5 5L20 7" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg></div><div class="cover-option__title">Deep Work</div><div class="cover-option__author">Cal Newport</div></div>
+              <div class="cover-option cv-13" aria-pressed="false"><div class="cover-option__check"><svg viewBox="0 0 24 24"><path d="M5 12l5 5L20 7" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg></div><div class="cover-option__title">The Alchemist</div><div class="cover-option__author">Paulo Coelho</div></div>
+            </div>
+
+            <div class="cover-grid is-hidden" data-cover-pane="decor">
+              <div class="cover-option cv-14" aria-pressed="false"><div class="cover-option__check"><svg viewBox="0 0 24 24"><path d="M5 12l5 5L20 7" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg></div><div class="cover-option__title">Thinking</div><div class="cover-option__author">D. Kahneman</div></div>
+              <div class="cover-option cv-15" aria-pressed="false"><div class="cover-option__check"><svg viewBox="0 0 24 24"><path d="M5 12l5 5L20 7" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg></div><div class="cover-option__title">1984</div><div class="cover-option__author">G. Orwell</div></div>
+            </div>
+
+            <div style="display:flex;gap:var(--space-2);margin-top:var(--space-4)">
+              <button class="btn-secondary" style="flex:1" data-close-dialog>取消</button>
+              <button class="btn-primary" style="flex:2" data-close-dialog>应用此封面</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- ============ 弹窗：添加书籍 - 步骤 1（基础信息） ============ -->
+        <div class="dialog-backdrop is-hidden" id="dlg-add-book-step1" data-page-node-id="dlg-add1">
+          <div class="dialog__sheet" data-page-node-id="dlg-add1-sheet">
+            <div class="dialog__handle"></div>
+            <div class="dialog__head">
+              <button class="dialog__back" data-close-dialog aria-label="关闭"><svg viewBox="0 0 24 24"><path d="M19 12H5M12 19l-7-7 7-7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+              <h3 class="dialog__title">添加书籍</h3>
+            </div>
+
+            <div class="stepper">
+              <div class="stepper__step is-active"><span class="stepper__dot">1</span><span class="stepper__label">基础信息</span></div>
+              <div class="stepper__line"></div>
+              <div class="stepper__step"><span class="stepper__dot">2</span><span class="stepper__label">分类</span></div>
+              <div class="stepper__line"></div>
+              <div class="stepper__step"><span class="stepper__dot">3</span><span class="stepper__label">封面</span></div>
+            </div>
+
+            <div class="form-field">
+              <label class="form-label" for="book-title">书名</label>
+              <input id="book-title" class="text-input" placeholder="如：Atomic Habits" />
+            </div>
+            <div class="form-field">
+              <label class="form-label" for="book-author">作者</label>
+              <input id="book-author" class="text-input" placeholder="如：James Clear" />
+            </div>
+            <div class="form-field">
+              <label class="form-label" for="book-isbn">ISBN（可选，用于自动填充）</label>
+              <input id="book-isbn" class="text-input" placeholder="978-0-7352-1129-2" />
+            </div>
+
+            <button class="btn-primary" data-open-dialog="dlg-add-book-step2" data-close-then-open>下一步：选择分类</button>
+          </div>
+        </div>
+
+        <!-- ============ 弹窗：添加书籍 - 步骤 2（选择分类） ============ -->
+        <div class="dialog-backdrop is-hidden" id="dlg-add-book-step2" data-page-node-id="dlg-add2">
+          <div class="dialog__sheet" data-page-node-id="dlg-add2-sheet">
+            <div class="dialog__handle"></div>
+            <div class="dialog__head">
+              <button class="dialog__back" data-open-dialog="dlg-add-book-step1" data-close-then-open aria-label="返回"><svg viewBox="0 0 24 24"><path d="M19 12H5M12 19l-7-7 7-7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+              <h3 class="dialog__title">选择分类</h3>
+            </div>
+
+            <div class="stepper">
+              <div class="stepper__step is-done"><span class="stepper__dot"><svg viewBox="0 0 24 24" style="width:12px;height:12px"><path d="M5 12l5 5L20 7" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span class="stepper__label">基础</span></div>
+              <div class="stepper__line is-done"></div>
+              <div class="stepper__step is-active"><span class="stepper__dot">2</span><span class="stepper__label">分类</span></div>
+              <div class="stepper__line"></div>
+              <div class="stepper__step"><span class="stepper__dot">3</span><span class="stepper__label">封面</span></div>
+            </div>
+
+            <div class="category-select-grid">
+              <button class="category-select" aria-pressed="true"><span class="category-select__icon" style="background:#0E6B5E"><svg viewBox="0 0 24 24"><path d="M4 19V6a2 2 0 0 1 2-2h12v15M4 19a2 2 0 0 0 2 2h12M4 19a2 2 0 0 1 2-2h12" fill="none" stroke="#fff" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span class="category-select__name">英语学习</span></button>
+              <button class="category-select" aria-pressed="false"><span class="category-select__icon" style="background:#B8854A"><svg viewBox="0 0 24 24"><path d="M12 2l3 7 7 .5-5.5 4.5L18 21l-6-4-6 4 1.5-7L2 9.5 9 9z" fill="none" stroke="#fff" stroke-width="1.75" stroke-linejoin="round"/></svg></span><span class="category-select__name">文学小说</span></button>
+              <button class="category-select" aria-pressed="false"><span class="category-select__icon" style="background:#1A5276"><svg viewBox="0 0 24 24"><path d="M3 13l4-4 4 4 5-5 5 5M3 18h18" fill="none" stroke="#fff" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span class="category-select__name">商业思维</span></button>
+              <button class="category-select" aria-pressed="false"><span class="category-select__icon" style="background:#5B3E8B"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3" fill="none" stroke="#fff" stroke-width="1.75"/><path d="M2 12h3M19 12h3M12 2v3M12 19v3" fill="none" stroke="#fff" stroke-width="1.75" stroke-linecap="round"/></svg></span><span class="category-select__name">科学认知</span></button>
+              <button class="category-select" aria-pressed="false"><span class="category-select__icon" style="background:#B85A1A"><svg viewBox="0 0 24 24"><path d="M13 2L4 14h7l-1 8 9-12h-7z" fill="none" stroke="#fff" stroke-width="1.75" stroke-linejoin="round"/></svg></span><span class="category-select__name">科技前沿</span></button>
+              <button class="category-select" aria-pressed="false" style="border-style:dashed"><span class="category-select__icon" style="background:var(--surface);border:1.5px dashed var(--border-strong)"><svg viewBox="0 0 24 24" style="stroke:var(--on-muted)"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6z" fill="none" stroke="currentColor" stroke-width="1.75"/></svg></span><span class="category-select__name" style="color:var(--on-muted)">新建</span></button>
+            </div>
+
+            <div style="display:flex;gap:var(--space-2);margin-top:var(--space-5)">
+              <button class="btn-secondary" style="flex:1" data-open-dialog="dlg-add-book-step1" data-close-then-open>上一步</button>
+              <button class="btn-primary" style="flex:2" data-open-dialog="dlg-cover-picker" data-close-then-open>下一步：选择封面</button>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </main>
+
+  <!-- ======================== 右：令牌面板 ======================== -->
+  <aside class="tokens-panel" data-page-node-id="61O8xKKtrgn5NRrz5Xx6Y1">
+    <h3 class="tokens-panel__title" data-page-node-id="mQ65MZCYYGkwuNhaEBmpMs">设计令牌 · 当前主题</h3>
+
+    <div class="tokens-section" data-page-node-id="xrREC1RTA52ej3SCnJRJo7">
+      <h4 class="tokens-panel__title" data-page-node-id="NY64I50riFSwHg64TbNeiX">品牌色 · 墨绿</h4>
+      <div class="swatches" id="primary-swatches" data-page-node-id="DAkiH2Py48TiavCpvNBFnH"></div>
+    </div>
+
+    <div class="tokens-section" data-page-node-id="ISPXmfct056AjZJjrdSHK4">
+      <h4 class="tokens-panel__title" data-page-node-id="hp8qpzPbKVWEQk7D8nIgpp">中性色 · 暖灰</h4>
+      <div class="swatches" id="neutral-swatches" data-page-node-id="lfHmxNXEsDiwgNKFIRwMtX"></div>
+    </div>
+
+    <div class="tokens-section" data-page-node-id="AY6hrcrVjN2ecUN0XYcgvH">
+      <h4 class="tokens-panel__title" data-page-node-id="ltINQLtfNi125ia73JLlWx">字号阶梯 · Inter / Literata</h4>
+      <div class="type-sample" data-page-node-id="5YCA68cqZO0fpCdFVCeEb6"><span class="type-sample__name" data-page-node-id="csaz2B376N9e1NA3MOCWco">display-l</span><span class="type-sample__demo" style="font-size:32px;font-weight:700;line-height:1.12" data-page-node-id="CNJct2dU3e5WWBHGPks03F">Aa 阅</span></div>
+      <div class="type-sample" data-page-node-id="pcAtcXdDoEJfOHpc3r8fw9"><span class="type-sample__name" data-page-node-id="ZuhI67sqijfx1qq7SQFgJp">headline-m</span><span class="type-sample__demo" style="font-size:24px;font-weight:700;line-height:1.25" data-page-node-id="2hoHgXgwIdHPHgWA8dfxYu">Aa 阅</span></div>
+      <div class="type-sample" data-page-node-id="2ePw5vxkmzlzbdW9CaZMgm"><span class="type-sample__name" data-page-node-id="uJ7JkFvOy0LB24IPWZcRmS">title-l</span><span class="type-sample__demo" style="font-size:22px;font-weight:600" data-page-node-id="Rpkh8XEkvzNTqGA3zL0JWK">Aa 阅</span></div>
+      <div class="type-sample" data-page-node-id="LfiJHIb789SUsUrcNr9LbY"><span class="type-sample__name" data-page-node-id="fzPsT4aBqSP8GHsR6FWEzA">body-l</span><span class="type-sample__demo" style="font-size:17px" data-page-node-id="LHx3Nzbpdq9HNzCaCer18m">Aa 阅</span></div>
+      <div class="type-sample" data-page-node-id="c4yYMYQcQjtp9ls2IMxCMf"><span class="type-sample__name" data-page-node-id="hOLnFpfCUXSMma4kholioO">body-m</span><span class="type-sample__demo" style="font-size:14px" data-page-node-id="kickGLvSsI2Y5xZ0oiPUTI">Aa 阅</span></div>
+      <div class="type-sample" data-page-node-id="9qzLakz7bcsuFRQEdSRiAq"><span class="type-sample__name" data-page-node-id="XMhpj6dGRYjG9U2ogYxCT1">label-s</span><span class="type-sample__demo" style="font-size:11px" data-page-node-id="gtBl15mkLcorthfBND90mU">Aa 阅</span></div>
+      <div class="type-sample" data-page-node-id="yrP0SL3ZI9Wy89opyS8dLn"><span class="type-sample__name" data-page-node-id="35yZgTGFeaysA7z7i7cXjU">reading</span><span class="type-sample__demo reading" style="font-size:18px;line-height:1.65" data-page-node-id="5SW66yB1GAxdBHv7AZYeg0">A thing may be of such obvious utility that it hardly matters whether it is a habit to use it or not.</span></div>
+    </div>
+
+    <div class="tokens-section" data-page-node-id="lFZCK6tRC1NYO2F8OmCrNK">
+      <h4 class="tokens-panel__title" data-page-node-id="7QjnyQemrzAfRsJn2fUQSQ">间距 · 4dp 基准</h4>
+      <div class="token-row" data-page-node-id="yB7OjwxoxBFvJUMRye08T9"><span class="token-row__name" data-page-node-id="0LRLBtXPyw0wYI533Roixx">--space-1</span><span class="token-row__value" data-page-node-id="rSYyrm8ofPwuzPTEgXFJGd">4px</span></div>
+      <div class="token-row" data-page-node-id="k8rMxjdYxW9TMElCoicdVF"><span class="token-row__name" data-page-node-id="vQjOpZDeKPx2SDfsYxoLj1">--space-2</span><span class="token-row__value" data-page-node-id="23rBMdkvwuxrCpQ96HdKvR">8px</span></div>
+      <div class="token-row" data-page-node-id="OtKsgLtyv0X373AapU4Ttz"><span class="token-row__name" data-page-node-id="tzfU20IKDkT8LzuWq57fkj">--space-3</span><span class="token-row__value" data-page-node-id="B4G95uirt1Q9F5PS68ZVcN">12px</span></div>
+      <div class="token-row" data-page-node-id="ty7gDwLNkbZtdSMcBcndl9"><span class="token-row__name" data-page-node-id="yP8GT9qbWOvVn8YmYiTfFm">--space-4</span><span class="token-row__value" data-page-node-id="Qzy76RBGCOq9OibrwIdTgc">16px</span></div>
+      <div class="token-row" data-page-node-id="EZRi00KJpufNbbw8lS2q7g"><span class="token-row__name" data-page-node-id="6ikaTHLA0uIhQ6omSBf2zS">--space-5</span><span class="token-row__value" data-page-node-id="2PtHZTBGDGsf8n8oydNptV">20px</span></div>
+      <div class="token-row" data-page-node-id="3Uo3XlmbAO3kvHQQH7ADS6"><span class="token-row__name" data-page-node-id="E81VnnFgPdHeKJxXSamb5u">--space-6</span><span class="token-row__value" data-page-node-id="liODV3QuBLtmMlM6tFAhbp">24px</span></div>
+      <div class="token-row" data-page-node-id="EkwDgbXefypiLcOMIP25yr"><span class="token-row__name" data-page-node-id="jQi1mF3XZzTDAC6xHEPzRG">--space-8</span><span class="token-row__value" data-page-node-id="JCCrTDirc9ZsbpNAHzb6fd">32px</span></div>
+    </div>
+
+    <div class="tokens-section" data-page-node-id="7f7mmarvVzOzmfn30CrxGb">
+      <h4 class="tokens-panel__title" data-page-node-id="mpExFCpubc2WYgkhVf8iix">圆角</h4>
+      <div class="token-row" data-page-node-id="29oHGFYws5yEJ5LzDtRNyR"><span class="token-row__name" data-page-node-id="TjG0DfC7FJaf49kxqc2VfH">--radius-sm</span><span class="token-row__value" data-page-node-id="k3ONgLlz42kczptreYPuos">8px</span></div>
+      <div class="token-row" data-page-node-id="4VGkG1szNrQLomaMrI3gIU"><span class="token-row__name" data-page-node-id="VY3ceT1HRZFjqzngOFTTUp">--radius-md</span><span class="token-row__value" data-page-node-id="rEzkFpLH40mjXqiKJrC9OY">12px</span></div>
+      <div class="token-row" data-page-node-id="jbR3PbsDvN3SQ2nU0nSJzR"><span class="token-row__name" data-page-node-id="dW3gagSRWjBG1kDMPxAm3M">--radius-lg</span><span class="token-row__value" data-page-node-id="TetcpsHJaK38TZn6hbtZ2Z">16px</span></div>
+      <div class="token-row" data-page-node-id="VMMLdtwTEuPsr2uyTeocE9"><span class="token-row__name" data-page-node-id="nE7gRBERw2t8w4EOYOlGPF">--radius-xl</span><span class="token-row__value" data-page-node-id="OYbe5fmvGmFOpCSJW5CLaa">20px</span></div>
+      <div class="token-row" data-page-node-id="wFpe02jvt5utHaQuaBtZCO"><span class="token-row__name" data-page-node-id="PBh5fTBNr5RKK7MSLg5SPO">--radius-2xl</span><span class="token-row__value" data-page-node-id="KofCprfTbQPTfDyfjXO9uS">28px</span></div>
+      <div class="token-row" data-page-node-id="BEWyQqfPYaPgIrP8hxS00Y"><span class="token-row__name" data-page-node-id="iDhHKEVhdc84PMJCmmjv0S">--radius-full</span><span class="token-row__value" data-page-node-id="RHrBfYy1CbLfsyGdrHkFYs">9999px</span></div>
+    </div>
+
+    <div class="tokens-section" data-page-node-id="XNmf6i3Owx0zi5ydtrcRTG">
+      <h4 class="tokens-panel__title" data-page-node-id="FSZOYZrAZ8EJembhahvCfF">动效</h4>
+      <div class="token-row" data-page-node-id="SKAomGXcwRYN3vyipcOG8Q"><span class="token-row__name" data-page-node-id="thXNr5HdnVIkow630FR3Mz">--dur-fast</span><span class="token-row__value" data-page-node-id="DvMuTKgviAft4msEmK8kXr">150ms</span></div>
+      <div class="token-row" data-page-node-id="AMoW6ErywxLLCP3WkBevpP"><span class="token-row__name" data-page-node-id="vQOVp6A6WEtkFwOTTmNtr0">--dur-normal</span><span class="token-row__value" data-page-node-id="bzlWpc7EYQjnTegXZA9BlP">250ms</span></div>
+      <div class="token-row" data-page-node-id="QrrbunbW5fs3bEfxx3AJBg"><span class="token-row__name" data-page-node-id="YmfT2Gn3qRCL8r7EpQ9FD8">--dur-slow</span><span class="token-row__value" data-page-node-id="B7P2RIFRemCLToBU3ajq2t">400ms</span></div>
+      <div class="token-row" data-page-node-id="opX8Hwv42gmAPXQ7QA3cBl"><span class="token-row__name" data-page-node-id="PLe5B37pkBHGgzSAcV5djw">--ease-decel</span><span class="token-row__value" style="font-size:11px" data-page-node-id="wrLvAFNBRb4GLKMfjsjenC">cubic-bezier(.05,.7,.1,1)</span></div>
+    </div>
+
+    <div style="margin-top:var(--space-6);padding:var(--space-4);background:var(--primary-50);border-radius:var(--radius-md);font-size:12px;color:var(--primary-700);line-height:1.6" data-page-node-id="D3RJYOM3cgk4dF2tCB7cvC">
+      [data-theme="dark"] 自动反转色阶：<br data-page-node-id="bh8ylkC3TumcK8zhux3BhH">
+      primary-50 → 900 互换；中性色翻转；语义色提亮；语义色背景翻为深色底。
+    </div>
+    <div style="height:24px" data-page-node-id="V9FKRIvu0VIp44UGfW6DJS"></div>
+  </aside>
+</div>
+
+<script>
+/* ==========================================================================
+   交互：屏幕切换、主题切换、热力图渲染、令牌面板填充
+   ========================================================================== */
+
+(function () {
+  // —— 屏幕切换 ——
+  const navItems = document.querySelectorAll('.nav__item[data-screen]');
+  const screens = document.querySelectorAll('.screen');
+  navItems.forEach(btn => btn.addEventListener('click', () => {
+    const target = btn.dataset.screen;
+    navItems.forEach(n => n.removeAttribute('aria-current'));
+    btn.setAttribute('aria-current', 'true');
+    screens.forEach(s => s.classList.toggle('is-active', s.dataset.screen === target));
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }));
+
+  // 屏幕内跳转
+  document.querySelectorAll('[data-jump]').forEach(b => {
+    b.addEventListener('click', () => {
+      const target = b.dataset.jump;
+      const nav = document.querySelector(`.nav__item[data-screen="${target}"]`);
+      if (nav) nav.click();
+    });
+  });
+
+  // —— 主题切换 ——
+  const themeBtns = document.querySelectorAll('[data-theme-target]');
+  const root = document.documentElement;
+  themeBtns.forEach(b => b.addEventListener('click', () => {
+    const t = b.dataset.themeTarget;
+    root.setAttribute('data-theme', t);
+    themeBtns.forEach(bb => bb.setAttribute('aria-pressed', bb.dataset.themeTarget === t));
+    fillSwatches();
+  }));
+
+  // —— 热力图渲染（15 周 × 7 天）——
+  const heatmap = document.getElementById('heatmap');
+  if (heatmap) {
+    const cells = [];
+    for (let i = 0; i < 15 * 7; i++) {
+      const lvl = Math.random() < 0.25 ? 0 : (Math.random() < 0.5 ? 1 : (Math.random() < 0.7 ? 2 : (Math.random() < 0.85 ? 3 : 4)));
+      cells.push(`<div class="heatmap__cell" data-level="${lvl}"></div>`);
+    }
+    heatmap.innerHTML = cells.join('');
+  }
+
+  // —— 令牌面板填充 ——
+  function fillSwatches() {
+    const theme = root.getAttribute('data-theme') || 'light';
+    const palette = theme === 'dark' ? PALETTE_DARK : (theme === 'sepia' ? PALETTE_LIGHT : PALETTE_LIGHT);
+    const primaryEl = document.getElementById('primary-swatches');
+    const neutralEl = document.getElementById('neutral-swatches');
+    if (primaryEl) primaryEl.innerHTML = palette.primary.map((c, i) =>
+      `<div class="swatch" data-light="${isLight(c)}" style="background:${c}">${i*100}</div>`).join('');
+    if (neutralEl) neutralEl.innerHTML = palette.neutral.map((c, i) =>
+      `<div class="swatch" data-light="${isLight(c)}" style="background:${c}">${i*100}</div>`).join('');
+  }
+
+  const PALETTE_LIGHT = {
+    primary: ['#F1FCFA','#DAF6F2','#B5E8E1','#88D3C9','#56BDB0','#0E6B5E','#0E584E','#0B473F','#07342E','#031E1A'],
+    neutral: ['#F0F1ED','#E7E8E1','#D3D5CA','#BBBFAF','#A2A793','#888E75','#6C725B','#4F5442','#34372A','#191A14'],
+  };
+  const PALETTE_DARK = {
+    primary: ['#042520','#07342E','#0B473F','#1F8E78','#56BDB0','#88D3C9','#B5E8E1','#DAF6F2','#ECF9F7','#F1FCFA'],
+    neutral: ['#1B2B26','#243029','#2E3A34','#3E4C45','#545946','#6C725B','#888E75','#A2A793','#BBBFAF','#E7E8E1'],
+  };
+  function isLight(hex) {
+    const r = parseInt(hex.slice(1,3),16), g = parseInt(hex.slice(3,5),16), b = parseInt(hex.slice(5,7),16);
+    return (r*0.299 + g*0.587 + b*0.114) > 156;
+  }
+
+  fillSwatches();
+
+  // —— 词浮层切换（点击 reader 里的单词显示/隐藏）——
+  document.querySelectorAll('[data-word]').forEach(w => {
+    w.addEventListener('click', e => {
+      e.stopPropagation();
+      const popover = document.querySelector('.word-popover');
+      if (popover) {
+        popover.style.left = Math.min(Math.max(e.clientX - 140, 8), 200) + 'px';
+        popover.style.top = (e.clientY + 16) + 'px';
+        popover.querySelector('.word-popover__word').textContent = w.dataset.word;
+      }
+    });
+  });
+
+  // —— Switch 切换 ——
+  document.querySelectorAll('.switch').forEach(sw => {
+    sw.addEventListener('click', () => {
+      const cur = sw.getAttribute('aria-checked') === 'true';
+      sw.setAttribute('aria-checked', String(!cur));
+    });
+  });
+
+  // —— Theme radio 切换（设置页内的）——
+  document.querySelectorAll('.theme-radio button').forEach(b => {
+    b.addEventListener('click', () => {
+      const map = { '亮': 'light', 'Sepia': 'sepia', '暗': 'dark' };
+      const target = map[b.textContent];
+      if (target) {
+        document.querySelector(`[data-theme-target="${target}"]`).click();
+        const group = b.parentElement;
+        group.querySelectorAll('button').forEach(o => o.setAttribute('aria-pressed', o === b ? 'true' : 'false'));
+      }
+    });
+  });
+
+  // —— Tab 切换 ——
+  document.querySelectorAll('.tab, .vocab-tab').forEach(t => {
+    t.addEventListener('click', () => {
+      t.parentElement.querySelectorAll('.tab, .vocab-tab').forEach(o => o.setAttribute('aria-selected', 'false'));
+      t.setAttribute('aria-selected', 'true');
+    });
+  });
+
+  /* ========================================================================
+     v2 迭代：分类自定义 + 封面背景选择 + 添加书籍流程
+     ======================================================================== */
+
+  // —— 弹窗打开/关闭（任意屏幕均可叠加）——
+  function openDialog(id) {
+    const el = document.getElementById(id);
+    if (el) {
+      el.classList.remove('is-hidden');
+      // 重置滚动位置
+      const sheet = el.querySelector('.dialog__sheet');
+      if (sheet) sheet.scrollTop = 0;
+    }
+  }
+  function closeDialog(el) {
+    const dlg = el.closest('.dialog-backdrop');
+    if (dlg) dlg.classList.add('is-hidden');
+  }
+  document.querySelectorAll('[data-open-dialog]').forEach(btn => {
+    btn.addEventListener('click', e => {
+      const target = btn.dataset.openDialog;
+      // data-close-then-open：先关闭当前弹窗，再打开目标
+      if (btn.hasAttribute('data-close-then-open')) closeDialog(btn);
+      openDialog(target);
+    });
+  });
+  document.querySelectorAll('[data-close-dialog]').forEach(btn => {
+    btn.addEventListener('click', () => closeDialog(btn));
+  });
+  // 点击 backdrop 空白处关闭
+  document.querySelectorAll('.dialog-backdrop').forEach(bd => {
+    bd.addEventListener('click', e => {
+      if (e.target === bd) closeDialog(bd);
+    });
+  });
+
+  // —— 分类胶囊单选切换 ——
+  document.querySelectorAll('.category-strip .category-chip:not(.category-chip--add)').forEach(chip => {
+    chip.addEventListener('click', () => {
+      chip.parentElement.querySelectorAll('.category-chip:not(.category-chip--add)')
+        .forEach(c => c.setAttribute('aria-pressed', 'false'));
+      chip.setAttribute('aria-pressed', 'true');
+    });
+  });
+
+  // —— 图标选择器单选 + 实时预览 ——
+  document.querySelectorAll('[data-picker="icon"]').forEach(picker => {
+    picker.querySelectorAll('.icon-picker__item').forEach(item => {
+      item.addEventListener('click', () => {
+        picker.querySelectorAll('.icon-picker__item').forEach(o => o.setAttribute('aria-pressed', 'false'));
+        item.setAttribute('aria-pressed', 'true');
+        syncCategoryPreview();
+      });
+    });
+  });
+
+  // —— 颜色选择器单选 + 实时预览 ——
+  document.querySelectorAll('[data-picker="color"]').forEach(picker => {
+    picker.querySelectorAll('.color-picker__item').forEach(item => {
+      item.addEventListener('click', () => {
+        picker.querySelectorAll('.color-picker__item').forEach(o => o.setAttribute('aria-pressed', 'false'));
+        item.setAttribute('aria-pressed', 'true');
+        syncCategoryPreview();
+      });
+    });
+  });
+
+  // —— 分类名称输入实时同步预览 ——
+  const catNameInput = document.getElementById('cat-name');
+  if (catNameInput) {
+    catNameInput.addEventListener('input', syncCategoryPreview);
+  }
+  function syncCategoryPreview() {
+    const chip = document.getElementById('cat-preview-chip');
+    const nameEl = document.getElementById('cat-preview-name');
+    if (!chip) return;
+    // 名称
+    if (nameEl && catNameInput) nameEl.textContent = catNameInput.value || '分类名称';
+    // 颜色
+    const colorActive = document.querySelector('[data-picker="color"] .color-picker__item[aria-pressed="true"]');
+    if (colorActive) chip.style.background = colorActive.dataset.color;
+    // 图标
+    const iconActive = document.querySelector('[data-picker="icon"] .icon-picker__item[aria-pressed="true"]');
+    if (iconActive) {
+      const svgOld = chip.querySelector('svg');
+      const svgNew = iconActive.querySelector('svg');
+      if (svgOld && svgNew) svgOld.outerHTML = svgNew.outerHTML;
+    }
+  }
+
+  // —— 封面分段切换 ——
+  document.querySelectorAll('[data-segmented="cover-type"] .cover-segmented__btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const seg = btn.dataset.seg;
+      // 切换分段按钮
+      btn.parentElement.querySelectorAll('.cover-segmented__btn')
+        .forEach(o => o.setAttribute('aria-pressed', 'false'));
+      btn.setAttribute('aria-pressed', 'true');
+      // 切换 pane
+      document.querySelectorAll('[data-cover-pane]').forEach(pane => {
+        pane.classList.toggle('is-hidden', pane.dataset.coverPane !== seg);
+      });
+    });
+  });
+
+  // —— 封面选项单选（在每个 pane 内）——
+  document.querySelectorAll('.cover-grid').forEach(grid => {
+    grid.querySelectorAll('.cover-option').forEach(opt => {
+      opt.addEventListener('click', () => {
+        grid.querySelectorAll('.cover-option').forEach(o => o.setAttribute('aria-pressed', 'false'));
+        opt.setAttribute('aria-pressed', 'true');
+      });
+    });
+  });
+
+  // —— 添加书籍步骤 2：分类选择网格单选 ——
+  document.querySelectorAll('.category-select-grid .category-select').forEach(sel => {
+    sel.addEventListener('click', () => {
+      sel.parentElement.querySelectorAll('.category-select')
+        .forEach(o => o.setAttribute('aria-pressed', 'false'));
+      sel.setAttribute('aria-pressed', 'true');
+    });
+  });
+
+})();
+</script>
+</body>
+</html>

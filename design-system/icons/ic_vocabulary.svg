@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"
+     fill="none" stroke="currentColor" stroke-width="1.75"
+     stroke-linecap="round" stroke-linejoin="round">
+  <!-- Vocabulary — 书 + 标签 -->
+  <!-- 书本体 -->
+  <path d="M4 4 H 10 A 2 2 0 0 1 12 6 V 20 A 2 2 0 0 0 10 18 H 4 Z"/>
+  <line x1="4" y1="4" x2="4" y2="18"/>
+  <!-- 标签角标（右上角外凸书签）-->
+  <path d="M16 8 L 21 8 L 21 14 L 18.5 12 L 16 14 Z"/>
+</svg>

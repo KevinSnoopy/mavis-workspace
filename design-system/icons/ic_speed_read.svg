@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"
+     fill="none" stroke="currentColor" stroke-width="1.75"
+     stroke-linecap="round" stroke-linejoin="round">
+  <!-- SpeedRead — 眼睛 + 速度线（与 AppIcon 的眼形呼应） -->
+  <!-- 杏仁轮廓 -->
+  <path d="M 4 12 C 6 8, 9 7, 12 7 C 15 7, 18 8, 20 12 C 18 16, 15 17, 12 17
+           C 9 17, 6 16, 4 12 Z"/>
+  <!-- 速度线（从左向右）-->
+  <path d="M 2 9 L 4.5 9"/>
+  <path d="M 2 15 L 4.5 15"/>
+  <!-- 中心圆（不挖空，留作核心视觉点）-->
+  <circle cx="12" cy="12" r="1.25" fill="currentColor"/>
+</svg>

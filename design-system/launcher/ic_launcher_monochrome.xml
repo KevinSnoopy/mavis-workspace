@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  听阅 — Android 13+ Themed Icon (Monochrome)
+  ============================================================
+  系统会按壁纸/主题对此图标重新着色（实际只用 #FFFFFF + alpha）。
+  三个 sub-path 用 fillType=evenOdd 复合：
+    左页 + 右页 = 完整杏仁外形
+    瞳孔圆       = 第二层覆盖，偶数层自动透明（挖空效果）
+  书脊中缝由两页内边距自然留白（52.4 ↔ 55.6 之间 3.2dp 不填充）。
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillType="evenOdd"
+        android:pathData="M54,31 C42,31 24,39.5 24,53 C24,66.5 42,75 54,75 L52.4,75 L52.4,31 Z
+                          M54,31 C66,31 84,39.5 84,53 C84,66.5 66,75 54,75 L55.6,75 L55.6,31 Z
+                          M48,53 A6,6 0 1,1 60,53 A6,6 0 1,1 48,53 Z"/>
+</vector>

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"
+     fill="none" stroke="currentColor" stroke-width="1.75"
+     stroke-linecap="round" stroke-linejoin="round">
+  <!-- Cloze — 文字行 + 中间断点（挖空的语言化） -->
+  <line x1="3" y1="9" x2="11" y2="9"/>
+  <line x1="13" y1="9" x2="21" y2="9" stroke-dasharray="2.5 1.5"/>
+  <line x1="3" y1="15" x2="21" y2="15" stroke-dasharray="2.5 1.5"/>
+  <!-- 挖空断点上的铅笔/填空标记 -->
+  <circle cx="11" cy="9" r="1.4" fill="currentColor" stroke="none"/>
+  <path d="M 11 7.6 L 11 10.4" stroke="white" stroke-width="1"/>
+</svg>

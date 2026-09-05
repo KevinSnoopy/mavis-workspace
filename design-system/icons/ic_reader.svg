@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  品牌图标语言规范
+  ········································································
+  画布:        24 × 24 dp
+  描边:        1.75 dp
+  端点:        round（圆角端点，圆角连接）
+  填充:        默认 none；强调点/瞳孔用 fill currentColor
+  几何:        所有坐标对齐 0.5dp 网格（视觉像素清晰）
+  圆角:        几何圆角统一 r=1 或 r=1.5
+  安全区:        24dp 画布四周各留 1.5dp（视觉出血区）
+
+  与 Material Icons 关系:
+    · 底部导航 5 个图标沿用 Material Icons（兼容良好）
+    · 替换为品牌图标的功能项须保持「线宽一致、轮廓收敛」
+
+  实现（Compose）:
+  `Icon(EarIcon.Reader, contentDescription, tint = MaterialTheme.colorScheme.primary)`
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"
+     fill="none" stroke="currentColor" stroke-width="1.75"
+     stroke-linecap="round" stroke-linejoin="round">
+  <!--
+    Reader — 翻开的书
+    概念延续 AppIcon：书页的左右两瓣，
+    中缝即书脊，呼应品牌核心符号。
+  -->
+  <path d="M3 5.5 C 5 4, 8 4, 11.25 5 L 12 5.75 L 12.75 5 C 16 4, 19 4, 21 5.5
+           L 21 18.5 C 19 17, 16 17, 12.75 18 L 12 18.75 L 11.25 18
+           C 8 17, 5 17, 3 18.5 Z"/>
+  <line x1="12" y1="5.75" x2="12" y2="18.75"/>
+  <!-- 阅读行：左页 2 条短行，文字暗示 -->
+  <line x1="6" y1="9" x2="10" y2="9.5" opacity="0.6"/>
+  <line x1="6" y1="12" x2="10" y2="12.5" opacity="0.6"/>
+  <line x1="6" y1="15" x2="9" y2="15.5" opacity="0.6"/>
+</svg>
