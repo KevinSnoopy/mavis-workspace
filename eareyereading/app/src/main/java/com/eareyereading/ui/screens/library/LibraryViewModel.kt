@@ -8,6 +8,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.eareyereading.data.local.dao.ReviewRecordDao
 import com.eareyereading.data.local.dao.ReadingStatsDao
+import com.eareyereading.data.repository.CategoryPrefs
 import com.eareyereading.domain.model.ArticleSource
 import com.eareyereading.domain.model.ArticleSources
 import com.eareyereading.domain.model.Book
@@ -58,6 +59,13 @@ data class LibraryUiState(
     // ── 书架分类：null = 全部（分组展示），非空 = 只看该分类 ──
     val selectedCategory: String? = null,
     val categories: List<String> = emptyList(),
+    // v2 分类自定义：用户为分类定义的图标/颜色元数据（name → Meta）；
+    // 无元数据的分类 UI 按 name hash 派生默认值
+    val categoryMeta: Map<String, CategoryPrefs.Meta> = emptyMap(),
+    // 用户自建但还没有书挂上的分类（meta 存在即分类存在）
+    val customCategories: List<String> = emptyList(),
+    // v2 导入后待完善信息的书（选分类 + 选封面）；null = 无待完善流程
+    val pendingRefineBook: Book? = null,
     val showUrlDialog: Boolean = false,
     val urlInput: String = "",
     // 文章广场
@@ -82,6 +90,7 @@ class LibraryViewModel @Inject constructor(
     private val rssParser: RssParser,
     private val reviewRecordDao: ReviewRecordDao,
     private val readingStatsDao: ReadingStatsDao,
+    private val categoryPrefs: CategoryPrefs,
     @ApplicationContext private val context: Context,
 ) : ViewModel() {
 
@@ -98,6 +107,9 @@ class LibraryViewModel @Inject constructor(
     }
 
     private val searchQuery = MutableStateFlow("")
+
+    /** v2：导入后待完善信息的书 id；null = 无待完善流程 */
+    private val pendingRefineBookId = MutableStateFlow<Long?>(null)
 
     /**
      * 已成功加入书库的文章链接集合。
@@ -144,7 +156,8 @@ class LibraryViewModel @Inject constructor(
                     bookRepository.getAllBooks(),
                     vocabularyRepository.getTotalCount(),
                     vocabularyRepository.getLearnedCount(),
-                ) { query, books, total, learned ->
+                    categoryPrefs.metaFlow,
+                ) { query, books, total, learned, catMeta ->
                     val classicDir = File(context.filesDir, "books/classics").absolutePath
                     val ownedClassics = ClassicBooks.list
                         .filter { c -> books.any { it.filePath.startsWith("$classicDir/${c.id}.") } }
@@ -154,6 +167,8 @@ class LibraryViewModel @Inject constructor(
                     val cats = books.map { it.category.ifBlank { "未分类" } }
                         .distinct()
                         .sortedBy { it == "未分类" }
+                    // v2：用户自建但还没有书挂上的分类（meta 存在即分类存在）
+                    val customCats = catMeta.keys.filter { it !in cats }.sorted()
                     _uiState.value.copy(
                         books = filterBooks(query, books),
                         searchQuery = query,
@@ -161,6 +176,8 @@ class LibraryViewModel @Inject constructor(
                         learnedWordCount = learned,
                         ownedClassicIds = ownedClassics,
                         categories = cats,
+                        categoryMeta = catMeta,
+                        customCategories = customCats,
                     )
                 }.collect { state ->
                     _uiState.update { it.copy(
@@ -170,6 +187,8 @@ class LibraryViewModel @Inject constructor(
                         learnedWordCount = state.learnedWordCount,
                         ownedClassicIds = state.ownedClassicIds,
                         categories = state.categories,
+                        categoryMeta = state.categoryMeta,
+                        customCategories = state.customCategories,
                     ) }
                 }
             } catch (e: kotlinx.coroutines.CancellationException) {
@@ -180,10 +199,21 @@ class LibraryViewModel @Inject constructor(
             }
         }
 
+        // v2：待完善信息的书 = pendingRefineBookId 在书库中的对应行。
+        // 书库流变化（如去重命中、行被删）自动跟随，避免 UI 拿到失效 Book
+        viewModelScope.launch {
+            pendingRefineBookId
+                .combine(bookRepository.getAllBooks()) { id, books ->
+                    id?.let { target -> books.find { it.id == target } }
+                }
+                .collect { book ->
+                    _uiState.update { it.copy(pendingRefineBook = book) }
+                }
+        }
+
         // 待复习数（独立更新，避免 timestamp 变化干扰 combine）
         // 基准时间走 dueCountTimestamp：长停留页面时新到期卡片能计入
-        viewModelScope.launch {
-            try {
+        viewModelScope.launch {            try {
                 dueCountTimestamp
                     .flatMapLatest { now -> reviewRecordDao.getDueReviewCount(now) }
                     .collect { count ->
@@ -379,10 +409,14 @@ class LibraryViewModel @Inject constructor(
                     // issue 9.9：持久化原始 content:// URI，本地拷贝失效时回退读取
                     sourceUri = uri.toString(),
                 )
-                bookRepository.addBook(book)
+                val newId = bookRepository.addBook(book)
                 destFile = null // 成功入库后文件由 deleteBook 生命周期接管
                 refreshDueTimestamp()
                 setResultMessage("导入成功")
+                // v2：导入成功后挂起「完善信息」流程（选分类 + 选封面），
+                // LibraryScreen 观察 pendingRefineBook 弹 AddBookFlowSheet。
+                // addBook 返回去重复用的旧 id：完善流程对老书同样有效。
+                pendingRefineBookId.value = newId
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: EpubParseException) {
@@ -568,6 +602,76 @@ class LibraryViewModel @Inject constructor(
                 setResultMessage("分类修改失败")
             }
         }
+    }
+
+    // ── v2：分类自定义（元数据持久化到 DataStore）──────────
+
+    /** 保存分类元数据（新建或编辑）：分类名是主键，重名即编辑。
+     *  新建的分类若无书挂上，会出现在 customCategories（meta 存在即分类存在）。 */
+    fun saveCategoryMeta(name: String, icon: String, color: Long) {
+        viewModelScope.launch {
+            try {
+                categoryPrefs.setMeta(name, CategoryPrefs.Meta(icon = icon, color = color))
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                android.util.Log.e("LibraryVM", "saveCategoryMeta failed", e)
+                setResultMessage("分类保存失败")
+            }
+        }
+    }
+
+    /** 删除分类元数据：书籍的 category 字符串保留（回退派生默认显示），不影响藏书 */
+    fun deleteCategoryMeta(name: String) {
+        viewModelScope.launch {
+            try {
+                categoryPrefs.removeMeta(name)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                android.util.Log.e("LibraryVM", "deleteCategoryMeta failed", e)
+                setResultMessage("分类删除失败")
+            }
+        }
+    }
+
+    /** 拖动排序：按新顺序批量写 order（原子生效）。无 meta 的分类 UI 侧回退派生顺序。 */
+    fun reorderCategories(names: List<String>) {
+        viewModelScope.launch {
+            try {
+                categoryPrefs.setOrders(names.withIndex().associate { (i, n) -> n to i })
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                android.util.Log.e("LibraryVM", "reorderCategories failed", e)
+                setResultMessage("排序保存失败")
+            }
+        }
+    }
+
+    // ── v2：导入后完善信息（分类 + 封面）────────────────────
+
+    /** 完善流程：写分类 + 封面背景后清除挂起状态 */
+    fun finishBookRefine(category: String, coverStyle: Int) {
+        val book = _uiState.value.pendingRefineBook ?: return
+        viewModelScope.launch {
+            try {
+                if (category.isNotBlank()) bookRepository.updateCategory(book.id, category)
+                bookRepository.updateCoverStyle(book.id, coverStyle)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                android.util.Log.e("LibraryVM", "finishBookRefine failed", e)
+                setResultMessage("保存书籍信息失败")
+            } finally {
+                pendingRefineBookId.value = null
+            }
+        }
+    }
+
+    /** 跳过完善流程：保留导入时的默认分类与封面 */
+    fun skipBookRefine() {
+        pendingRefineBookId.value = null
     }
 
     // ── 文章广场 ──────────────────────────────────

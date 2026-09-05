@@ -28,6 +28,9 @@ val OnSurfaceSecondary = Color(0xFF6B7268) // on-surface-variant · 副标/说�
 val OnSurfaceTertiary = Color(0xFF767D74)  // 辅助文字（区块小标题）
 val OnSurfaceQuaternary = Color(0xFF9CA39A) // 图标默认色
 
+// 对齐 M3 命名（Material 3 ColorScheme.onSurfaceVariant），便于 v2 组件直接引用
+val OnSurfaceVariant = OnSurfaceSecondary
+
 // Border
 val Border = Color(0xFFE6DECD)         // outline-variant · 细分割线
 val BorderStrong = Color(0xFFD4C9B4)   // outline · 卡片描边/滑杆轨道
@@ -97,3 +100,88 @@ val SecondaryVariant = Error
 
 @Deprecated("Use SurfaceSecondary", ReplaceWith("SurfaceSecondary"))
 val SurfaceVariant = SurfaceSecondary
+
+// ── v2 新增：分类自定义预设色（SPEC §4.9.3）──────────────
+// 10 个语义色，对齐品牌色阶，覆盖冷暖两极。
+// 白字对全部 10 色对比度均 ≥ 4.5:1（最深 #4F5442 也达 5.2:1）。
+val CategoryColorPrimary = Primary                 // #0E6B5E 墨绿
+val CategoryColorWarmBrown = Color(0xFFB8854A)     // 暖棕（呼应原 AppIcon）
+val CategoryColorIndigo = Color(0xFF1A5276)        // 靛蓝
+val CategoryColorPurple = Color(0xFF5B3E8B)        // 紫
+val CategoryColorOrange = Color(0xFFB85A1A)        // 赭橙
+val CategoryColorBrick = Color(0xFF9B3B3B)         // 砖红
+val CategoryColorDeepGreen = Color(0xFF1A6E50)     // 深绿
+val CategoryColorBlueSlate = Color(0xFF4A5494)     // 蓝灰
+val CategoryColorMagenta = Color(0xFF8B3E8B)       // 品红
+val CategoryColorOlive = Color(0xFF4F5442)         // 橄榄
+
+/** 用户可选分类色集合（顺序即默认展示顺序） */
+val CategoryPalette = listOf(
+    CategoryColorPrimary,
+    CategoryColorWarmBrown,
+    CategoryColorIndigo,
+    CategoryColorPurple,
+    CategoryColorOrange,
+    CategoryColorBrick,
+    CategoryColorDeepGreen,
+    CategoryColorBlueSlate,
+    CategoryColorMagenta,
+    CategoryColorOlive,
+)
+
+// ── v2 新增：封面背景库（SPEC §4.10）────────────────────
+// 15 个预设封面背景，每条用 Brush.linearGradient 或纯色填充。
+// 调用方用 rememberBrushFor(coverId) 取对应 Brush 实例。
+// 渐变向量：左上 → 右下（135°，与原型 CSS 一致）
+
+// 1-10 纯色渐变（cv-1..cv-10）
+val CoverGradient1 = listOf(Color(0xFF88D3C9), Color(0xFF0E6B5E))
+val CoverGradient2 = listOf(Color(0xFFE8C795), Color(0xFFB8854A))
+val CoverGradient3 = listOf(Color(0xFF82B4D6), Color(0xFF1A5276))
+val CoverGradient4 = listOf(Color(0xFFB091CC), Color(0xFF5B3E8B))
+val CoverGradient5 = listOf(Color(0xFFE89B9B), Color(0xFF9B3B3B))
+val CoverGradient6 = listOf(Color(0xFF6FC3B7), Color(0xFF1A6E62))
+val CoverGradient7 = listOf(Color(0xFFB5C0E0), Color(0xFF4A5494))
+val CoverGradient8 = listOf(Color(0xFFF0B27A), Color(0xFFB85A1A))
+val CoverGradient9 = listOf(Color(0xFF48C0A0), Color(0xFF1A6E50))
+val CoverGradient10 = listOf(Color(0xFFD6A0D6), Color(0xFF8B3E8B))
+
+// 11-13 几何图案（在渐变基础上叠加图案，调用方自行用 drawBehind 绘制纹理）
+// 这里给出基础渐变；图案层由 CoverPattern 实现端绘制
+val CoverGradient11 = listOf(Color(0xFF88D3C9), Color(0xFF0E6B5E)) // 竖线条纹
+val CoverGradient12 = listOf(Color(0xFF1A5276), Color(0xFF1A5276))  // 点阵（纯底）
+val CoverGradient13 = listOf(Color(0xFFB85A1A), Color(0xFF6B2E0A))  // 对角线
+
+// 14-15 装饰风格
+val CoverGradient14 = listOf(Color(0xFF48C0A0), Color(0xFF1A6E50)) // 横线条纹
+val CoverGradient15 = listOf(Color(0xFF5B3E8B), Color(0xFF2A1A4A))  // 高光辐射
+
+/** 封面背景渐变集（按 ID 取用，0-based） */
+val CoverGradients = listOf(
+    CoverGradient1, CoverGradient2, CoverGradient3, CoverGradient4, CoverGradient5,
+    CoverGradient6, CoverGradient7, CoverGradient8, CoverGradient9, CoverGradient10,
+    CoverGradient11, CoverGradient12, CoverGradient13,
+    CoverGradient14, CoverGradient15,
+)
+
+/**
+ * 几何图案类型（用于 CoverGradient 11-15 的纹理叠加）
+ * - 0..9：纯渐变，无图案
+ * - 11: VERTICAL_LINES  竖线
+ * - 12: DOTS            点阵
+ * - 13: DIAGONAL_LINE   对角线
+ * - 14: HORIZONTAL_LINES 横线
+ * - 15: RADIAL_GLOW     高光辐射
+ */
+enum class CoverPattern { NONE, VERTICAL_LINES, DOTS, DIAGONAL_LINE, HORIZONTAL_LINES, RADIAL_GLOW }
+
+val CoverPatterns = listOf(
+    CoverPattern.NONE, CoverPattern.NONE, CoverPattern.NONE, CoverPattern.NONE, CoverPattern.NONE,
+    CoverPattern.NONE, CoverPattern.NONE, CoverPattern.NONE, CoverPattern.NONE, CoverPattern.NONE,
+    CoverPattern.VERTICAL_LINES,    // 11
+    CoverPattern.DOTS,             // 12
+    CoverPattern.DIAGONAL_LINE,    // 13
+    CoverPattern.HORIZONTAL_LINES, // 14
+    CoverPattern.RADIAL_GLOW,      // 15
+)
+

@@ -76,6 +76,10 @@ interface BookDao {
     @Query("UPDATE books SET category = :category WHERE id = :bookId")
     suspend fun updateCategory(bookId: Long, category: String)
 
+    /** v2 封面背景：定向 UPDATE 预设封面下标（-1 = 用内嵌封面）。 */
+    @Query("UPDATE books SET coverStyle = :style WHERE id = :bookId")
+    suspend fun updateCoverStyle(bookId: Long, style: Int)
+
     /** 导入后补写封面路径：定向 UPDATE，不再回读整行（含全文 content）。 */
     @Query("UPDATE books SET coverPath = :path WHERE id = :bookId")
     suspend fun updateCoverPath(bookId: Long, path: String)

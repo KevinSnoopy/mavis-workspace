@@ -333,6 +333,16 @@ object DatabaseModule {
                         )
                     }
                 },
+                object : Migration(13, 14) {
+                    // v2 封面背景：books 新增 coverStyle 列。-1 = 未设置（EPUB 内嵌封面），
+                    // 0..14 = 预设封面渐变下标（与 CoverGradients 对齐）。
+                    // NOT NULL + DEFAULT -1：存量书保持内嵌封面行为不变。
+                    override fun migrate(db: SupportSQLiteDatabase) {
+                        db.execSQL(
+                            "ALTER TABLE books ADD COLUMN `coverStyle` INTEGER NOT NULL DEFAULT -1"
+                        )
+                    }
+                },
             )
             .build()
     }

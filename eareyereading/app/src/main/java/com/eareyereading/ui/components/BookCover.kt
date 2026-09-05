@@ -34,6 +34,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import java.io.File
@@ -52,10 +53,11 @@ private val coverPalettes = listOf(
 private const val MOTIF_COUNT = 6
 
 /**
- * 书籍封面：EPUB 内嵌封面（[coverPath] 指向导入时提取的图片文件）优先，
- * 缺失时回退为"书名哈希 → 确定性插图封面"：上半部 Canvas 手绘母题
- * （山/海/鸟/林/帆/星六选一），下半部书名 + 作者，替代千篇一律的色块，
- * 书架上一眼可辨。
+ * 书籍封面（v2）：三层优先级 ——
+ * 1. [coverStyle] >= 0：用户选择的预设封面背景（CoverGradients 渐变 + 书名/作者排版）
+ * 2. [coverPath] 非空：EPUB 内嵌封面（Coil 加载）
+ * 3. 兜底："书名哈希 → 确定性插图封面"：上半部 Canvas 手绘母题
+ *    （山/海/鸟/林/帆/星六选一），下半部书名 + 作者
  *
  * 性能：封面存在性检查交给 Coil（IO 线程解码，失败静默露出下层生成式封面）。
  * 旧实现在组合阶段对每个滚入屏幕的封面执行 File.exists()/length() 磁盘
@@ -68,6 +70,7 @@ fun BookCover(
     modifier: Modifier = Modifier,
     cornerRadius: Dp = 10.dp,
     author: String? = null,
+    coverStyle: Int = -1,
 ) {
     // floorMod：abs(hashCode()) 在 Int.MIN_VALUE 时仍为负，旧实现的
     // abs % size 会直接负索引越界崩溃
@@ -84,7 +87,15 @@ fun BookCover(
             .clip(RoundedCornerShape(cornerRadius))
             .background(gradientBrush),
     ) {
-        if (coverPath != null) {
+        if (coverStyle >= 0) {
+            // v2：用户选择的预设封面背景（优先级最高，可覆盖内嵌封面）
+            PresetCover(
+                title = title,
+                author = author,
+                coverStyle = coverStyle,
+                compact = maxHeight < 60.dp,
+            )
+        } else if (coverPath != null) {
             // allowHardware(false)：MIUI/HyperOS 硬件位图渲染路径原生
             // AImageDecoder_Create 返回 "unimplemented"，导致 HWUI 上传
             // GPU 纹理失败。软件位图绕开该路径。
@@ -109,6 +120,54 @@ fun BookCover(
                 coverWidth = maxWidth,
                 coverHeight = maxHeight,
             )
+        }
+    }
+}
+
+/**
+ * v2 预设封面：用户从封面背景库选择的渐变 + 书名/作者排版。
+ * [compact] 小尺寸（搜索结果等）隐藏作者行。
+ */
+@Composable
+private fun PresetCover(
+    title: String,
+    author: String?,
+    coverStyle: Int,
+    compact: Boolean,
+) {
+    val gradients = com.eareyereading.ui.theme.CoverGradients
+    val brush = remember(coverStyle) {
+        Brush.linearGradient(gradients[coverStyle.coerceIn(0, gradients.lastIndex)])
+    }
+    Box(modifier = Modifier
+        .fillMaxSize()
+        .background(brush)) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(if (compact) 4.dp else 10.dp),
+        ) {
+            Text(
+                text = title,
+                color = Color.White,
+                fontSize = if (compact) 9.sp else 15.sp,
+                lineHeight = if (compact) 11.sp else 19.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = if (compact) 1 else 3,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Box(modifier = Modifier.weight(1f))
+            if (!compact && !author.isNullOrBlank()) {
+                Text(
+                    text = author,
+                    color = Color.White.copy(alpha = 0.85f),
+                    fontSize = 11.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
         }
     }
 }

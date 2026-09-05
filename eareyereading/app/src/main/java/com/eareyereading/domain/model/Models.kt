@@ -22,6 +22,8 @@ data class Book(
     val isArchived: Boolean = false,
     // 书架分类：导入来源自动预设（文章/经典名著/未分类），用户可改
     val category: String = "未分类",
+    // v2 封面背景：-1 = 未设置（用 EPUB 内嵌封面 coverPath）；0..14 = 预设封面渐变下标
+    val coverStyle: Int = -1,
     val content: String = "",  // 文章正文（URL导入时存储）
     val addedAt: String = "",   // 添加时间（格式：yyyy-MM-dd HH:mm）
     // 内容（运行时加载）

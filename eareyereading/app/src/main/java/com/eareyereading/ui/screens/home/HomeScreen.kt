@@ -489,11 +489,12 @@ private fun RecentBookCard(
 
     ) {
         Column(modifier = Modifier.padding(10.dp)) {
-            // 生成式插图封面自带书名/作者，卡片内不再重复标题文字
+            // 封面：v2 预设封面 > EPUB 内嵌封面 > 生成式插图封面（自带书名/作者）
             BookCover(
                 title = book.title,
                 coverPath = book.coverPath,
                 author = book.author,
+                coverStyle = book.coverStyle,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(128.dp),

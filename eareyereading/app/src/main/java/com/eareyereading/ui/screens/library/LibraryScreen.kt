@@ -21,6 +21,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -30,9 +32,19 @@ import com.eareyereading.domain.model.ArticleSource
 import com.eareyereading.domain.model.Book
 import com.eareyereading.domain.model.ClassicBook
 import com.eareyereading.util.RssParser
+import com.eareyereading.data.repository.CategoryPrefs
 import com.eareyereading.ui.components.BookCover
 import com.eareyereading.ui.components.EmptyState
 import com.eareyereading.ui.components.StatCard
+import com.eareyereading.ui.components.category.AddBookFlowSheet
+import com.eareyereading.ui.components.category.Category
+import com.eareyereading.ui.components.category.CategoryEditSheet
+import com.eareyereading.ui.components.category.CategoryIcon
+import com.eareyereading.ui.components.category.CategoryManageSheet
+import com.eareyereading.ui.components.category.CategorySelectGrid
+import com.eareyereading.ui.components.category.CategoryStrip
+import com.eareyereading.ui.components.category.derivedColorFor
+import com.eareyereading.ui.components.category.derivedIconFor
 import com.eareyereading.ui.components.shimmer
 import com.eareyereading.ui.theme.*
 import kotlinx.coroutines.launch
@@ -49,6 +61,46 @@ fun LibraryScreen(
     val uiState by viewModel.uiState.collectAsState()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+
+    // v2 新增：分类管理 / 新建分类 sheet 状态
+    var showCategoryManage by rememberSaveable { mutableStateOf(false) }
+    var showCategoryEdit by rememberSaveable { mutableStateOf(false) }
+    // 正在编辑的分类（null = 新建模式）
+    var editingCategory by remember { mutableStateOf<Category?>(null) }
+
+    // v2：真实分类合成 = 派生分类（来自书籍 category 字段）+ 用户自建（meta 有但书无）。
+    // 图标/颜色取用户元数据，缺省按名称派生稳定默认（同分类永远同色同图标）
+    val allCategories = remember(
+        uiState.categories,
+        uiState.customCategories,
+        uiState.categoryMeta,
+        uiState.books,
+    ) {
+        val derived = uiState.categories
+        val custom = uiState.customCategories.filter { it !in derived }
+        (derived + custom).map { name ->
+            val meta = uiState.categoryMeta[name]
+            Category(
+                name = name,
+                bookCount = uiState.books.count { it.category == name },
+                icon = meta?.let { m ->
+                    runCatching { CategoryIcon.valueOf(m.icon) }.getOrDefault(derivedIconFor(name))
+                } ?: derivedIconFor(name),
+                color = meta?.let { m -> Color(m.color) } ?: derivedColorFor(name),
+            )
+        }.sortedWith(
+            // 拖动排序：有 order 元数据的按 order 升序；无元数据的排最后按名称稳定排列
+            compareBy(
+                { uiState.categoryMeta[it.name]?.order ?: Int.MAX_VALUE },
+                { it.name },
+            ),
+        )
+    }
+
+    // 分类名 → 书籍数（「移至分类」对话框卡片上显示计数用）
+    val bookCountByName = remember(uiState.books) {
+        uiState.books.groupingBy { it.category.ifBlank { "未分类" } }.eachCount()
+    }
 
     // 导入的最终结果（成功/失败）用 Snackbar 呈现：loadingMessage 原先只在
     // isLoading 为 true 的转圈分支里渲染，加载结束后设置的成功/失败消息
@@ -85,6 +137,14 @@ fun LibraryScreen(
                     }
                 },
                 actions = {
+                    // v2：分类管理入口（菜单图标）
+                    IconButton(onClick = { showCategoryManage = true }) {
+                        Icon(
+                            Icons.Default.Menu,
+                            contentDescription = "分类管理",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                     IconButton(onClick = onNavigateToSettings) {
                         Icon(Icons.Default.Settings, "设置", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
@@ -187,6 +247,7 @@ fun LibraryScreen(
                                         title = book.title,
                                         coverPath = book.coverPath,
                                         author = book.author,
+                                        coverStyle = book.coverStyle,
                                         modifier = Modifier.size(38.dp, 52.dp),
                                         cornerRadius = 6.dp,
                                     )
@@ -202,6 +263,23 @@ fun LibraryScreen(
                     }
                 }
             }
+
+            // v2：分类胶囊条（搜索框下方，Tab 之前）
+            // 真实分类 = 派生 + 自建；选中态接入 ViewModel 筛选（再点一次取消）
+            CategoryStrip(
+                categories = allCategories,
+                selected = uiState.selectedCategory,
+                onSelect = { name ->
+                    viewModel.setCategory(
+                        if (name == null || uiState.selectedCategory == name) null else name,
+                    )
+                },
+                onAddCategory = {
+                    editingCategory = null
+                    showCategoryEdit = true
+                },
+                totalCount = uiState.books.size,
+            )
 
             // Tab 切换：标准 M3 TabRow（下划线指示器 + 分隔线）。
             // 原实现抹掉指示器/分隔线做成透明胶囊，是 iOS/web 分段控件风格
@@ -384,6 +462,8 @@ fun LibraryScreen(
                                         viewModel.updateBookCategory(book.id, cat)
                                     },
                                     categories = uiState.categories,
+                                    bookCounts = bookCountByName,
+                                    categoryMeta = uiState.categoryMeta,
                                     modifier = Modifier.animateItemPlacement(),
                                 )
                             }
@@ -421,6 +501,8 @@ fun LibraryScreen(
                                             viewModel.updateBookCategory(book.id, c)
                                         },
                                         categories = uiState.categories,
+                                        bookCounts = bookCountByName,
+                                        categoryMeta = uiState.categoryMeta,
                                         modifier = Modifier.animateItemPlacement(),
                                     )
                                 }
@@ -510,6 +592,67 @@ fun LibraryScreen(
             },
         )
     }
+
+    // v2：分类管理 sheet（TopAppBar 菜单按钮触发）
+    if (showCategoryManage) {
+        CategoryManageSheet(
+            categories = allCategories,
+            onEdit = { cat ->
+                showCategoryManage = false
+                editingCategory = cat
+                showCategoryEdit = true
+            },
+            onAdd = {
+                showCategoryManage = false
+                editingCategory = null
+                showCategoryEdit = true
+            },
+            onDelete = { cat ->
+                // 仅删除分类元数据；书籍的 category 字符串保留
+                viewModel.deleteCategoryMeta(cat.name)
+                if (uiState.selectedCategory == cat.name) viewModel.setCategory(null)
+            },
+            onReorder = { reordered ->
+                // 拖动排序：按新顺序持久化 order 元数据
+                viewModel.reorderCategories(reordered.map { it.name })
+            },
+            onDismiss = { showCategoryManage = false },
+        )
+    }
+
+    // v2：新建 / 编辑分类 sheet（「+ 新建分类」或管理列表编辑触发）
+    if (showCategoryEdit) {
+        CategoryEditSheet(
+            initial = editingCategory,
+            onSave = { cat ->
+                viewModel.saveCategoryMeta(
+                    name = cat.name,
+                    icon = cat.icon.name,
+                    color = cat.color.toArgb().toLong(),
+                )
+                showCategoryEdit = false
+            },
+            onDismiss = { showCategoryEdit = false },
+        )
+    }
+
+    // v2：导入后完善信息（选分类 + 选封面），EPUB 文件导入成功后触发
+    val pendingRefine = uiState.pendingRefineBook
+    if (pendingRefine != null) {
+        AddBookFlowSheet(
+            categories = allCategories,
+            initialTitle = pendingRefine.title,
+            initialAuthor = pendingRefine.author,
+            onComplete = { title, _, _, categoryName, coverId ->
+                // 书名已在步骤 1 预填并可校对；分类/封面写库
+                viewModel.finishBookRefine(
+                    category = categoryName ?: "",
+                    coverStyle = coverId,
+                )
+            },
+            onDismiss = { viewModel.skipBookRefine() },
+        )
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -521,6 +664,8 @@ fun BookCard(
     onArchive: () -> Unit,
     onCategorize: (String) -> Unit = {},
     categories: List<String> = emptyList(),
+    bookCounts: Map<String, Int> = emptyMap(),
+    categoryMeta: Map<String, CategoryPrefs.Meta> = emptyMap(),
     modifier: Modifier = Modifier,
 ) {
     var showMenu by remember { mutableStateOf(false) }
@@ -585,11 +730,12 @@ fun BookCard(
                     .padding(horizontal = 14.dp, vertical = 12.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                // 封面：EPUB 内嵌封面优先，缺失时用书名哈希生成的插图封面
+                // 封面：v2 预设封面 > EPUB 内嵌封面 > 书名哈希插图封面
                 BookCover(
                     title = book.title,
                     coverPath = book.coverPath,
                     author = book.author,
+                    coverStyle = book.coverStyle,
                     modifier = Modifier.size(58.dp, 80.dp),
                 )
 
@@ -712,6 +858,8 @@ fun BookCard(
         CategoryEditDialog(
             current = book.category.ifBlank { "未分类" },
             categories = categories,
+            bookCountByName = bookCounts,
+            categoryMetaByName = categoryMeta,
             onDismiss = { showCategoryDialog = false },
             onConfirm = { cat ->
                 showCategoryDialog = false
@@ -876,23 +1024,35 @@ private fun CategoryHeader(category: String, count: Int) {
 }
 
 /**
- * 分类编辑弹窗：预设常用分类 + 已有分类 chips + 自定义输入。
+ * 分类编辑弹窗（v2 重写）：用「图标 + 颜色」分类卡网格替代原 FlowRow + 文字 chip，
+ * 保留自定义输入（新输入的分类名即建即用，元数据按名称派生稳定默认）。
  * 确认回调最终分类名（空输入由仓库层归一化为"未分类"）。
  */
-@OptIn(
-    androidx.compose.foundation.layout.ExperimentalLayoutApi::class,
-    ExperimentalMaterial3Api::class,
-)
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun CategoryEditDialog(
     current: String,
     categories: List<String>,
+    bookCountByName: Map<String, Int> = emptyMap(),
+    categoryMetaByName: Map<String, CategoryPrefs.Meta> = emptyMap(),
     onDismiss: () -> Unit,
     onConfirm: (String) -> Unit,
 ) {
-    val presets = remember(categories) {
+    // 可选分类 = 预设 + 现有分类去重；合成完整 Category（图标/颜色取 meta，缺省派生）
+    val selectableCategories = remember(categories, categoryMetaByName) {
         (listOf("未分类", "经典名著", "小说", "非虚构", "文章", "教材", "科技") + categories)
             .distinct()
+            .map { name ->
+                val meta = categoryMetaByName[name]
+                Category(
+                    name = name,
+                    bookCount = bookCountByName[name] ?: 0,
+                    icon = meta?.let { m ->
+                        runCatching { CategoryIcon.valueOf(m.icon) }.getOrDefault(derivedIconFor(name))
+                    } ?: derivedIconFor(name),
+                    color = meta?.let { m -> Color(m.color) } ?: derivedColorFor(name),
+                )
+            }
     }
     var custom by rememberSaveable { mutableStateOf(current) }
     AlertDialog(
@@ -901,23 +1061,19 @@ private fun CategoryEditDialog(
         text = {
             Column {
                 Text(
-                    "点选已有分类，或输入自定义分类名",
+                    "点选分类卡，或输入自定义分类名",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                Spacer(modifier = Modifier.height(8.dp))
-                FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
-                    presets.forEach { preset ->
-                        FilterChip(
-                            selected = custom == preset,
-                            onClick = { custom = preset },
-                            label = { Text(preset) },
-                        )
-                    }
-                }
+                Spacer(modifier = Modifier.height(10.dp))
+                CategorySelectGrid(
+                    categories = selectableCategories,
+                    selectedName = custom,
+                    onSelect = { cat -> custom = cat.name.take(12) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(240.dp),
+                )
                 Spacer(modifier = Modifier.height(12.dp))
                 OutlinedTextField(
                     value = custom,

@@ -1,63 +1,33 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  听阅 — Adaptive Icon 前景层
+  概念「眸中之页」：两片书页合成杏仁眼廓，
+  中缝 3.2dp 为书脊，中心瞳孔直径 12dp（精修去「大瞳孔」感）。
+
+  安全区：内容落在中心 72dp 安全圆内（x 24→84, y 31→75），
+  可承受圆形 / 圆角方形 / 水滴 / 花瓣等任意厂商遮罩裁切。
+
+  瞳孔色 #0D594F = 背景渐变在中心点的取值，
+  因此视觉上等同于「挖空透底」，无需 clip-path。
+-->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="108dp" android:height="108dp"
-    android:viewportWidth="108" android:viewportHeight="108">
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
 
-    <!-- Book body - left page -->
+    <!-- 左页：杏仁左半弧 + 书脊侧直边 -->
     <path
-        android:fillColor="#8B7355"
-        android:pathData="M54,70.5L54,63L54,60L51,59.25L34.5,60L30,60.38L29.25,63.75L28.5,70.5L28.5,73.5L31.5,74.25L51,74.25L53.25,74.25L54,72.75Z"/>
+        android:fillColor="#F1FCFA"
+        android:pathData="M54,31 C42,31 24,39.5 24,53 C24,66.5 42,75 54,75 L52.4,75 L52.4,31 Z"/>
 
-    <!-- Book body - right page -->
+    <!-- 右页：镜像 -->
     <path
-        android:fillColor="#A08568"
-        android:pathData="M54,70.5L54,63L54,60L57,59.25L73.5,60L78,60.38L78.75,63.75L79.5,70.5L79.5,73.5L76.5,74.25L57,74.25L54.75,74.25L54,72.75Z"/>
+        android:fillColor="#F1FCFA"
+        android:pathData="M54,31 C66,31 84,39.5 84,53 C84,66.5 66,75 54,75 L55.6,75 L55.6,31 Z"/>
 
-    <!-- Book spine shadow -->
+    <!-- 瞳孔：Android VectorDrawable 无 <circle>，以双弧路径表达 -->
     <path
-        android:fillColor="#6B5745"
-        android:pathData="M53.25,59.25L54.75,59.25L54.75,75L53.25,75Z"/>
-
-    <!-- Book page lines - left -->
-    <path
-        android:fillColor="#FAF8F5"
-        android:fillAlpha="0.5"
-        android:pathData="M36,64.5L49.5,64.88L36,66.75L48,67.12L36,69L46.5,69.38"
-        android:strokeWidth="1.2"
-        android:strokeColor="#FAF8F5"
-        android:strokeAlpha="0.5"/>
-
-    <!-- Book page lines - right -->
-    <path
-        android:fillColor="#FAF8F5"
-        android:fillAlpha="0.5"
-        android:pathData="M58.5,64.88L72,64.5L60,67.12L72,66.75L61.5,69.38L72,69"
-        android:strokeWidth="1.2"
-        android:strokeColor="#FAF8F5"
-        android:strokeAlpha="0.5"/>
-
-    <!-- Eye outline - outer shape -->
-    <path
-        android:fillColor="#C4956A"
-        android:pathData="M54,40.5L54,40.5L67.5,33L69,40.5L70.5,48L64.5,54L54,54L43.5,54L37.5,48L39,40.5L40.5,33L54,40.5Z"/>
-
-    <!-- Eye iris -->
-    <path
-        android:fillColor="#8B7355"
-        android:pathData="M54,42L54,42L62.25,36L63,42L63.75,48L59.25,52.5L54,52.5L48.75,52.5L44.25,48L45,42L45.75,36L54,42Z"/>
-
-    <!-- Eye pupil -->
-    <path
-        android:fillColor="#FAF8F5"
-        android:pathData="M54,43.5L54,43.5L58.5,39L59.25,43.5L60,48L57,51.75L54,51.75L51,51.75L48,48L48.75,43.5L49.5,39L54,43.5Z"/>
-
-    <!-- Eye highlight -->
-    <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M55.5,44.25 A1.12,1.12 0 1,1 55.5,46.5 A1.12,1.12 0 1,1 55.5,44.25 Z"/>
-
-    <!-- Connecting dots (decorative) -->
-    <path
-        android:fillColor="#C4956A"
-        android:pathData="M54,56.25L54,59.25"/>
+        android:fillColor="#0D594F"
+        android:pathData="M48,53 A6,6 0 1,1 60,53 A6,6 0 1,1 48,53 Z"/>
 </vector>
