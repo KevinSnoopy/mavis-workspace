@@ -15,10 +15,13 @@ import com.eareyereading.domain.repository.VocabularyRepository
 import com.eareyereading.tts.AVAILABLE_MODELS
 import com.eareyereading.tts.EmbeddedTtsEngine
 import com.eareyereading.tts.KOKORO_VOICES
+import com.eareyereading.tts.isActiveStage
+import com.eareyereading.tts.toProgressUi
 import com.eareyereading.ui.theme.*
 import com.eareyereading.util.NotificationHelper
 import com.eareyereading.util.NotificationService
 import com.eareyereading.util.TtsHelper
+import com.eareyereading.util.formatBytes
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
@@ -118,84 +121,79 @@ class SettingsViewModel @Inject constructor(
     }
 
     init {
-        // 通知总开关（阅读相关设置——字号/RSVP/主题/衬线等——已全部收敛到
-        // 阅读页内的设置弹窗与底栏快捷设置，本页不再重复提供入口）
+        observeNotificationPrefs()
+        observeLlmSettings()
+        observeVocabAndStats()
+        observeEmbeddedTts()
+        // 清掉上次下载协程被取消后残留的中间态进度，否则 collect 立即收到
+        // Downloading/Extracting/Initializing → isInProgress=true → UI 卡在
+        // "正在下载..."，下载按钮不可点（用户报告"点击下载没反应"）
+        embeddedTts.resetStaleDownloadProgress()
+        refreshEmbeddedStatus()
+        refreshCacheSize()
+    }
+
+    /**
+     * 统一的设置流订阅模板：取消向上传播、其余异常记日志
+     * （与全仓异步边界 catch 约定一致）。此前 init 里 7 段同款模板复制（DRY 违规）。
+     */
+    private fun <T> collectSafely(tag: String, flow: Flow<T>, onUpdate: (T) -> Unit) {
         viewModelScope.launch {
             try {
-                settingsRepository.getNotifications().collect { notifications ->
-                    _uiState.update { it.copy(notifications = notifications) }
-                }
+                flow.collect { onUpdate(it) }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
-                android.util.Log.e("SettingsViewModel", "notifications collect failed", e)
+                android.util.Log.e("SettingsViewModel", "$tag collect failed", e)
             }
         }
+    }
 
-        viewModelScope.launch {
-            try {
-                settingsRepository.getDynamicColor().collect { dynamicColor ->
-                    _uiState.update { it.copy(dynamicColor = dynamicColor) }
-                }
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                android.util.Log.e("SettingsViewModel", "dynamic color collect failed", e)
+    /**
+     * 通知与外观偏好开关（阅读相关设置——字号/RSVP/主题/衬线等——已全部
+     * 收敛到阅读页内的设置弹窗与底栏快捷设置，本页不再重复提供入口）。
+     */
+    private fun observeNotificationPrefs() {
+        collectSafely("notifications", settingsRepository.getNotifications()) { enabled ->
+            _uiState.update { it.copy(notifications = enabled) }
+        }
+        collectSafely("dynamic color", settingsRepository.getDynamicColor()) { enabled ->
+            _uiState.update { it.copy(dynamicColor = enabled) }
+        }
+        collectSafely("download progress pref", settingsRepository.getNotificationDownloadProgress()) { enabled ->
+            _uiState.update { it.copy(notificationDownloadProgress = enabled) }
+        }
+        collectSafely("download complete pref", settingsRepository.getNotificationDownloadComplete()) { enabled ->
+            _uiState.update { it.copy(notificationDownloadComplete = enabled) }
+        }
+    }
+
+    /** AI 翻译（LLM 通道）配置：四项合成一个流，collect 一处更新。 */
+    private fun observeLlmSettings() {
+        collectSafely(
+            "llm settings",
+            combine(
+                settingsRepository.getLlmTranslateEnabled(),
+                settingsRepository.getLlmApiKey(),
+                settingsRepository.getLlmBaseUrl(),
+                settingsRepository.getLlmModel(),
+            ) { enabled, apiKey, baseUrl, model ->
+                LlmSettingsSnapshot(enabled, apiKey, baseUrl, model)
+            },
+        ) { s ->
+            _uiState.update {
+                it.copy(
+                    llmTranslateEnabled = s.enabled,
+                    llmApiKey = s.apiKey,
+                    llmBaseUrl = s.baseUrl,
+                    llmModel = s.model,
+                )
             }
         }
+    }
 
-        viewModelScope.launch {
-            try {
-                settingsRepository.getNotificationDownloadProgress().collect { enabled ->
-                    _uiState.update { it.copy(notificationDownloadProgress = enabled) }
-                }
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                android.util.Log.e("SettingsViewModel", "download progress pref collect failed", e)
-            }
-        }
-
-        viewModelScope.launch {
-            try {
-                settingsRepository.getNotificationDownloadComplete().collect { enabled ->
-                    _uiState.update { it.copy(notificationDownloadComplete = enabled) }
-                }
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                android.util.Log.e("SettingsViewModel", "download complete pref collect failed", e)
-            }
-        }
-
-        // AI 翻译（LLM 通道）配置：四项合成一个流，collect 一处更新
-        viewModelScope.launch {
-            try {
-                combine(
-                    settingsRepository.getLlmTranslateEnabled(),
-                    settingsRepository.getLlmApiKey(),
-                    settingsRepository.getLlmBaseUrl(),
-                    settingsRepository.getLlmModel(),
-                ) { enabled, apiKey, baseUrl, model ->
-                    LlmSettingsSnapshot(enabled, apiKey, baseUrl, model)
-                }.collect { s ->
-                    _uiState.update {
-                        it.copy(
-                            llmTranslateEnabled = s.enabled,
-                            llmApiKey = s.apiKey,
-                            llmBaseUrl = s.baseUrl,
-                            llmModel = s.model,
-                        )
-                    }
-                }
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                android.util.Log.e("SettingsViewModel", "llm settings collect failed", e)
-            }
-        }
-
-        // 加载统计数据
+    /** 词汇总数与连续打卡统计。 */
+    private fun observeVocabAndStats() {
         viewModelScope.launch {
             try {
                 val allStats = readingStatsDao.getAllStats()
@@ -203,33 +201,16 @@ class SettingsViewModel @Inject constructor(
                 _uiState.update { it.copy(streakDays = streak) }
             } catch (_: Exception) { /* DB empty */ }
         }
-
-        viewModelScope.launch {
-            try {
-                vocabularyRepository.getTotalCount().collect { count ->
-                    _uiState.update { it.copy(totalWords = count) }
-                }
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                android.util.Log.e("SettingsViewModel", "vocab count collect failed", e)
-            }
+        collectSafely("vocab count", vocabularyRepository.getTotalCount()) { count ->
+            _uiState.update { it.copy(totalWords = count) }
         }
+    }
 
-        // 内置 TTS 状态：模型信息 + 下载进度 + 引擎状态
-        viewModelScope.launch {
-            try {
-                embeddedTts.state.collect { state ->
-                    _uiState.update {
-                        it.copy(
-                            embeddedReady = state is EmbeddedTtsEngine.EngineState.READY,
-                        )
-                    }
-                }
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                android.util.Log.e("SettingsViewModel", "embedded state collect failed", e)
+    /** 内置 TTS：引擎状态 + 下载/解压/初始化进度。 */
+    private fun observeEmbeddedTts() {
+        collectSafely("embedded state", embeddedTts.state) { state ->
+            _uiState.update {
+                it.copy(embeddedReady = state is EmbeddedTtsEngine.EngineState.READY)
             }
         }
         viewModelScope.launch {
@@ -243,60 +224,34 @@ class SettingsViewModel @Inject constructor(
                 var lastEmittedInitializing: Boolean? = null
                 embeddedTts.downloadProgress.collect { progress ->
                     // sealed Progress → (fraction, stage文案, isInitializing) 三通道
+                    // 映射收敛在 TtsProgressUi（与阅读页引导弹窗同源）；
                     // isInitializing 单独抽出：Initializing/Completed 阶段 UI 要显示
                     // "初始化中"而非"下载中"，且 Completed 后要清掉 initializing 标志
-                    val (frac, stage, isInitializing) = when (progress) {
-                        is com.eareyereading.tts.EmbeddedTtsEngine.Progress.Downloading ->
-                            Triple(progress.fraction, "下载中 ${(progress.fraction * 100).toInt()}%", false)
-                        is com.eareyereading.tts.EmbeddedTtsEngine.Progress.Extracting -> {
-                            // 1.3：不再预扫统计文件数，进度按字节推进并附 ETA。
-                            // 显示当前正在解压的文件名，让用户看到进展而非只看数字跳
-                            val entry = progress.currentEntryName
-                            val shortEntry = entry?.substringAfterLast('/')
-                            Triple(
-                                progress.fraction,
-                                formatExtractingStage(progress, shortEntry),
-                                false,
-                            )
-                        }
-                        com.eareyereading.tts.EmbeddedTtsEngine.Progress.Initializing ->
-                            Triple(0.99f, "正在初始化模型…", true)
-                        com.eareyereading.tts.EmbeddedTtsEngine.Progress.Completed ->
-                            Triple(1f, "✅ 已启用", false)
-                        is com.eareyereading.tts.EmbeddedTtsEngine.Progress.Failed ->
-                            Triple(0f, "下载失败：${progress.reason}", false)
-                        com.eareyereading.tts.EmbeddedTtsEngine.Progress.Idle ->
-                            Triple(0f, "", false)
-                    }
+                    val ui = progress.toProgressUi()
                     // 是否处于"进行中"（显示进度条）：基于 Progress 类型而非 frac 值判断，
                     // 避免 Extracting(0, total, null) 时 frac=0 被误判为"未下载"
-                    val isInProgress = when (progress) {
-                        is com.eareyereading.tts.EmbeddedTtsEngine.Progress.Downloading,
-                        is com.eareyereading.tts.EmbeddedTtsEngine.Progress.Extracting -> true
-                        com.eareyereading.tts.EmbeddedTtsEngine.Progress.Initializing -> true
-                        else -> false
-                    }
-                    val pctInt = (frac * 100).toInt()
-                    if (pctInt != lastEmittedPct || stage != lastEmittedStage ||
-                        isInitializing != lastEmittedInitializing
+                    val isInProgress = progress.isActiveStage
+                    val pctInt = (ui.fraction * 100).toInt()
+                    if (pctInt != lastEmittedPct || ui.stageText != lastEmittedStage ||
+                        ui.isInitializing != lastEmittedInitializing
                     ) {
                         lastEmittedPct = pctInt
-                        lastEmittedStage = stage
-                        lastEmittedInitializing = isInitializing
+                        lastEmittedStage = ui.stageText
+                        lastEmittedInitializing = ui.isInitializing
                         _uiState.update {
                             // Completed 时模型必然已落盘，同步置 embeddedModelDownloaded=true，
                             // 避免 initialize() 写 Completed 后、downloadEmbeddedTts() 还没执行到
                             // refreshEmbeddedStatus 的窗口期里 UI 闪现"未下载"
                             val downloadedOverride = when (progress) {
-                                com.eareyereading.tts.EmbeddedTtsEngine.Progress.Completed -> true
-                                is com.eareyereading.tts.EmbeddedTtsEngine.Progress.Failed -> null
+                                EmbeddedTtsEngine.Progress.Completed -> true
+                                is EmbeddedTtsEngine.Progress.Failed -> null
                                 else -> null
                             }
                             it.copy(
-                                embeddedDownloading = isInProgress && !isInitializing,
-                                embeddedDownloadProgress = frac,
-                                embeddedDownloadStage = stage,
-                                embeddedInitializing = isInitializing,
+                                embeddedDownloading = isInProgress && !ui.isInitializing,
+                                embeddedDownloadProgress = ui.fraction,
+                                embeddedDownloadStage = ui.stageText,
+                                embeddedInitializing = ui.isInitializing,
                                 embeddedModelDownloaded = downloadedOverride ?: it.embeddedModelDownloaded,
                             )
                         }
@@ -308,12 +263,6 @@ class SettingsViewModel @Inject constructor(
                 android.util.Log.e("SettingsViewModel", "download progress collect failed", e)
             }
         }
-        // 清掉上次下载协程被取消后残留的中间态进度，否则 collect 立即收到
-        // Downloading/Extracting/Initializing → isInProgress=true → UI 卡在
-        // "正在下载..."，下载按钮不可点（用户报告"点击下载没反应"）
-        embeddedTts.resetStaleDownloadProgress()
-        refreshEmbeddedStatus()
-        refreshCacheSize()
     }
 
     /** 异步统计缓存目录大小（磁盘遍历不能放在 Compose 组合期做）。 */
@@ -441,13 +390,6 @@ class SettingsViewModel @Inject constructor(
             }
             embeddedTts.speak(previewText, speed = 1.0f)
         }
-    }
-
-    private fun formatBytes(bytes: Long): String {
-        if (bytes < 1024) return "$bytes B"
-        val kb = bytes / 1024.0
-        if (kb < 1024) return "%.1f KB".format(kb)
-        return "%.0f MB".format(kb / 1024.0)
     }
 
     /** 下载内置 TTS 模型（带进度），下载完成后自动初始化。 */
@@ -853,22 +795,4 @@ class SettingsViewModel @Inject constructor(
     fun dismissSnackbar() {
         _uiState.update { it.copy(snackbarMessage = null) }
     }
-}
-
-/**
- * 1.3：解压进度文案 —— 按已解压字节百分比 + ETA 估算（替代旧"entriesDone/entriesTotal"）。
- */
-private fun formatExtractingStage(
-    p: com.eareyereading.tts.EmbeddedTtsEngine.Progress.Extracting,
-    shortEntry: String?,
-): String {
-    val pct = (p.fraction * 100).toInt().coerceIn(0, 100)
-    val eta = when {
-        p.fraction <= 0.01f || p.fraction >= 0.99f || p.elapsedMs <= 0 -> ""
-        else -> {
-            val remainingMs = (p.elapsedMs / p.fraction * (1f - p.fraction)).toLong()
-            if (remainingMs > 0) " · 剩余约${(remainingMs / 1000).coerceAtMost(999)}s" else ""
-        }
-    }
-    return if (shortEntry != null) "解压中 $pct%$eta $shortEntry" else "解压中 $pct%$eta"
 }

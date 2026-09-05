@@ -50,7 +50,7 @@ import kotlinx.coroutines.withContext
  */
 @Singleton
 class EmbeddedTtsEngine @Inject constructor(
-    @ApplicationContext internal val context: Context,
+    @ApplicationContext private val context: Context,
     private val notificationService: NotificationService,
 ) {
     @Volatile
@@ -158,8 +158,8 @@ class EmbeddedTtsEngine @Inject constructor(
     private val speakJobLock = Any()
     private val activeSpeakJobs = mutableSetOf<Job>()
 
-    // 引擎状态（用于 UI 显示；下载链扩展写 DOWNLOADING/FAILED 等中间态）
-    internal val _state = MutableStateFlow<EngineState>(EngineState.NOT_INITIALIZED)
+    // 引擎状态（用于 UI 显示；下载链经 TtsModelDownloader 的构造端口回写中间态）
+    private val _state = MutableStateFlow<EngineState>(EngineState.NOT_INITIALIZED)
     val state: StateFlow<EngineState> = _state.asStateFlow()
 
     /**
@@ -189,8 +189,20 @@ class EmbeddedTtsEngine @Inject constructor(
         data class Failed(val reason: String) : Progress()
     }
 
-    internal val _downloadProgress = MutableStateFlow<Progress>(Progress.Idle)
+    private val _downloadProgress = MutableStateFlow<Progress>(Progress.Idle)
     val downloadProgress: StateFlow<Progress> = _downloadProgress.asStateFlow()
+
+    /**
+     * 模型下载器（组合）：模型目录的下载/解压/校验/清理。状态流与通知服务
+     * 以构造端口注入，本引擎的 mutable 状态不再被扩展函数直接触达。
+     * downloadMutex 由本引擎持有（互斥语义跨入口，属引擎编排职责）。
+     */
+    private val modelDownloader = TtsModelDownloader(
+        modelsDir = File(context.filesDir, MODELS_DIR_NAME),
+        state = _state,
+        progress = _downloadProgress,
+        notificationService = notificationService,
+    )
 
     /**
      * 引擎状态机
@@ -207,6 +219,9 @@ class EmbeddedTtsEngine @Inject constructor(
 
     companion object {
         private const val TAG = "EmbeddedTtsEngine"
+
+        /** 模型在 app 私有目录下的根目录名。 */
+        private const val MODELS_DIR_NAME = "sherpa_tts_models"
         private const val NUM_THREADS = 2
         /** Kokoro（82M 参数）合成开销大，官方演示对带 voices 的模型用 4 线程 */
         private const val NUM_THREADS_KOKORO = 4
@@ -327,36 +342,21 @@ class EmbeddedTtsEngine @Inject constructor(
 
     /**
      * 检查模型是否已下载（且每个文件有 .complete 标记，确保完整）。
+     * 磁盘检查实现见 [TtsModelDownloader]。
      */
-    fun isModelDownloaded(modelInfo: ModelInfo = getCurrentModelInfo()): Boolean {
-        val dir = File(context.filesDir, MODELS_DIR_NAME)
-        return modelInfo.files.all { file ->
-            val f = File(dir, file.relativePath)
-            val contentOk = if (f.isDirectory) f.exists() else f.exists() && f.length() > 0
-            contentOk && File(dir, file.relativePath + COMPLETE_SUFFIX).exists()
-        }
-    }
+    fun isModelDownloaded(modelInfo: ModelInfo = getCurrentModelInfo()): Boolean =
+        modelDownloader.isModelDownloaded(modelInfo)
 
     /**
      * 获取已下载的模型占用空间（字节）。
      */
-    fun getDownloadedSize(): Long {
-        val dir = File(context.filesDir, MODELS_DIR_NAME)
-        if (!dir.exists()) return 0L
-        return dir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
-    }
+    fun getDownloadedSize(): Long = modelDownloader.downloadedSizeBytes()
 
     /**
      * 删除已下载的模型（释放空间）。
      */
     fun deleteModel(modelInfo: ModelInfo = getCurrentModelInfo()) {
-        val dir = File(context.filesDir, MODELS_DIR_NAME)
-        modelInfo.files.forEach { file ->
-            // deleteRecursively：Piper 的 espeak-ng-data 是目录，
-            // File.delete() 对非空目录静默失败会留下 ~5MB 残留
-            File(dir, file.relativePath).let { if (it.exists()) it.deleteRecursively() }
-            File(dir, file.relativePath + COMPLETE_SUFFIX).let { if (it.exists()) it.delete() }
-        }
+        modelDownloader.deleteModelFiles(modelInfo)
         // 状态流同步复位：此前删完模型流里仍是 READY(旧模型)，
         // 设置页状态与实际不符
         if (_state.value is EngineState.READY || _state.value is EngineState.FAILED) {
@@ -378,7 +378,7 @@ class EmbeddedTtsEngine @Inject constructor(
 
     /** 下载互斥：设置页与阅读页弹窗是两个独立入口，各自的 UI 守卫挡不住跨入口并发。
      * 两个下载协程交错写同一批文件/解压同一个 tarball 会产出损坏模型 */
-    internal val downloadMutex = Mutex()
+    private val downloadMutex = Mutex()
 
     /**
      * 重置残留的下载进度状态。
@@ -406,6 +406,7 @@ class EmbeddedTtsEngine @Inject constructor(
 
     /**
      * 下载模型文件（带进度回调、多镜像回退、断点续传）。
+     * 下载链实现见 [TtsModelDownloader]；本引擎负责跨入口互斥。
      *
      * @param modelInfo 要下载的模型
      * @param onProgress 0.0 - 1.0 的进度回调
@@ -413,7 +414,7 @@ class EmbeddedTtsEngine @Inject constructor(
     suspend fun downloadModel(
         modelInfo: ModelInfo = getCurrentModelInfo(),
         onProgress: (Float) -> Unit = {},
-    ): Boolean = downloadMutex.withLock { downloadModelLocked(modelInfo, onProgress) }
+    ): Boolean = downloadMutex.withLock { modelDownloader.download(modelInfo, onProgress) }
 
     /**
      * 初始化 OfflineTts 实例（同步方法，调用前确保模型已下载）。
@@ -1068,7 +1069,7 @@ class EmbeddedTtsEngine @Inject constructor(
     }
 
     /** 下载成功后的收尾通知：替换掉 ongoing 的进度通知，保证可划掉并结束常驻状态。 */
-    internal fun showDownloadCompleteNotification(contentText: String) {
+    private fun showDownloadCompleteNotification(contentText: String) {
         notificationService.showTtsDownloadComplete(contentText)
     }
 

@@ -3,7 +3,6 @@ package com.eareyereading.ui.screens.reader
 import androidx.compose.ui.graphics.Color
 import com.eareyereading.domain.model.*
 import com.eareyereading.util.CollinsClassifier.WordLevel
-import com.eareyereading.util.TtsHelper
 import com.eareyereading.util.*
 
 /**
@@ -11,55 +10,34 @@ import com.eareyereading.util.*
  * TTS 引导弹窗载荷与动作、DataStore 设置聚合快照。
  */
 /**
- * TTS 引擎引导弹窗的事件载荷。
- */
-/**
  * TTS 引导提示（自 2026-08-30 系统 TTS 下线后已大幅简化）：
  * 只剩"提醒用户去下载嵌入式模型"一种场景。系统引擎选择/Google TTS 安装/
- * 第三方 TTS app 安装等场景全部删掉（TtsEngineHelper 已被删除）。
- *
- * 保留字段签名以避免 UI 侧广泛改动。
+ * 第三方 TTS app 安装等场景全部删掉（TtsEngineHelper 已被删除），
+ * 对应的载荷字段与动作子类一并清除（YAGNI）。
  */
 data class TtsInstallPrompt(
-    @Suppress("UNUSED_PARAMETER") val reason: TtsHelper.InitFailureReason = TtsHelper.InitFailureReason.NO_ENGINE,
-    @Suppress("UNUSED_PARAMETER") val availableEngines: List<Any> = emptyList(),
-    @Suppress("UNUSED_PARAMETER") val fallbackEnginePackage: String? = null,
-    @Suppress("UNUSED_PARAMETER") val discoveredEngines: List<Any> = emptyList(),
-    @Suppress("UNUSED_PARAMETER") val systemDefaultEnginePackage: String? = null,
-    @Suppress("UNUSED_PARAMETER") val isPhantomDefaultState: Boolean = false,
-    @Suppress("UNUSED_PARAMETER") val hasGooglePlay: Boolean = false,
-    @Suppress("UNUSED_PARAMETER") val uninstalledThirdPartyTtsApps: List<Any> = emptyList(),
-    @Suppress("UNUSED_PARAMETER") val installGuideSteps: List<String> = emptyList(),
-    @Suppress("UNUSED_PARAMETER") val scenario: DialogScenario = DialogScenario.NO_ENGINE,
-    /** 内置 TTS 模型是否已下载（剩余唯一影响 UI 的字段） */
+    /** 内置 TTS 模型是否已下载（影响按钮文案：下载 / 启用） */
     val embeddedModelDownloaded: Boolean = false,
     /** 内置 TTS 模型显示名 */
     val embeddedModelDisplayName: String = "",
     /** 内置 TTS 模型大小（人类可读） */
     val embeddedModelSizeText: String = "",
-) {
-    @Suppress("unused")
-    enum class DialogScenario {
-        HAS_DISCOVERED_ENGINES,
-        SYSTEM_DEFAULT_INSTALLED_BUT_UNREACHABLE,
-        NO_ENGINE,
-    }
-}
+)
 
 /**
- * 用户对 TTS 引导弹窗的回应动作（仅剩"下载内置模型"和"关闭"两类）。
+ * 用户对 TTS 引导弹窗的回应动作。
  */
 sealed class TtsInstallAction {
     /** 下载内置 TTS 模型 */
     data object DownloadEmbeddedTts : TtsInstallAction()
     /** 关闭弹窗 */
     data object Dismiss : TtsInstallAction()
-    // 占位旧枚举（兼容现有 UI 调用方，运行时不再创建）
-    @Suppress("unused") data class OpenEngineSettings(val enginePackage: String?) : TtsInstallAction()
-    @Suppress("unused") data object InstallGoogleTts : TtsInstallAction()
-    @Suppress("unused") data object OpenUnknownSourcesSettings : TtsInstallAction()
-    @Suppress("unused") data class RetryWithEngine(val enginePackage: String) : TtsInstallAction()
-    @Suppress("unused") data class InstallThirdPartyTtsApp(val app: Any) : TtsInstallAction()
+    /**
+     * "✅ 启用内置 TTS"（模型已下载场景的按钮）：
+     * VM 侧当前为 no-op——启用时机由 loadBook/朗读入口自动初始化覆盖，
+     * 语义保留待独立"手动启用"需求接线。
+     */
+    data class RetryWithEngine(val enginePackage: String) : TtsInstallAction()
 }
 
 data class ReaderUiState(

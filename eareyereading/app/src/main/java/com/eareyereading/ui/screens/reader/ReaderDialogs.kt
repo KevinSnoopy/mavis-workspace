@@ -15,7 +15,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.eareyereading.domain.model.ReadingMode
@@ -35,9 +34,6 @@ internal fun TtsInstallDialog(
     onAction: (com.eareyereading.ui.screens.reader.TtsInstallAction) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    val context = androidx.compose.ui.platform.LocalContext.current
-    @Suppress("UNUSED_VARIABLE") val unusedCtx = context  // 旧版本用于 TtsEngineHelper 调用，移除后保留位
-
     // 2026-08-30: 系统 TTS 完全下线，对话框只剩"下载内置模型"一种 CTA。
     val downloadButton: @Composable () -> Unit = {
         val progress = downloadProgress

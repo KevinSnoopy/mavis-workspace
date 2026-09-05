@@ -21,6 +21,26 @@ import kotlinx.coroutines.suspendCancellableCoroutine
  * 播放控制域：RSVP/速读/自动朗读/单段朗读的仲裁（stopAllPlayback）、
  * 驱动循环、看门狗与句子切分。
  */
+
+// 自动朗读：段落间停顿时间（毫秒）
+private const val PARAGRAPH_PAUSE_MS = 600L
+
+// 快速阅读：默认语速（词/分钟），用于计算每段停留时间
+private const val SPEED_READ_WPM = 130
+
+// 快速阅读：每段最小停留时间（毫秒）
+private const val SPEED_READ_MIN_DELAY_MS = 1500L
+
+// 句子边界（ASCII）：句末标点 + 空白 + 大写字母/引号/左括号。
+// "Aug." "Mr." "Dr." 这类缩写后的 "." + 空格 + 小写/数字不会误切，
+// 而 "happened. The" 的正常句子边界仍能切出。提升为常量避免热路径重复编译。
+private val SENTENCE_BOUNDARY = Regex("(?<=[.!?])\\s+(?=[A-Z\"\\(])")
+
+// 句子边界（CJK）：全角句点 。！？；（允许尾随闭引号/括号）。
+// 中文不靠空白分句；不处理的话整段中文是一个"句子"，
+// 与引擎侧切分不一致且被逐句长度限制截断
+private val SENTENCE_BOUNDARY_CJK = Regex("(?<=[。！？；][”’」』]?)")
+
 // ── 自动全文朗读 ─────────────────────────────
 fun ReaderViewModel.toggleAutoRead() {
     if (_uiState.value.isAutoReading) {
@@ -49,23 +69,9 @@ private fun ReaderViewModel.startAutoRead() {
     // 初始化放进被追踪的 autoReadJob：初始化窗口内的第二次点击
     // 会先 cancel 掉第一次尝试，不再出现两条并发朗读链
     autoReadJob = viewModelScope.launch {
-        if (!_uiState.value.ttsInitialized) {
-            val ok = try {
-                ttsHelper.initialize(_uiState.value.book?.language ?: "en")
-            } catch (e: TimeoutCancellationException) {
-                android.util.Log.w("ReaderViewModel", "TTS init timed out", e)
-                false
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                android.util.Log.e("ReaderViewModel", "TTS init failed", e)
-                false
-            }
-            _uiState.update { it.copy(ttsInitialized = ok) }
-            if (!ok) {
-                handleTtsInitFailure("自动朗读不可用")
-                return@launch
-            }
+        if (!ensureTtsInitialized()) {
+            handleTtsInitFailure("自动朗读不可用")
+            return@launch
         }
         // 内置模型与本书语言不匹配时先切换（英文书→纯英文模型），
         // 已匹配/无对应模型时为 no-op
@@ -225,23 +231,9 @@ fun ReaderViewModel.toggleRsvp() {
         // 初始化放进被追踪的 rsvpJob：初始化窗口内的连点会取消第一次尝试，
         // 不再出现两条并发播放循环交替调 speak() 的乱序音频
         rsvpJob = viewModelScope.launch {
-            if (!_uiState.value.ttsInitialized) {
-                val ok = try {
-                    ttsHelper.initialize(_uiState.value.book?.language ?: "en")
-                } catch (e: TimeoutCancellationException) {
-                    android.util.Log.w("ReaderViewModel", "TTS init timed out", e)
-                    false
-                } catch (e: kotlinx.coroutines.CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    android.util.Log.e("ReaderViewModel", "TTS init failed", e)
-                    false
-                }
-                _uiState.update { it.copy(ttsInitialized = ok) }
-                if (!ok) {
-                    handleTtsInitFailure("RSVP 不可用")
-                    return@launch
-                }
+            if (!ensureTtsInitialized()) {
+                handleTtsInitFailure("RSVP 不可用")
+                return@launch
             }
             // 内置模型与本书语言不匹配时先切换，已匹配时为 no-op
             ttsHelper.switchEmbeddedModelIfNeeded(_uiState.value.book?.language)
@@ -287,23 +279,9 @@ fun ReaderViewModel.toggleSpeed() {
         stopAllPlayback()
         // 同 toggleRsvp：初始化纳入被追踪的 job，杜绝双循环竞态
         speedJob = viewModelScope.launch {
-            if (!_uiState.value.ttsInitialized) {
-                val ok = try {
-                    ttsHelper.initialize(_uiState.value.book?.language ?: "en")
-                } catch (e: TimeoutCancellationException) {
-                    android.util.Log.w("ReaderViewModel", "TTS init timed out", e)
-                    false
-                } catch (e: kotlinx.coroutines.CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    android.util.Log.e("ReaderViewModel", "TTS init failed", e)
-                    false
-                }
-                _uiState.update { it.copy(ttsInitialized = ok) }
-                if (!ok) {
-                    handleTtsInitFailure("速读不可用")
-                    return@launch
-                }
+            if (!ensureTtsInitialized()) {
+                handleTtsInitFailure("速读不可用")
+                return@launch
             }
             // 内置模型与本书语言不匹配时先切换，已匹配时为 no-op
             ttsHelper.switchEmbeddedModelIfNeeded(_uiState.value.book?.language)
@@ -419,19 +397,7 @@ fun ReaderViewModel.toggleTts() {
         if (!_uiState.value.ttsInitialized) {
             ttsInitJob?.cancel()
             ttsInitJob = viewModelScope.launch {
-                val ok = try {
-                    ttsHelper.initialize(_uiState.value.book?.language ?: "en")
-                } catch (e: TimeoutCancellationException) {
-                    android.util.Log.w("ReaderViewModel", "TTS init timed out", e)
-                    false
-                } catch (e: kotlinx.coroutines.CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    android.util.Log.e("ReaderViewModel", "TTS init failed", e)
-                    false
-                }
-                _uiState.update { it.copy(ttsInitialized = ok) }
-                if (ok) {
+                if (ensureTtsInitialized()) {
                     hintEmbeddedVoiceMismatchIfNeeded()
                     // 初始化窗口内用户可能已启动别的播放形态（或被停止）：
                     // 复查状态，避免迟到的初始化回调在新生播放之上叠一层单段朗读
@@ -502,20 +468,3 @@ private fun splitSentencesCompat(text: String): List<String> =
         .flatMap { it.split(SENTENCE_BOUNDARY) }
         .map { it.trim() }
         .filter { it.isNotBlank() }
-
-    // 自动朗读：段落间停顿时间（毫秒）
-    private const val PARAGRAPH_PAUSE_MS = 600L
-    // 快速阅读：默认语速（词/分钟），用于计算每段停留时间
-    private const val SPEED_READ_WPM = 130
-    // 快速阅读：每段最小停留时间（毫秒）
-    private const val SPEED_READ_MIN_DELAY_MS = 1500L
-
-    // 句子边界（ASCII）：句末标点 + 空白 + 大写字母/引号/左括号。
-    // "Aug." "Mr." "Dr." 这类缩写后的 "." + 空格 + 小写/数字不会误切，
-    // 而 "happened. The" 的正常句子边界仍能切出。提升为常量避免热路径重复编译。
-    private val SENTENCE_BOUNDARY = Regex("(?<=[.!?])\\s+(?=[A-Z\"\\(])")
-
-    // 句子边界（CJK）：全角句点 。！？；（允许尾随闭引号/括号）。
-    // 中文不靠空白分句；不处理的话整段中文是一个"句子"，
-    // 与引擎侧切分不一致且被逐句长度限制截断
-    private val SENTENCE_BOUNDARY_CJK = Regex("(?<=[。！？；][”’」』]?)")

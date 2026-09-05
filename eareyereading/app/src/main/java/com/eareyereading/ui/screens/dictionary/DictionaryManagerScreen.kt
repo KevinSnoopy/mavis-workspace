@@ -374,9 +374,5 @@ private fun DictionaryCard(
     }
 }
 
-private fun formatBytes(bytes: Long): String {
-    if (bytes < 1024) return "$bytes B"
-    val kb = bytes / 1024.0
-    if (kb < 1024) return "%.0f KB".format(kb)
-    return "%.1f MB".format(kb / 1024.0)
-}
+private fun formatBytes(bytes: Long): String =
+    com.eareyereading.util.formatBytes(bytes, kbDecimals = 0, mbDecimals = 1)

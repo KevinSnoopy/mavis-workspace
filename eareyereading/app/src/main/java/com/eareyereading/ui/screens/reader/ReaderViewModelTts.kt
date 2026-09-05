@@ -6,9 +6,12 @@ import androidx.lifecycle.viewModelScope
 import com.eareyereading.domain.model.*
 import com.eareyereading.domain.repository.*
 import com.eareyereading.tts.EmbeddedTtsEngine
+import com.eareyereading.tts.hidesProgressValue
+import com.eareyereading.tts.toProgressUi
 import com.eareyereading.tts.AVAILABLE_MODELS
 import com.eareyereading.ui.theme.*
 import com.eareyereading.util.*
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -19,7 +22,7 @@ import kotlinx.coroutines.launch
 /**
  * 显示 TTS 引导弹窗——已下线系统 TTS 探测，只剩"提醒下载内置引擎"一种场景。
  */
-private suspend fun ReaderViewModel.showTtsInstallPrompt(@Suppress("UNUSED_PARAMETER") reason: TtsHelper.InitFailureReason, force: Boolean = false) {
+private suspend fun ReaderViewModel.showTtsInstallPrompt(force: Boolean = false) {
     val embeddedEngine = ttsHelper.getEmbeddedEngine()
     val embeddedNotDownloaded = AVAILABLE_MODELS.none {
         embeddedEngine.isModelDownloaded(it)
@@ -49,17 +52,8 @@ private suspend fun ReaderViewModel.showTtsInstallPrompt(@Suppress("UNUSED_PARAM
     ttsPromptShownThisSession = true
 }
 
-private fun ReaderViewModel.formatBytes(bytes: Long): String {
-    if (bytes < 1024) return "$bytes B"
-    val kb = bytes / 1024.0
-    if (kb < 1024) return "%.1f KB".format(kb)
-    val mb = kb / 1024.0
-    return "%.0f MB".format(mb)
-}
-
 /**
- * 用户对 TTS 引导弹窗的操作：只剩"下载内置模型"和"关闭"。
- * 旧的系统 TTS 相关 action 全部 no-op（保留枚举以兼容 UI 调用方）。
+ * 用户对 TTS 引导弹窗的操作。
  */
 fun ReaderViewModel.onTtsInstallAction(action: TtsInstallAction) {
     when (action) {
@@ -67,12 +61,8 @@ fun ReaderViewModel.onTtsInstallAction(action: TtsInstallAction) {
             downloadEmbeddedTtsModel()
         }
         is TtsInstallAction.Dismiss -> { /* no-op */ }
-        // 占位旧 action — 系统 TTS 已下线，全部 no-op（保留让 UI 编译过）
-        is TtsInstallAction.OpenEngineSettings -> {}
-        is TtsInstallAction.InstallGoogleTts -> {}
-        is TtsInstallAction.OpenUnknownSourcesSettings -> {}
+        // "启用"按钮：当前 no-op（见 TtsInstallAction.RetryWithEngine 注释）
         is TtsInstallAction.RetryWithEngine -> {}
-        is TtsInstallAction.InstallThirdPartyTtsApp -> {}
     }
 }
 
@@ -103,47 +93,15 @@ private fun ReaderViewModel.downloadEmbeddedTtsModel() {
         var lastEmittedStage: String? = null
         val progressJob = launch {
             embeddedEngine.downloadProgress.collect { progress ->
-                val (frac, stage) = when (progress) {
-                    is com.eareyereading.tts.EmbeddedTtsEngine.Progress.Downloading ->
-                        progress.fraction to "下载中 ${(progress.fraction * 100).toInt()}%"
-                    is com.eareyereading.tts.EmbeddedTtsEngine.Progress.Extracting -> {
-                        // 1.3：不再预扫统计文件数，进度按字节推进并附 ETA。
-                        // 显示当前正在解压的文件名，让用户看到进展而非只看数字跳
-                        val shortEntry = progress.currentEntryName?.substringAfterLast('/')
-                        val pct = (progress.fraction * 100).toInt().coerceIn(0, 100)
-                        val eta = when {
-                            progress.fraction <= 0.01f || progress.fraction >= 0.99f || progress.elapsedMs <= 0 -> ""
-                            else -> {
-                                val remainingMs = (progress.elapsedMs / progress.fraction * (1f - progress.fraction)).toLong()
-                                if (remainingMs > 0) " · 剩余约${(remainingMs / 1000).coerceAtMost(999)}s" else ""
-                            }
-                        }
-                        progress.fraction to if (shortEntry != null) {
-                            "解压中 $pct%$eta $shortEntry"
-                        } else {
-                            "解压中 $pct%$eta"
-                        }
-                    }
-                    com.eareyereading.tts.EmbeddedTtsEngine.Progress.Initializing ->
-                        0.99f to "正在初始化模型…"
-                    com.eareyereading.tts.EmbeddedTtsEngine.Progress.Completed ->
-                        1f to "✅ 已启用"
-                    is com.eareyereading.tts.EmbeddedTtsEngine.Progress.Failed ->
-                        0f to "下载失败：${progress.reason}"
-                    com.eareyereading.tts.EmbeddedTtsEngine.Progress.Idle ->
-                        0f to null
-                }
-                val pctInt = (frac * 100).toInt()
+                val ui = progress.toProgressUi()
+                // 空文案归 null：Reader 侧的"无任务"语义（进度条收敛）由 Idle 空文案承载
+                val stage = ui.stageText.ifBlank { null }
+                val pctInt = (ui.fraction * 100).toInt()
                 // 把 fraction 转成 Float?（让已有 UI 字段继续工作）
                 // null 表示"无任务"，由 UI 层处理
                 // Completed 也置 null：阅读页弹窗在下载成功后由 showToast 提示，
                 // 进度条该消失而非停在 100%（与设置页不同，设置页有持续状态卡片）
-                val fracOut: Float? = when (progress) {
-                    is com.eareyereading.tts.EmbeddedTtsEngine.Progress.Idle,
-                    is com.eareyereading.tts.EmbeddedTtsEngine.Progress.Failed,
-                    com.eareyereading.tts.EmbeddedTtsEngine.Progress.Completed -> null
-                    else -> frac
-                }
+                val fracOut: Float? = if (progress.hidesProgressValue) null else ui.fraction
                 // 去重只看整百分比与阶段文案：旧条件里
                 // `fracOut != _uiState.value.embeddedDownloadProgress` 拿原始
                 // 浮点比较，下载期间进度小数每 100ms 都在变 → 条件恒真，
@@ -194,6 +152,30 @@ private fun ReaderViewModel.downloadEmbeddedTtsModel() {
 }
 
 /**
+ * 播放前统一的 TTS 初始化闸：已初始化直接放行；未初始化则按本书语言初始化
+ * 并同步 ttsInitialized 状态。自动朗读 / RSVP / 速读 / 单段朗读四个播放入口
+ * 此前各自复制同一段 try-catch 模板（DRY 违规），收敛于此。
+ *
+ * @return true = 引擎就绪（本就初始化过，或本次初始化成功）
+ */
+internal suspend fun ReaderViewModel.ensureTtsInitialized(): Boolean {
+    if (_uiState.value.ttsInitialized) return true
+    val ok = try {
+        ttsHelper.initialize(_uiState.value.book?.language ?: "en")
+    } catch (e: TimeoutCancellationException) {
+        android.util.Log.w("ReaderViewModel", "TTS init timed out", e)
+        false
+    } catch (e: kotlinx.coroutines.CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        android.util.Log.e("ReaderViewModel", "TTS init failed", e)
+        false
+    }
+    _uiState.update { it.copy(ttsInitialized = ok) }
+    return ok
+}
+
+/**
  * 处理 TTS 初始化失败：系统 TTS 失败现已不可能发生（TtsHelper 不再尝试系统 TTS），
  * 所以这条路径只会触发"内置 TTS 未下载 / 模型损坏"，直接引导用户去设置页下载。
  */
@@ -209,7 +191,7 @@ internal suspend fun ReaderViewModel.handleTtsInitFailure(prefix: String) {
     }
     showToast(message)
     // 总是弹引导（让用户能进设置页下载/重试）
-    showTtsInstallPrompt(TtsHelper.InitFailureReason.NO_ENGINE)
+    showTtsInstallPrompt()
 }
 
 /**
