@@ -77,7 +77,7 @@ class LlmTranslator @Inject constructor() {
             withTimeoutOrNull(totalTimeout) {
                 val parts = mutableListOf<String>()
                 for (chunk in chunks) {
-                    val piece = translateChunk(chunk, sourceLang, targetLang, config) ?: return@withTimeoutOrNull null
+                    val piece = translateChunk(chunk, targetLang, config) ?: return@withTimeoutOrNull null
                     parts.add(piece)
                 }
                 val joiner = if (targetLang.lowercase().startsWith("zh")) "" else " "
@@ -129,7 +129,7 @@ class LlmTranslator @Inject constructor() {
     }
 
     /** 构造 chat/completions 请求体（internal 供单测）。 */
-    internal fun buildRequestBody(text: String, sourceLang: String, targetLang: String, config: Config): String {
+    internal fun buildRequestBody(text: String, targetLang: String, config: Config): String {
         val messages = JSONArray().apply {
             put(JSONObject().apply {
                 put("role", "system")
@@ -146,8 +146,8 @@ class LlmTranslator @Inject constructor() {
             put("temperature", TEMPERATURE)
             put("max_tokens", MAX_TOKENS)
             put("stream", false)
-            // sourceLang 不进提示词：语言自动识别更稳（混杂引文/专有名词时
-            // 显式声明反而干扰），仅用于自翻译短路判断
+            // 源语言不进提示词：语言自动识别更稳（混杂引文/专有名词时
+            // 显式声明反而干扰）
         }
         return body.toString()
     }
@@ -171,13 +171,12 @@ class LlmTranslator @Inject constructor() {
 
     private suspend fun translateChunk(
         text: String,
-        sourceLang: String,
         targetLang: String,
         config: Config,
     ): String? {
         if (config.apiKey.isBlank() || config.baseUrl.isBlank() || config.model.isBlank()) return null
         val url = config.baseUrl.removeSuffix("/") + "/chat/completions"
-        val raw = httpPostJson(url, buildRequestBody(text, sourceLang, targetLang, config), config.apiKey)
+        val raw = httpPostJson(url, buildRequestBody(text, targetLang, config), config.apiKey)
             ?: return null
         return try {
             parseResponse(raw)

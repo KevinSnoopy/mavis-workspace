@@ -93,10 +93,6 @@ class TtsHelper @Inject constructor(
     suspend fun initialize(language: String = "en"): Boolean =
         initializeEmbeddedForced(language)
 
-    /** 兼容旧 API，等价于 initialize */
-    suspend fun initializeWith(language: String = "en", enginePackage: String?): Boolean =
-        initializeEmbeddedForced(language)
-
     /**
      * 显式初始化内置 TTS（用户从设置页下载完模型后调用）。
      * 不尝试系统 TTS 路径——已下线。

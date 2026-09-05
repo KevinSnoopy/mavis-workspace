@@ -47,13 +47,10 @@ import kotlinx.coroutines.launch
 @Composable
 fun LibraryScreen(
     onBookClick: (Long) -> Unit,
-    onNavigateToVocabulary: () -> Unit,
-    onNavigateToReview: () -> Unit,
     onNavigateToSettings: () -> Unit,
     viewModel: LibraryViewModel = hiltViewModel(),
 ) {
     val uiState by viewModel.uiState.collectAsState()
-    val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
     // v2 新增：分类管理 / 新建分类 sheet 状态
@@ -637,7 +634,7 @@ fun LibraryScreen(
             categories = allCategories,
             initialTitle = pendingRefine.title,
             initialAuthor = pendingRefine.author,
-            onComplete = { title, _, _, categoryName, coverId ->
+            onComplete = { _, _, _, categoryName, coverId ->
                 // 书名已在步骤 1 预填并可校对；分类/封面写库
                 viewModel.finishBookRefine(
                     category = categoryName ?: "",

@@ -27,7 +27,6 @@ fun ReadingBottomBar(
     onPrev: () -> Unit,
     onNext: () -> Unit,
     onSeek: (Int) -> Unit,
-    textColor: Color,
     onFontDelta: (Int) -> Unit = {},
     onCycleTheme: () -> Unit = {},
     onToggleSerif: () -> Unit = {},

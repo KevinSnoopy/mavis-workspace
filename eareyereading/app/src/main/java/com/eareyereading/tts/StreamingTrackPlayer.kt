@@ -73,6 +73,10 @@ internal class AudioTrackSlot {
  * 水位检查发现轨道已死并快速中止。pending 队列同样仅合成线程读写，
  * 无需加锁；stop()/取消路径下随 player 整体丢弃，不泄漏。
  */
+// isSpeakerphoneOn 为 deprecated 但有意保留：setCommunicationDevice 等
+// 新 API 在 MIUI/HyperOS 等深度定制 ROM 上不生效，扬声器强制路由的
+// workaround 依赖旧 API（2026-09-05 真机日志定案，见 awaitWatermark 注释）。
+@Suppress("DEPRECATION")
 internal class StreamingTrackPlayer(
     private val sampleRate: Int,
     private val audioManager: AudioManager?,

@@ -38,7 +38,6 @@ fun RsvpReadingView(
     currentWordIndex: Int,
     fontSize: Int,
     textColor: Color,
-    isPlaying: Boolean,
     rsvpStrength: Int = 3,
 ) {
     val wordAnalyzer = remember { WordAnalyzer() }
@@ -402,17 +401,17 @@ fun PosAnalysisView(
                     .padding(horizontal = 4.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                PosLegendItem("青灰", Info, "名词")
-                PosLegendItem("赤褐", Error, "动词")
-                PosLegendItem("暖金", Warning, "形容词")
-                PosLegendItem("暖棕", Primary, "副词")
+                PosLegendItem(Info, "名词")
+                PosLegendItem(Error, "动词")
+                PosLegendItem(Warning, "形容词")
+                PosLegendItem(Primary, "副词")
             }
         }
     }
 }
 
 @Composable
-private fun PosLegendItem(colorName: String, color: Color, tag: String) {
+private fun PosLegendItem(color: Color, tag: String) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Surface(
             modifier = Modifier.size(12.dp),

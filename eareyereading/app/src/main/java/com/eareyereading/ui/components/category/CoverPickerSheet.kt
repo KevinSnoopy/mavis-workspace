@@ -185,7 +185,6 @@ private fun CoverOption(
     onClick: () -> Unit,
 ) {
     val gradient = CoverGradients[coverId]
-    val pattern = CoverPatterns[coverId]
     Box(
         modifier = Modifier
             .aspectRatio(0.75f)  // 3:4

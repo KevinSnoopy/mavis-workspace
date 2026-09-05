@@ -142,7 +142,7 @@ fun ArticleSquareScreen(
                             // 复合 key：index + link + title，确保唯一性
                             // 即使 ViewModel 去重遗漏，index 维度也能兜底防崩溃
                             "$index:${article.link}:${article.title}"
-                        }) { index, article ->
+                        }) { _, article ->
                             ArticleItemCard(
                                 article = article,
                                 sourceName = selectedSource.name,

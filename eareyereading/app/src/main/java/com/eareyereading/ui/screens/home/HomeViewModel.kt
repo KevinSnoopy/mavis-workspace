@@ -79,7 +79,8 @@ class HomeViewModel @Inject constructor(
         loadDataJob = viewModelScope.launch {
             try {
                 // 加载词汇统计
-                combine(
+                @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+                val flow = combine(
                     vocabularyRepository.getTotalCount(),
                     vocabularyRepository.getLearnedCount(),
                     dueCountTimestamp.flatMapLatest { now ->
@@ -96,7 +97,8 @@ class HomeViewModel @Inject constructor(
                             isLoading = false,
                         )
                     }
-                }.collect()
+                }
+                flow.collect()
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {

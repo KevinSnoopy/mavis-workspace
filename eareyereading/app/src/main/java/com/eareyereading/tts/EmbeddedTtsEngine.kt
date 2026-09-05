@@ -866,7 +866,6 @@ class EmbeddedTtsEngine @Inject constructor(
                             blocks.add(currentBuf.toString().trim())
                             blockSentenceIndexMap.add(currentLastIdx)
                             currentBuf.clear()
-                            currentLastIdx = -1
                         }
                         if (currentBuf.isNotEmpty()) currentBuf.append(' ')
                         currentBuf.append(cleaned)

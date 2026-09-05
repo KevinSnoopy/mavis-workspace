@@ -117,7 +117,6 @@ fun BookCover(
                 author = author,
                 motif = motif,
                 compact = maxHeight < 60.dp,
-                coverWidth = maxWidth,
                 coverHeight = maxHeight,
             )
         }
@@ -182,7 +181,6 @@ private fun GeneratedCover(
     author: String?,
     motif: Int,
     compact: Boolean,
-    coverWidth: androidx.compose.ui.unit.Dp,
     coverHeight: androidx.compose.ui.unit.Dp,
 ) {
     val density = LocalDensity.current

@@ -234,7 +234,6 @@ fun PagedReadingView(
                                 // 整段都在本页：走与滚动视图完全一致的段落渲染
                                 slice.charStart == 0 && slice.charEnd >= para.length ->
                                     ReaderParagraphBlock(
-                                        index = slice.paraIndex,
                                         para = para,
                                         isCurrent = slice.paraIndex == currentIndex,
                                         isBookmarked = slice.paraIndex in bookmarkedParagraphs,

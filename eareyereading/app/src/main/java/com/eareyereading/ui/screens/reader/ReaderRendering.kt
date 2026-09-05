@@ -173,7 +173,6 @@ internal fun ReaderImageBlock(
  */
 @Composable
 internal fun ReaderParagraphBlock(
-    index: Int,
     para: String,
     isCurrent: Boolean,
     isBookmarked: Boolean,

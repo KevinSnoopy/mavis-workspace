@@ -65,6 +65,7 @@ fun BookCard(
 
     SwipeToDismiss(
         state = dismissState,
+        modifier = modifier,
         background = {
             // 滑动背景：品牌绿 + 归档图标（两个方向共用同一动作）
             val direction = dismissState.dismissDirection

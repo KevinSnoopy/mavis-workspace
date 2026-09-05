@@ -232,8 +232,6 @@ fun AppNavigation(
                                 launchSingleTop = true
                             }
                         },
-                        onNavigateToVocabulary = { navController.navigateToTopLevel(Screen.Vocabulary.route) },
-                        onNavigateToReview = { navController.navigateToTopLevel(Screen.Review.route) },
                         onNavigateToSettings = { navController.navigateToTopLevel(Screen.Settings.route) },
                     )
                 }

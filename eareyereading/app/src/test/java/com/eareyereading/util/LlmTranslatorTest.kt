@@ -41,7 +41,7 @@ class LlmTranslatorTest {
     @Test
     fun `request body is openai compatible chat completions`() {
         val body = JSONObject(
-            translator.buildRequestBody("Hello world.", "en", "zh", config),
+            translator.buildRequestBody("Hello world.", "zh", config),
         )
         assertEquals("glm-4-flash", body.getString("model"))
         assertEquals(false, body.getBoolean("stream"))

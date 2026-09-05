@@ -36,7 +36,6 @@ import com.eareyereading.util.ClozeWord
 @Composable
 fun ClozeReadingView(
     clozeWords: List<ClozeWord>,
-    answer: String?,
     fontSize: Int,
     textColor: Color,
     showTranslation: Boolean,
@@ -366,7 +365,6 @@ fun DictationReadingView(
     answer: String?,
     fontSize: Int,
     textColor: Color,
-    paragraph: String,
     onCheckAnswer: (String) -> Boolean,
     onStartDictation: () -> Unit,
 ) {

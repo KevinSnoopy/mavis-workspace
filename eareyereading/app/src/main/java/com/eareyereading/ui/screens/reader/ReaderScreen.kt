@@ -376,7 +376,6 @@ fun ReaderScreen(
                 onPrev = viewModel::prevParagraph,
                 onNext = viewModel::nextParagraph,
                 onSeek = viewModel::goToParagraph,
-                textColor = textColor,
                 onFontDelta = viewModel::adjustFontSize,
                 onCycleTheme = viewModel::cycleReadingTheme,
                 onToggleSerif = viewModel::toggleSerifFont,
@@ -489,10 +488,6 @@ fun ReaderScreen(
                             onVisibleParagraphChanged = viewModel::onVisibleParagraphChanged,
                             bookmarkedParagraphs = uiState.bookmarkedParagraphs,
                             highlights = uiState.highlights,
-                            onAddHighlight = { pIdx, start, end, text ->
-                                viewModel.addHighlight(pIdx, start, end, text)
-                            },
-                            onRemoveHighlight = viewModel::removeHighlight,
                             classifier = viewModel.wordClassifier,
                             bookId = uiState.book?.id ?: 0L,
                         )
@@ -502,7 +497,6 @@ fun ReaderScreen(
                         currentWordIndex = uiState.currentWordIndex,
                         fontSize = uiState.fontSize,
                         textColor = textColor,
-                        isPlaying = uiState.isPlaying,
                         rsvpStrength = uiState.rsvpStrength,
                     )
                     ReadingMode.SPEED -> SpeedReadingView(
@@ -517,7 +511,6 @@ fun ReaderScreen(
                     )
                     ReadingMode.CLOZE -> ClozeReadingView(
                         clozeWords = uiState.clozeWords,
-                        answer = uiState.hiddenWordAnswer,
                         fontSize = uiState.fontSize,
                         textColor = textColor,
                         showTranslation = uiState.showTranslation,
@@ -536,7 +529,6 @@ fun ReaderScreen(
                         answer = uiState.hiddenWordAnswer,
                         fontSize = uiState.fontSize,
                         textColor = textColor,
-                        paragraph = uiState.paragraphs.getOrNull(uiState.currentParagraphIndex) ?: "",
                         onCheckAnswer = viewModel::checkDictationAnswer,
                         onStartDictation = { viewModel.startDictation(uiState.currentParagraphIndex) },
                     )

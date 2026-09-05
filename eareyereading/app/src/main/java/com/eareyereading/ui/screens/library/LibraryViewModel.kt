@@ -213,7 +213,9 @@ class LibraryViewModel @Inject constructor(
 
         // 待复习数（独立更新，避免 timestamp 变化干扰 combine）
         // 基准时间走 dueCountTimestamp：长停留页面时新到期卡片能计入
-        viewModelScope.launch {            try {
+        @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+        viewModelScope.launch {
+            try {
                 dueCountTimestamp
                     .flatMapLatest { now -> reviewRecordDao.getDueReviewCount(now) }
                     .collect { count ->

@@ -51,6 +51,7 @@ class ReviewViewModel @Inject constructor(
     // 长会话中陆续到期的卡片要能被计入。每次加载/重开/答题后刷新时间戳，
     // flatMapLatest 用新时间戳重新起流
     private val dueCountTimestamp = MutableStateFlow(System.currentTimeMillis())
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     val dueCount: StateFlow<Int> = dueCountTimestamp
         .flatMapLatest { now -> reviewRecordDao.getDueReviewCount(now) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)

@@ -42,8 +42,6 @@ fun NormalReadingView(
     onVisibleParagraphChanged: (Int) -> Unit = {},
     bookmarkedParagraphs: Set<Int> = emptySet(),
     highlights: Map<Int, List<HighlightData>> = emptyMap(),
-    onAddHighlight: (Int, Int, Int, String) -> Unit = { _, _, _, _ -> },
-    onRemoveHighlight: (Long) -> Unit = {},
     // VM 注入的 CollinsClassifier 单例：词表全 App 一份，避免视图内手动
     // new 造成双份内存 + 组合期构建卡首帧
     classifier: CollinsClassifier,
@@ -82,7 +80,6 @@ fun NormalReadingView(
             key = { index, _ -> index }, // 段落按书加载后不可变，index 是稳定身份
         ) { index, para ->
             ReaderParagraphBlock(
-                index = index,
                 para = para,
                 isCurrent = index == currentIndex,
                 isBookmarked = index in bookmarkedParagraphs,
