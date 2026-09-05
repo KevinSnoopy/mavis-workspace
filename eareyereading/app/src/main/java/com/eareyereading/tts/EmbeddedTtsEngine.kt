@@ -835,31 +835,7 @@ class EmbeddedTtsEngine @Inject constructor(
                 // 上层会"静音朗读"完整本书并推进进度。连续失败 3 句直接中止并报失败
                 var consecutiveFailures = 0
                 try {
-                    // 把相邻句子合并成大块（≤MAX_CHUNK_CHARS）一次 generate：
-                    // Kokoro 每次 generate 有 ~2s 固定开销，逐句串行 N 句 = N×2s。
-                    // 合并后大块一次 generate，native 端按句点切分逐句回调出声（流式），
-                    // 首句合成完就回调，不用等整块合成完。固定开销从 N 次降到 ceil(N/k) 次。
-                    val blocks = mutableListOf<String>()
-                    val blockSentenceIndexMap = mutableListOf<Int>()
-                    val currentBuf = StringBuilder()
-                    var currentLastIdx = -1
-                    for ((sIdx, raw) in rawSentences.withIndex()) {
-                        if (raw.isBlank()) continue
-                        val cleaned = if (isKokoro) preprocessForTtsLight(raw) else preprocessForTts(raw)
-                        if (cleaned.isBlank()) continue
-                        if (currentBuf.length + cleaned.length + 1 > MAX_CHUNK_CHARS && currentBuf.isNotEmpty()) {
-                            blocks.add(currentBuf.toString().trim())
-                            blockSentenceIndexMap.add(currentLastIdx)
-                            currentBuf.clear()
-                        }
-                        if (currentBuf.isNotEmpty()) currentBuf.append(' ')
-                        currentBuf.append(cleaned)
-                        currentLastIdx = sIdx
-                    }
-                    if (currentBuf.isNotEmpty()) {
-                        blocks.add(currentBuf.toString().trim())
-                        blockSentenceIndexMap.add(currentLastIdx)
-                    }
+                    val (blocks, blockSentenceIndexMap) = mergeIntoBlocks(rawSentences, isKokoro)
                     for ((idx, block) in blocks.withIndex()) {
                         if (block.isBlank()) continue
                         // 每块之前检查协程是否已被取消（stop() 调用）
@@ -976,6 +952,42 @@ class EmbeddedTtsEngine @Inject constructor(
         isPlaying.set(false)
         player.releaseIfCurrent()
         return !circuitBroken
+    }
+
+    /**
+     * 把相邻句子合并成 ≤[MAX_CHUNK_CHARS] 的大块（纯文本整形，SRP 抽出）：
+     * Kokoro 每次 generate 有 ~2s 固定开销，逐句串行 N 句 = N×2s。
+     * 合并后大块一次 generate，native 端按句点切分逐句回调出声（流式），
+     * 首句合成完就回调，不用等整块合成完。固定开销从 N 次降到 ceil(N/k) 次。
+     *
+     * @return 合并后的块列表 + 每块最后一个句子在原句表中的下标（水位回调用）
+     */
+    private fun mergeIntoBlocks(
+        rawSentences: List<String>,
+        isKokoro: Boolean,
+    ): Pair<List<String>, List<Int>> {
+        val blocks = mutableListOf<String>()
+        val blockSentenceIndexMap = mutableListOf<Int>()
+        val currentBuf = StringBuilder()
+        var currentLastIdx = -1
+        for ((sIdx, raw) in rawSentences.withIndex()) {
+            if (raw.isBlank()) continue
+            val cleaned = if (isKokoro) preprocessForTtsLight(raw) else preprocessForTts(raw)
+            if (cleaned.isBlank()) continue
+            if (currentBuf.length + cleaned.length + 1 > MAX_CHUNK_CHARS && currentBuf.isNotEmpty()) {
+                blocks.add(currentBuf.toString().trim())
+                blockSentenceIndexMap.add(currentLastIdx)
+                currentBuf.clear()
+            }
+            if (currentBuf.isNotEmpty()) currentBuf.append(' ')
+            currentBuf.append(cleaned)
+            currentLastIdx = sIdx
+        }
+        if (currentBuf.isNotEmpty()) {
+            blocks.add(currentBuf.toString().trim())
+            blockSentenceIndexMap.add(currentLastIdx)
+        }
+        return blocks to blockSentenceIndexMap
     }
 
     /**
