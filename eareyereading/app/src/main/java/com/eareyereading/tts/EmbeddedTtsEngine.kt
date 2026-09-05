@@ -5,6 +5,7 @@ import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioTrack
+import android.os.Build
 import android.util.Log
 import com.k2fsa.sherpa.onnx.OfflineTts
 import com.k2fsa.sherpa.onnx.OfflineTtsConfig
@@ -287,6 +288,25 @@ class EmbeddedTtsEngine @Inject constructor(
          * 句间合成抖动不产生断音；合成快于播放时阻塞写自然形成背压。
          */
         private const val STREAM_BUFFER_SECONDS = 4
+
+        /**
+         * 开播前预缓冲（秒）：首次 offer 攒够约 0.8 秒 PCM 才建轨并 play()。
+         *
+         * 为什么需要：旧实现第一段采样一到就 play()，AudioTrack 缓冲垫≈0，
+         * 合成稍有抖动（如系统 binder 停顿/线程调度）就耗尽缓冲触发 underrun，
+         * AudioTrack 被系统禁用后 restartIfDisabled 重启还伴随百毫秒级 binder
+         * 停顿，听感为卡顿/长停顿。0.8 秒的权衡：远小于当前 6 秒级的首块合成
+         * 时间（首声延迟几乎不变），又足够吸收一次秒级合成抖动。
+         */
+        private const val PREBUFFER_SECONDS = 0.8f
+
+        /**
+         * 单块合成文本最大字符数：块内只有逗号没有句末标点时，sherpa-onnx
+         * 内部按句切分的回调不触发，整块合成完才出声——块越长首声延迟越大、
+         * 欠载爆炸半径越大（150 字符块实测首块 6 秒无输出）。80 字符在
+         * "回调粒度"与"每块 native 调用开销"之间取平衡。
+         */
+        private const val MAX_CHUNK_CHARS = 80
 
         /**
          * 内置可用模型列表。
@@ -1972,12 +1992,14 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
                         // 清洗后无内容（如 Piper 把短中文段过滤成空白）：跳过且不计入
                         // 熔断失败数——与旧实现（先清洗再过滤空白句）语义一致
                         if (cleaned.isBlank()) continue
-                        val framesBeforeSentence = player.framesWritten
+                        val framesBeforeSentence = player.framesOffered
                         for (sub in splitSentences(cleaned)) {
-                            // 单句仍可能超长（超长标题/无标点中文长段）：切成 ≤150 字符的块
-                            // 逐块合成，旧实现 substring(0,150) 直接丢弃 150 字符后的全部内容
-                            for (chunk in hardChunks(sub, 150)) {
-                                val framesBeforeChunk = player.framesWritten
+                            // 单句仍可能超长（超长标题/无标点中文长段）：切成 ≤MAX_CHUNK_CHARS
+                            // 字符的块逐块合成，旧实现 substring(0,150) 直接丢弃 150 字符后的
+                            // 全部内容。块长从 150 收紧到 80：块内无句末标点时 sherpa 内部
+                            // 按句切分的回调不触发，整块合成完才回调——块越长首声延迟越大
+                            for (chunk in hardChunks(sub, MAX_CHUNK_CHARS)) {
+                                val framesBeforeChunk = player.framesOffered
                                 val audio = try {
                                     currentTts.generateWithCallback(chunk, sid = sid, speed = speed) { samples ->
                                         // 返回 1 继续合成；协程已取消时返回 0 让 native 立即中止
@@ -1990,27 +2012,33 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
                                     Log.e(TAG, "chunk generate failed, skipping: '${chunk.take(60)}'", e)
                                     null
                                 }
-                                if (audio != null && player.framesWritten == framesBeforeChunk &&
+                                // 兜底与日志均以 framesOffered（含预缓冲 pending 里的帧）为基准：
+                                // 预缓冲期间 framesWritten 恒为 0，若用它判断"一帧未写"会把
+                                // 首块音频在兜底路径重复 offer 一遍（声音重叠）
+                                if (audio != null && player.framesOffered == framesBeforeChunk &&
                                     audio.samples.isNotEmpty()
                                 ) {
                                     // 兜底：JNI 回调静默失效（一帧未写）时整段补写，保证有声
                                     player.offer(audio.samples)
                                 }
-                                if (player.framesWritten > framesBeforeChunk) {
+                                if (player.framesOffered > framesBeforeChunk) {
                                     Log.i(
                                         TAG,
                                         "Embedded TTS chunk queued: len=${chunk.length}, " +
                                             "samples=${audio?.samples?.size ?: 0}, " +
-                                            "totalFrames=${player.framesWritten}",
+                                            "totalFrames=${player.framesOffered}",
                                     )
                                 }
                             }
                         }
-                        if (player.framesWritten > framesBeforeSentence) {
+                        if (player.framesOffered > framesBeforeSentence) {
                             consecutiveFailures = 0
                             if (onSentenceDone != null) {
-                                // 句完成水位 = 该句最后一帧入队位置
-                                pendingWatermarks.add(player.framesWritten to idx)
+                                // 句完成水位 = 该句最后一帧入队位置。用 framesOffered（含
+                                // 预缓冲 pending 里的帧）而非 framesWritten：预缓冲期间
+                                // framesWritten 恒为 0，首句水位会立即被 head≥0 满足，
+                                // 音频还没播就回调"句完成"——不超前语义被破坏
+                                pendingWatermarks.add(player.framesOffered to idx)
                             }
                         } else {
                             consecutiveFailures++
@@ -2025,6 +2053,16 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
                             }
                         }
                     }
+                    // 整条链音频总量可能不足预缓冲阈值（如单句短文本）：此时全部帧还在
+                    // pending 队列、轨道从未开播——冲刷出去并开播，否则最后一段静音丢失。
+                    // 必须在 awaitWatermark 之前：flush 后 pending 帧才计入 framesWritten，
+                    // 排水水位才是完整帧数。
+                    // 先做协作式取消检查（与循环内每句前的检查同级）：stop() 之后
+                    // 不能再建新轨道开播残留音频
+                    if (speakJob?.isActive == false) {
+                        throw kotlinx.coroutines.CancellationException("stop() requested")
+                    }
+                    player.flushPendingAndPlay()
                     // 全部生成完毕：等最后水位排空（音频真正播完）本链才算结束。
                     // onSentenceDone 为 null 时监视协程不存在，这里是唯一的排水口
                     player.awaitWatermark(player.framesWritten)
@@ -2057,16 +2095,33 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
      * 合成时本段已在播放，把"按下朗听到听见声音"的等待从整段合成时间缩短到
      * 首小段合成时间。
      *
+     * 预缓冲：首次 [offer] 不立即开播，先把采样攒进 [pending] 队列，累计达到
+     * [PREBUFFER_SECONDS]（约 0.8 秒）才建轨、把 pending 一次性写入硬件并 play()
+     * ——旧实现零缓冲垫开播，合成稍有抖动就 underrun（AudioTrack 被系统禁用 +
+     * restartIfDisabled 重启伴随百毫秒级 binder 停顿，听感为卡顿）。0.8 秒远小于
+     * 首块合成时间（数秒级），首声延迟几乎不受影响。
+     *
      * 线程模型：[offer] 由 JNI 回调在合成线程（与 generateWithCallback 同线程）
      * 调用，阻塞写提供天然背压（缓冲写满时等硬件消费，合成永不跑飞内存）；
      * [awaitWatermark]/[currentHead] 由水位监视协程轮询。与 stop() 的互斥靠
      * audioTrack 字段 + audioTrackLock：stop() 释放并置空字段后，写失败/
-     * 水位检查发现轨道已死并快速中止。
+     * 水位检查发现轨道已死并快速中止。pending 队列同样仅合成线程读写，
+     * 无需加锁；stop()/取消路径下随 player 整体丢弃，不泄漏。
      */
     private inner class StreamingTrackPlayer(private val sampleRate: Int) {
 
         /** 已写入硬件的帧数（水位基准）；仅合成线程写，监视协程读快照 */
         var framesWritten: Long = 0L
+            private set
+
+        /**
+         * 已接受的帧总数（含仍在预缓冲 [pending] 队列、尚未写入硬件的帧）。
+         * 仅合成线程写。chunk 兜底判断与句完成水位用它而非 [framesWritten]：
+         * 预缓冲期间 framesWritten 恒为 0，用它会把首块误判为"一帧未写"
+         * （兜底路径重复 offer → 声音重叠）、把首句水位提前满足（音频没播
+         * 就回调句完成）
+         */
+        var framesOffered: Long = 0L
             private set
 
         private var track: AudioTrack? = null
@@ -2076,29 +2131,61 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
         private var broken = false
 
         /**
+         * 预缓冲 pending 队列：开播前攒够 [prebufferFrames] 的 16-bit PCM。
+         * 仅合成线程（offer/drain）读写，无需加锁；stop()/取消路径下随
+         * player 整体丢弃，不存在泄漏
+         */
+        private val pending = ArrayDeque<ShortArray>()
+
+        /** pending 队列里尚未写入硬件的帧数 */
+        private var pendingFrames = 0L
+
+        /** 开播前的预缓冲目标帧数（约 [PREBUFFER_SECONDS] 秒音频） */
+        private val prebufferFrames = (sampleRate * PREBUFFER_SECONDS).toLong()
+
+        /**
          * 写入一段采样（[-1,1] Float → 16-bit PCM）。在 JNI 回调内调用，
          * 绝不能抛异常（会穿过 JNI 边界变成 pending exception 破坏后续调用）。
          * @return 1 继续合成；0 立即中止合成（轨道坏/写入失败）
          */
         fun offer(samples: FloatArray): Int {
             if (broken || samples.isEmpty()) return 1
-            val t = track ?: buildAndStartTrack() ?: return 0
             val pcm16 = ShortArray(samples.size) { i ->
                 (samples[i] * 32767f).toInt().coerceIn(-32768, 32767).toShort()
             }
-            var offset = 0
-            while (offset < pcm16.size) {
-                val written = t.write(pcm16, offset, pcm16.size - offset)
-                if (written < 0) {
-                    // write 失败（轨道被 stop() 释放等）：中止合成，交由调用方按句跳过
-                    Log.w(TAG, "stream write failed: $written")
-                    broken = true
-                    return 0
-                }
-                offset += written
-                framesWritten += written
+            framesOffered += pcm16.size
+            val t = track
+            if (t != null) {
+                // 已开播：直接写硬件（pending 必已清空，单写者不变式）
+                return if (writePcm(t, pcm16)) 1 else 0
             }
-            return 1
+            // 未开播：先入 pending 攒预缓冲
+            pending.addLast(pcm16)
+            pendingFrames += pcm16.size
+            if (pendingFrames < prebufferFrames) return 1
+            // 攒够预缓冲：建轨 → pending 一次性写入硬件 → play()。
+            // play 时刻轨道缓冲内已有 ≥0.8 秒音频，合成抖动不再直接击穿缓冲
+            val newTrack = buildTrack() ?: return 0
+            if (!drainPending(newTrack)) return 0
+            return startTrack(newTrack)
+        }
+
+        /**
+         * 整条链生成完毕时调用（[doSpeakQueueLocked] 的 for 循环结束后、
+         * awaitWatermark 之前）：整链音频总量不足预缓冲阈值时全部帧还在
+         * pending 里、轨道从未开播——冲刷出去并开播，否则最后一段静音丢失。
+         * 已开播（pending 必空）或整链无音频时是空操作。
+         */
+        fun flushPendingAndPlay() {
+            if (broken) {
+                pending.clear()
+                pendingFrames = 0L
+                return
+            }
+            if (pendingFrames == 0L) return
+            val newTrack = buildTrack() ?: return
+            if (!drainPending(newTrack)) return
+            startTrack(newTrack)
         }
 
         /** 当前硬件已播帧数；轨道未建/已被外部接管（stop()）返回 -1。 */
@@ -2141,6 +2228,14 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
             synchronized(audioTrackLock) {
                 if (audioTrack === t) {
                     audioTrack = null
+                    // 欠载诊断（API 24+）：硬件侧欠载计数在 release 前读取。
+                    // >0 说明播放期缓冲仍被击穿，真机可据此加大 PREBUFFER_SECONDS
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                        val underruns = t.underrunCount
+                        if (underruns > 0) {
+                            Log.w(TAG, "AudioTrack underrun count: $underruns over $framesWritten frames")
+                        }
+                    }
                     try {
                         if (t.state == AudioTrack.STATE_INITIALIZED) {
                             t.pause()
@@ -2153,7 +2248,54 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
             track = null
         }
 
-        private fun buildAndStartTrack(): AudioTrack? {
+        /**
+         * 阻塞写一段 PCM 到硬件轨道。失败（轨道被 stop() 释放等）置 broken
+         * 并返回 false，调用方中止合成、交由上层按句跳过。
+         */
+        private fun writePcm(t: AudioTrack, pcm16: ShortArray): Boolean {
+            var offset = 0
+            while (offset < pcm16.size) {
+                val written = t.write(pcm16, offset, pcm16.size - offset)
+                if (written < 0) {
+                    Log.w(TAG, "stream write failed: $written")
+                    broken = true
+                    return false
+                }
+                offset += written
+                framesWritten += written
+            }
+            return true
+        }
+
+        /** 把 pending 队列一次性写入硬件；写失败返回 false（broken 已置位）。 */
+        private fun drainPending(newTrack: AudioTrack): Boolean {
+            while (pending.isNotEmpty()) {
+                val chunk = pending.removeFirst()
+                pendingFrames -= chunk.size
+                if (!writePcm(newTrack, chunk)) return false
+            }
+            return true
+        }
+
+        /**
+         * play() 建好的轨道。从旧的 buildAndStartTrack 拆出：play 必须发生在
+         * pending 数据写入硬件之后（play 时缓冲内已有 ≥预缓冲量的音频）。
+         * @return 1 成功；0 失败（broken 已置位，合成中止）
+         */
+        private fun startTrack(newTrack: AudioTrack): Int {
+            return try {
+                newTrack.play()
+                1
+            } catch (e: Exception) {
+                Log.w(TAG, "stream track play failed", e)
+                releaseIfCurrent()
+                broken = true
+                0
+            }
+        }
+
+        /** 构建并注册轨道（不 play）：stop() 需能通过 audioTrack 字段接管。 */
+        private fun buildTrack(): AudioTrack? {
             if (broken) return null
             val newTrack = try {
                 val minBuffer = AudioTrack.getMinBufferSize(
@@ -2190,15 +2332,7 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
             track = newTrack
             // 播放前申请音频焦点：让音乐/播客让路，朗读结束/停止后归还
             requestAudioFocusIfNeeded()
-            return try {
-                newTrack.play()
-                newTrack
-            } catch (e: Exception) {
-                Log.w(TAG, "stream track play failed", e)
-                releaseIfCurrent()
-                broken = true
-                null
-            }
+            return newTrack
         }
     }
 
