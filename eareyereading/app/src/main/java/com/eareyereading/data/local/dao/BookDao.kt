@@ -26,6 +26,7 @@ data class BookListItem(
     val dateAdded: Long = 0,
     val language: String = "en",
     val isArchived: Boolean = false,
+    val category: String = "未分类",
     val addedAt: String = "",
 )
 
@@ -33,7 +34,7 @@ data class BookListItem(
 private const val LIST_COLUMNS =
     "id, title, author, coverPath, filePath, sourceUri, identifier, " +
         "isTruncated, originalCharCount, totalWords, readProgress, " +
-        "lastReadPosition, lastReadTime, dateAdded, language, isArchived, addedAt"
+        "lastReadPosition, lastReadTime, dateAdded, language, isArchived, category, addedAt"
 
 @Dao
 interface BookDao {
@@ -70,6 +71,10 @@ interface BookDao {
 
     @Query("UPDATE books SET isArchived = :archived WHERE id = :bookId")
     suspend fun setArchived(bookId: Long, archived: Boolean)
+
+    /** 书架分类：定向 UPDATE 分类名（空串归一化为"未分类"由调用方保证）。 */
+    @Query("UPDATE books SET category = :category WHERE id = :bookId")
+    suspend fun updateCategory(bookId: Long, category: String)
 
     /** 导入后补写封面路径：定向 UPDATE，不再回读整行（含全文 content）。 */
     @Query("UPDATE books SET coverPath = :path WHERE id = :bookId")

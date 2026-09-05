@@ -8,6 +8,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -177,6 +178,7 @@ fun LibraryScreen(
                                     BookCover(
                                         title = book.title,
                                         coverPath = book.coverPath,
+                                        author = book.author,
                                         modifier = Modifier.size(38.dp, 52.dp),
                                         cornerRadius = 6.dp,
                                     )
@@ -218,16 +220,19 @@ fun LibraryScreen(
 
             if (uiState.selectedTab == 0) {
                 val stats = uiState.readingStats
+                // 有效分类：选中分类被清空（最后一本书改走）时自动回"全部"
+                val effectiveCategory = uiState.selectedCategory
+                    ?.takeIf { it in uiState.categories }
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    // 今日阅读统计面板
-                    item {
+                    // 今日阅读统计面板（紧凑）
+                    item(key = "stats") {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
                         ) {
                             StatCard(
                                 icon = Icons.Default.Timer,
@@ -256,9 +261,38 @@ fun LibraryScreen(
                         }
                     }
 
-                    item {
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text("我的书籍", style = SectionTitle)
+                    // ── 书架分类筛选（横滑 chips）──
+                    if (uiState.books.isNotEmpty()) {
+                        item(key = "category_chips") {
+                            LazyRow(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                contentPadding = PaddingValues(vertical = 2.dp),
+                            ) {
+                                item(key = "cat_all") {
+                                    FilterChip(
+                                        selected = effectiveCategory == null,
+                                        onClick = { viewModel.setCategory(null) },
+                                        label = { Text("全部 ${uiState.books.size}") },
+                                    )
+                                }
+                                items(
+                                    uiState.categories,
+                                    key = { "cat_$it" },
+                                ) { cat ->
+                                    FilterChip(
+                                        selected = effectiveCategory == cat,
+                                        onClick = {
+                                            viewModel.setCategory(
+                                                if (effectiveCategory == cat) null else cat,
+                                            )
+                                        },
+                                        label = {
+                                            Text("$cat ${uiState.books.count { it.category == cat }}")
+                                        },
+                                    )
+                                }
+                            }
+                        }
                     }
 
                     if (uiState.isLoading) {
@@ -276,7 +310,7 @@ fun LibraryScreen(
                             }
                         }
                     } else if (uiState.books.isEmpty()) {
-                        item {
+                        item(key = "empty") {
                             Column(
                                 modifier = Modifier.fillMaxWidth().padding(vertical = 20.dp),
                                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -305,53 +339,112 @@ fun LibraryScreen(
                                 }
                             }
                         }
-                    } else {
-                        items(uiState.books, key = { it.id }) { book ->
-                            BookCard(
-                                book = book,
-                                onClick = { onBookClick(book.id) },
-                                onDelete = { viewModel.deleteBook(book.id) },
-                                onArchive = {
-                                    // 滑动/菜单归档统一走"可撤销"入口：
-                                    // 归档目前没有浏览/恢复列表，误触必须能一键还原
-                                    viewModel.archiveBook(book.id)
-                                    scope.launch {
-                                        val result = snackbarHostState.showSnackbar(
-                                            message = "已归档《${book.title.take(12)}》",
-                                            actionLabel = "撤销",
-                                            duration = SnackbarDuration.Short,
-                                        )
-                                        if (result == SnackbarResult.ActionPerformed) {
-                                            viewModel.unarchiveBook(book.id)
+                    } else if (effectiveCategory != null) {
+                        // ── 单分类视图 ──
+                        val catBooks = uiState.books.filter { it.category == effectiveCategory }
+                        if (catBooks.isEmpty()) {
+                            item(key = "cat_empty") {
+                                EmptyState(
+                                    icon = Icons.Outlined.MenuBook,
+                                    title = "「$effectiveCategory」暂无书籍",
+                                    subtitle = "通过书卡右侧菜单把书移到这个分类",
+                                )
+                            }
+                        } else {
+                            items(catBooks, key = { it.id }) { book ->
+                                BookCard(
+                                    book = book,
+                                    onClick = { onBookClick(book.id) },
+                                    onDelete = { viewModel.deleteBook(book.id) },
+                                    onArchive = {
+                                        viewModel.archiveBook(book.id)
+                                        scope.launch {
+                                            val result = snackbarHostState.showSnackbar(
+                                                message = "已归档《${book.title.take(12)}》",
+                                                actionLabel = "撤销",
+                                                duration = SnackbarDuration.Short,
+                                            )
+                                            if (result == SnackbarResult.ActionPerformed) {
+                                                viewModel.unarchiveBook(book.id)
+                                            }
                                         }
-                                    }
-                                },
-                                modifier = Modifier.animateItemPlacement(),
-                            )
+                                    },
+                                    onCategorize = { cat ->
+                                        viewModel.updateBookCategory(book.id, cat)
+                                    },
+                                    categories = uiState.categories,
+                                    modifier = Modifier.animateItemPlacement(),
+                                )
+                            }
+                        }
+                    } else {
+                        // ── 全部分类：分组展示（书架式）──
+                        uiState.categories.forEach { cat ->
+                            val catBooks = uiState.books.filter { it.category == cat }
+                            if (catBooks.isNotEmpty()) {
+                                item(key = "cat_header_$cat") {
+                                    CategoryHeader(
+                                        category = cat,
+                                        count = catBooks.size,
+                                    )
+                                }
+                                items(catBooks, key = { it.id }) { book ->
+                                    BookCard(
+                                        book = book,
+                                        onClick = { onBookClick(book.id) },
+                                        onDelete = { viewModel.deleteBook(book.id) },
+                                        onArchive = {
+                                            viewModel.archiveBook(book.id)
+                                            scope.launch {
+                                                val result = snackbarHostState.showSnackbar(
+                                                    message = "已归档《${book.title.take(12)}》",
+                                                    actionLabel = "撤销",
+                                                    duration = SnackbarDuration.Short,
+                                                )
+                                                if (result == SnackbarResult.ActionPerformed) {
+                                                    viewModel.unarchiveBook(book.id)
+                                                }
+                                            }
+                                        },
+                                        onCategorize = { c ->
+                                            viewModel.updateBookCategory(book.id, c)
+                                        },
+                                        categories = uiState.categories,
+                                        modifier = Modifier.animateItemPlacement(),
+                                    )
+                                }
+                            }
                         }
                     }
 
-                    // 英文经典名著：一键下载整本离线阅读
-                    item {
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text("英文经典名著 · Project Gutenberg", style = SectionTitle)
+                    // ── 英文经典名著：横滑卡片（一屏内收起，不再整列铺开）──
+                    item(key = "classics_header") {
                         Spacer(modifier = Modifier.height(4.dp))
+                        Text("英文经典名著 · Project Gutenberg", style = SectionTitle)
+                        Spacer(modifier = Modifier.height(2.dp))
                         Text(
                             "免费公版英文长篇小说，下载后可离线阅读",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
+                        Spacer(modifier = Modifier.height(8.dp))
                     }
-                    items(uiState.classics, key = { it.id }) { classic ->
-                        ClassicBookRow(
-                            classic = classic,
-                            downloading = classic.id in uiState.downloadingClassicIds,
-                            owned = classic.id in uiState.ownedClassicIds,
-                            onDownload = { viewModel.downloadClassic(classic) },
-                        )
+                    item(key = "classics_row") {
+                        LazyRow(
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            items(uiState.classics, key = { it.id }) { classic ->
+                                ClassicBookCard(
+                                    classic = classic,
+                                    downloading = classic.id in uiState.downloadingClassicIds,
+                                    owned = classic.id in uiState.ownedClassicIds,
+                                    onDownload = { viewModel.downloadClassic(classic) },
+                                )
+                            }
+                        }
                     }
 
-                    item { Spacer(modifier = Modifier.height(80.dp)) }
+                    item(key = "bottom_space") { Spacer(modifier = Modifier.height(80.dp)) }
                 }
             } else {
                 ArticleSquareScreen(
@@ -413,11 +506,15 @@ fun BookCard(
     onClick: () -> Unit,
     onDelete: () -> Unit,
     onArchive: () -> Unit,
+    onCategorize: (String) -> Unit = {},
+    categories: List<String> = emptyList(),
     modifier: Modifier = Modifier,
 ) {
     var showMenu by remember { mutableStateOf(false) }
     // 删除是永久操作（级联清书签/高亮/进度/统计）：二次确认防误触
     var showDeleteConfirm by remember { mutableStateOf(false) }
+    // 分类编辑弹窗（书架分类入口）
+    var showCategoryDialog by remember { mutableStateOf(false) }
 
     // 滑动归档（Gmail 式）：左右滑均可归档，动作走可撤销入口（调用方配 Snackbar 撤销）。
     // confirmValueChange 返回 false 让卡片弹回原位——真正的移除由数据流刷新驱动
@@ -472,17 +569,18 @@ fun BookCard(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(18.dp),
+                    .padding(horizontal = 14.dp, vertical = 12.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                // 封面：EPUB 内嵌封面优先，缺失时用书名哈希生成的渐变封面
+                // 封面：EPUB 内嵌封面优先，缺失时用书名哈希生成的插图封面
                 BookCover(
                     title = book.title,
                     coverPath = book.coverPath,
-                    modifier = Modifier.size(60.dp, 80.dp),
+                    author = book.author,
+                    modifier = Modifier.size(58.dp, 80.dp),
                 )
 
-            Spacer(modifier = Modifier.width(16.dp))
+            Spacer(modifier = Modifier.width(14.dp))
 
             Column(modifier = Modifier.weight(1f)) {
                 Text(
@@ -492,13 +590,15 @@ fun BookCard(
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
-                Spacer(modifier = Modifier.height(4.dp))
+                Spacer(modifier = Modifier.height(2.dp))
                 Text(
                     text = book.author,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
-                Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(8.dp))
 
                 // 进度条
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -511,7 +611,7 @@ fun BookCard(
                         color = Primary,
                         trackColor = MaterialTheme.colorScheme.surfaceVariant,
                     )
-                    Spacer(modifier = Modifier.width(10.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
                     Text(
                         text = "${(book.readProgress * 100).toInt()}%",
                         style = MaterialTheme.typography.labelSmall,
@@ -520,18 +620,35 @@ fun BookCard(
                     )
                 }
 
-                if (book.totalWords > 0) {
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Text(
-                        text = "${book.totalWords} 词",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                // 分类标签 + 字数（一行收起，节省纵向空间）
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.padding(top = 4.dp),
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(5.dp),
+                        color = Primary.copy(alpha = 0.10f),
+                    ) {
+                        Text(
+                            text = book.category.ifBlank { "未分类" },
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Primary,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                        )
+                    }
+                    if (book.totalWords > 0) {
+                        Text(
+                            text = "${book.totalWords} 词",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
 
                 // issue 9.2：EPUB 因 MAX_TOTAL_CHARS 被截断时，卡片给明确提示，不再静默丢正文
                 if (book.isTruncated) {
-                    Spacer(modifier = Modifier.height(6.dp))
+                    Spacer(modifier = Modifier.height(4.dp))
                     Text(
                         text = if (book.originalCharCount > 0) {
                             "正文超上限，已截断（保留约 ${book.originalCharCount / 1000}k 字）"
@@ -557,6 +674,11 @@ fun BookCard(
                     onDismissRequest = { showMenu = false },
                 ) {
                     DropdownMenuItem(
+                        text = { Text("移至分类（当前：${book.category.ifBlank { "未分类" }}）") },
+                        onClick = { showMenu = false; showCategoryDialog = true },
+                        leadingIcon = { Icon(Icons.Default.Category, null) },
+                    )
+                    DropdownMenuItem(
                         text = { Text("移至归档") },
                         onClick = { onArchive(); showMenu = false },
                         leadingIcon = { Icon(Icons.Default.Archive, null) },
@@ -572,6 +694,18 @@ fun BookCard(
         }
     }
     ) // 关闭 SwipeToDismiss
+
+    if (showCategoryDialog) {
+        CategoryEditDialog(
+            current = book.category.ifBlank { "未分类" },
+            categories = categories,
+            onDismiss = { showCategoryDialog = false },
+            onConfirm = { cat ->
+                showCategoryDialog = false
+                onCategorize(cat)
+            },
+        )
+    }
 
     if (showDeleteConfirm) {
         AlertDialog(
@@ -590,64 +724,85 @@ fun BookCard(
     }
 }
 
+/**
+ * 经典名著卡片（横滑书架用）：竖排紧凑卡片——图标 + 书名 + 作者 +
+ * 下载状态，宽度固定参与 LazyRow。
+ */
 @Composable
-fun ClassicBookRow(
+fun ClassicBookCard(
     classic: ClassicBook,
     downloading: Boolean,
     owned: Boolean,
     onDownload: () -> Unit,
 ) {
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.width(216.dp),
         shape = RoundedCornerShape(14.dp),
         colors = CardDefaults.cardColors(
             containerColor = if (owned) Primary.copy(alpha = 0.08f) else MaterialTheme.colorScheme.surface,
         ),
     ) {
-        Row(
-            modifier = Modifier.padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically,
+        Column(
+            modifier = Modifier.padding(14.dp),
         ) {
-            Surface(
-                modifier = Modifier.size(44.dp),
-                shape = RoundedCornerShape(10.dp),
-                color = PrimaryLight,
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Text("📖", style = MaterialTheme.typography.titleLarge)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Surface(
+                    modifier = Modifier.size(40.dp),
+                    shape = RoundedCornerShape(10.dp),
+                    color = PrimaryLight,
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Text("📖", style = MaterialTheme.typography.titleLarge)
+                    }
                 }
-            }
-            Spacer(modifier = Modifier.width(12.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    classic.title,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Medium,
-                )
-                Text(
-                    classic.author,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                if (!classic.description.isNullOrBlank()) {
+                Spacer(modifier = Modifier.width(10.dp))
+                Column {
                     Text(
-                        classic.description,
-                        style = MaterialTheme.typography.bodySmall,
+                        classic.title,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        classic.author,
+                        style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
             }
-            Spacer(modifier = Modifier.width(8.dp))
-            when {
-                downloading -> CircularProgressIndicator(
-                    modifier = Modifier.size(22.dp),
-                    strokeWidth = 2.dp,
-                    color = Primary,
+            if (!classic.description.isNullOrBlank()) {
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    classic.description,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.heightIn(min = 30.dp),
                 )
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            when {
+                downloading -> Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(16.dp),
+                        strokeWidth = 2.dp,
+                        color = Primary,
+                    )
+                    Text(
+                        "下载中...",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
                 owned -> Text(
-                    "已下载",
+                    "已下载 ✓",
                     style = MaterialTheme.typography.labelMedium,
                     color = Primary,
                 )
@@ -655,15 +810,115 @@ fun ClassicBookRow(
                     onClick = onDownload,
                     colors = ButtonDefaults.buttonColors(containerColor = Primary),
                     shape = RoundedCornerShape(10.dp),
-                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+                    modifier = Modifier.height(32.dp),
                 ) {
-                    Icon(Icons.Default.Download, null, modifier = Modifier.size(16.dp))
+                    Icon(Icons.Default.Download, null, modifier = Modifier.size(14.dp))
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text("下载", style = MaterialTheme.typography.labelLarge)
+                    Text("下载", style = MaterialTheme.typography.labelMedium)
                 }
             }
         }
     }
+}
+
+/** 分类组头：书架分组标题（分类名 + 数量 + 分隔线）。 */
+@Composable
+private fun CategoryHeader(category: String, count: Int) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            Icons.Default.Category,
+            contentDescription = null,
+            tint = Primary,
+            modifier = Modifier.size(15.dp),
+        )
+        Spacer(modifier = Modifier.width(6.dp))
+        Text(
+            text = category,
+            style = SectionTitle,
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Text(
+            text = "$count 本",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Divider(
+            modifier = Modifier.weight(1f),
+            thickness = 1.dp,
+            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
+        )
+    }
+}
+
+/**
+ * 分类编辑弹窗：预设常用分类 + 已有分类 chips + 自定义输入。
+ * 确认回调最终分类名（空输入由仓库层归一化为"未分类"）。
+ */
+@OptIn(
+    androidx.compose.foundation.layout.ExperimentalLayoutApi::class,
+    ExperimentalMaterial3Api::class,
+)
+@Composable
+private fun CategoryEditDialog(
+    current: String,
+    categories: List<String>,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit,
+) {
+    val presets = remember(categories) {
+        (listOf("未分类", "经典名著", "小说", "非虚构", "文章", "教材", "科技") + categories)
+            .distinct()
+    }
+    var custom by rememberSaveable { mutableStateOf(current) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("移至分类") },
+        text = {
+            Column {
+                Text(
+                    "点选已有分类，或输入自定义分类名",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    presets.forEach { preset ->
+                        FilterChip(
+                            selected = custom == preset,
+                            onClick = { custom = preset },
+                            label = { Text(preset) },
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = custom,
+                    onValueChange = { custom = it.take(12) },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("分类名（12 字内）") },
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    leadingIcon = { Icon(Icons.Default.Category, null) },
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(custom) }) { Text("确定") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("取消") }
+        },
+    )
 }
 
 // ── 骨架屏组件（加载态占位，与真实卡片同构） ──────────

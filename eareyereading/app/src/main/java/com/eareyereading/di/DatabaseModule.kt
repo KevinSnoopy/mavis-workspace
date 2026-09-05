@@ -322,6 +322,17 @@ object DatabaseModule {
                         )
                     }
                 },
+                object : Migration(12, 13) {
+                    // 书架分类：books 新增 category 列。存量书无分类信息，
+                    // 统一落"未分类"（列表分组时归到默认组，用户可在书卡菜单改）。
+                    // 实体未声明 @ColumnInfo(defaultValue)，Room 校验不比较
+                    // 存储层 DEFAULT（与 Migration(4,5) 的 level 列同款写法）。
+                    override fun migrate(db: SupportSQLiteDatabase) {
+                        db.execSQL(
+                            "ALTER TABLE books ADD COLUMN `category` TEXT NOT NULL DEFAULT '未分类'"
+                        )
+                    }
+                },
             )
             .build()
     }

@@ -11,6 +11,8 @@ interface BookRepository {
     suspend fun updateBook(book: Book)
     suspend fun updateProgress(bookId: Long, progress: Float, position: Int)
     suspend fun setArchived(bookId: Long, archived: Boolean)
+    /** 书架分类：更新书籍分类（空串/空白归一化为"未分类"）。 */
+    suspend fun updateCategory(bookId: Long, category: String)
     suspend fun deleteBook(bookId: Long)
     fun searchBooks(query: String): Flow<List<Book>>
 }

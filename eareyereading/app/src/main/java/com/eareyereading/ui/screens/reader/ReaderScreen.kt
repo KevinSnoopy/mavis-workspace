@@ -828,28 +828,6 @@ private fun TtsInstallDialog(
 
 // ── 普通阅读视图 ───────────────────────────────
 
-/**
- * 把用户高亮以背景色形式叠加到已按词着色的 AnnotatedString 上。
- *
- * 词级着色（Collins 词频/生词本）与用户高亮是正交两层：先按词上色，
- * 再用 addStyle 叠背景，词色保持不变。此前只有"普通模式"分支渲染高亮，
- * 而 showKnownWordsHighlight 默认开——任何生词本非空的用户加的高亮
- * 全部入库成功但永远不画出来。
- * 偏移按段落坐标系，越界/反向脏数据收敛后跳过（不落异常）。
- */
-private fun AnnotatedString.Builder.overlayParagraphHighlights(
-    para: String,
-    highlights: List<HighlightData>,
-) {
-    highlights.forEach { h ->
-        val start = h.startOffset.coerceIn(0, para.length)
-        val end = h.endOffset.coerceIn(start, para.length)
-        if (end > start) {
-            addStyle(SpanStyle(background = h.color.copy(alpha = 0.25f)), start, end)
-        }
-    }
-}
-
 @Composable
 fun NormalReadingView(
     paragraphs: List<String>,
@@ -1148,132 +1126,33 @@ private fun ReaderParagraphBlock(
                 }
             }
         } else {
-            // Collins 词频色彩（非朗读中）
-            if (showWordLevelColors) {
-                // 排版结果按真正影响产物的键缓存：句级状态变化、段落推进
-                //（已读/当前/未读透明度）都不再重切——段落整体明暗改由
-                // Modifier.alpha 叠加，AnnotatedString 里只烘焙相对深浅
-                val annotatedText = remember(para, textColor, showKnownWordsHighlight, knownWords, paraHighlights) {
-                    buildAnnotatedString {
-                        val words = WordSplitRegex.findAll(para)
-                        words.forEach { match ->
-                            val word = match.value
-                            if (PureWordRegex.matches(word)) {
-                                val level = classifier.classify(word)
-                                val lower = word.lowercase()
-                                // 生词本优先：已认识的词用绿色
-                                val color = when {
-                                    showKnownWordsHighlight && lower in knownWords -> Success
-                                    else -> when (level) {
-                                        WordLevel.CORE -> WordLevelCore
-                                        WordLevel.INTERMEDIATE -> WordLevelIntmd
-                                        WordLevel.UPPER_INTERMEDIATE -> WordLevelUpper
-                                        WordLevel.ADVANCED -> WordLevelAdv
-                                        WordLevel.RARE -> WordLevelRare
-                                        WordLevel.UNKNOWN -> textColor.copy(alpha = 0.5f)
-                                    }
-                                }
-                                withStyle(SpanStyle(color = color)) { append(word) }
-                            } else {
-                                withStyle(SpanStyle(color = textColor.copy(alpha = 0.6f))) { append(word) }
-                            }
-                        }
-                        // 词色之上叠加用户高亮背景（原实现此分支完全不画高亮）
-                        overlayParagraphHighlights(para, paraHighlights)
-                    }
-                }
-                TappableParagraphText(
-                    text = annotatedText,
-                    paragraph = para,
-                    onWordClick = onWordClick,
-                    onSentenceDoubleTap = onSentenceDoubleTap,
-                    modifier = Modifier
-                        .padding(vertical = 6.dp)
-                        .alpha(alpha),
-                    style = readerParagraphStyle(fontSize),
-                )
-            } else if (showKnownWordsHighlight && knownWords.isNotEmpty()) {
-                // 生词本高亮模式（Collins 关）
-                val annotatedText = remember(para, textColor, knownWords, learnedWords, paraHighlights) {
-                    buildAnnotatedString {
-                        val words = WordSplitRegex.findAll(para)
-                        words.forEach { match ->
-                            val word = match.value
-                            if (PureWordRegex.matches(word)) {
-                                val lower = word.lowercase()
-                                val color = when {
-                                    lower in knownWords -> Success
-                                    lower in learnedWords -> KnownWord
-                                    else -> textColor
-                                }
-                                withStyle(SpanStyle(color = color)) { append(word) }
-                            } else {
-                                withStyle(SpanStyle(color = textColor.copy(alpha = 0.6f))) { append(word) }
-                            }
-                        }
-                        // 词色之上叠加用户高亮背景（默认配置就走本分支，
-                        // 原实现高亮在这里完全不画）
-                        overlayParagraphHighlights(para, paraHighlights)
-                    }
-                }
-                TappableParagraphText(
-                    text = annotatedText,
-                    paragraph = para,
-                    onWordClick = onWordClick,
-                    onSentenceDoubleTap = onSentenceDoubleTap,
-                    modifier = Modifier
-                        .padding(vertical = 6.dp)
-                        .alpha(alpha),
-                    style = readerParagraphStyle(fontSize),
-                )
-            } else {
-                // 普通模式 + 高亮渲染
-                val annotatedText = remember(para, textColor, paraHighlights) {
-                    buildAnnotatedString {
-                        var cursor = 0
-                        // 按 offset 顺序处理高亮区域；对每条高亮按当前 cursor 收敛：
-                        // 重叠高亮不再重复输出重叠段，负值/反向/越界的脏数据
-                        // （startOffset > endOffset、endOffset > 段落长）也不会让
-                        // substring 抛 IllegalArgumentException
-                        val sortedHighlights = paraHighlights.sortedBy { it.startOffset }
-                        for (highlight in sortedHighlights) {
-                            val start = highlight.startOffset.coerceAtLeast(cursor)
-                            val end = highlight.endOffset.coerceIn(start, para.length)
-                            if (end <= start) continue
-                            // 插入高亮前的文本
-                            if (cursor < start) {
-                                withStyle(SpanStyle(color = textColor.copy(alpha = 0.8f))) {
-                                    append(para.substring(cursor, start))
-                                }
-                            }
-                            // 高亮文本
-                            withStyle(SpanStyle(
-                                background = highlight.color.copy(alpha = 0.25f),
-                                color = highlight.color,
-                            )) {
-                                append(para.substring(start, end))
-                            }
-                            cursor = end
-                        }
-                        // 剩余文本
-                        if (cursor < para.length) {
-                            withStyle(SpanStyle(color = textColor.copy(alpha = 0.8f))) {
-                                append(para.substring(cursor))
-                            }
-                        }
-                    }
-                }
-                TappableParagraphText(
-                    text = annotatedText,
-                    paragraph = para,
-                    onWordClick = onWordClick,
-                    onSentenceDoubleTap = onSentenceDoubleTap,
-                    modifier = Modifier
-                        .padding(vertical = 6.dp)
-                        .alpha(alpha),
-                    style = readerParagraphStyle(fontSize),
+            // 词色/生词高亮/用户高亮统一构建（与翻页切片共用同一构建器，
+            // 保证滚屏/翻页两种阅读方式渲染一致）
+            val annotatedText = remember(
+                para, textColor, showWordLevelColors,
+                showKnownWordsHighlight, knownWords, learnedWords, paraHighlights,
+            ) {
+                buildReaderAnnotated(
+                    text = para,
+                    textColor = textColor,
+                    showWordLevelColors = showWordLevelColors,
+                    showKnownWordsHighlight = showKnownWordsHighlight,
+                    knownWords = knownWords,
+                    learnedWords = learnedWords,
+                    highlights = paraHighlights,
+                    classifier = classifier,
                 )
             }
+            TappableParagraphText(
+                text = annotatedText,
+                paragraph = para,
+                onWordClick = onWordClick,
+                onSentenceDoubleTap = onSentenceDoubleTap,
+                modifier = Modifier
+                    .padding(vertical = 6.dp)
+                    .alpha(alpha),
+                style = readerParagraphStyle(fontSize),
+            )
         }
 
         // 翻译（透明度可调）
@@ -1352,14 +1231,32 @@ private fun AutoReadingSentenceText(
 }
 
 // ── 左右翻页阅读视图（仿书页） ────────────────────
+
 /**
- * 仿书页横向翻页阅读：HorizontalPager 逐页渲染，页面按"段落高度预算"贪心
- * 分箱（Paint 估行数，后台线程整书测量一次），段落渲染与滚动视图共用
- * [ReaderParagraphBlock]——词色/生词高亮/用户高亮/译文/朗读同步完全一致。
+ * 分页切片：一个段落可按 StaticLayout 的行边界拆成多个切片跨页渲染，
+ * "放不下的行"自然流到下一页（真书式排版，替代旧的整段独占页 + 页内滚动）。
+ */
+private data class PageSlice(
+    val paraIndex: Int,
+    val charStart: Int,
+    val charEnd: Int,
+    val isFirstOfPara: Boolean,
+    val isLastOfPara: Boolean,
+)
+
+/**
+ * 仿书页横向翻页阅读：HorizontalPager 逐页渲染。
+ *
+ * 分页排版（[paginateBook]）：后台线程用 StaticLayout 按"行"精确测量整书，
+ * 段落可跨页按行拆分——放不下的内容自动流到下一页（而非旧行为的
+ * 整段塞进一页 + 页内滚动兜底）；只有估算与渲染的极小偏差才落入
+ * 页内 verticalScroll 兜底。段落渲染与滚动视图共用 [ReaderParagraphBlock]
+ * ——词色/生词高亮/用户高亮/译文/朗读同步完全一致；被拆分的段用
+ * [ReaderSliceParagraphBlock]（同款渲染，offset 平移）。
  *
  * 同步语义（与滚动视图对齐）：
- *  - 翻页 settle 后把该页首段回报 VM（底栏滑杆/进度/统计跟上）；
- *  - 程序推进（朗读/滑杆/章节跳转）时翻到目标段所在页；
+ *  - 翻页 settle 后把该页首切片的段落回报 VM（底栏滑杆/进度/统计跟上）；
+ *  - 程序推进（朗读/滑杆/章节跳转）时翻到目标段首个切片所在页；
  *  - 相邻页动画翻页，跨页跳转（如续读恢复）瞬时定位。
  */
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
@@ -1403,89 +1300,56 @@ fun PagedReadingView(
         // 各项 px 尺寸（密度/字号变化时 produceState 的 key 一起变）
         val fontSizePx = with(density) { fontSize.sp.toPx() }
         val transFontSizePx = with(density) { (fontSize - 2).sp.toPx() }
-        val paragraphVPadPx = with(density) { 12.dp.toPx() }    // TappableParagraphText vertical 6*2
+        val paragraphPadPx = with(density) { 6.dp.toPx() }      // 段首/段尾切片的纵向 padding
         val bookmarkRowPx = with(density) { 25.dp.toPx() }      // 书签标记行
         val transBlockPadPx = with(density) { 20.dp.toPx() }    // 译文 4 + 2*2 + 12
         // 插图段固定估高：720px 解码宽 × 常见屏宽 → 约 200dp 显示高 + 边距，
         // 独占一页过浪费，给中等预算让图文同页
         val imageBlockPx = with(density) { 220.dp.toPx() }
 
-        // 分页排版：整书 Paint 估高 + 贪心装箱。放 Default 调度器：
-        // 大书几百段的测量同步做在组合期会顶掉帧（字号滑杆逐像素回调时尤甚），
-        // 后台算完一次性替换，期间保留旧分页不闪空
+        // 分页排版：整书 StaticLayout 按行测量 + 贪心装箱（行粒度）。
+        // 放 Default 调度器：大书几百段的测量同步做在组合期会顶掉帧
+        // （字号滑杆逐像素回调时尤甚），后台算完一次性替换，期间保留旧分页不闪空
         val pages by produceState(
-            initialValue = emptyList<List<Int>>(),
+            initialValue = emptyList<List<PageSlice>>(),
             paragraphs, fontSizePx, transFontSizePx, showTranslation,
             paragraphTranslations, contentWidthPx, pageBudgetPx, serif,
             bookmarkedParagraphs,
         ) {
             value = withContext(Dispatchers.Default) {
-                val paint = android.graphics.Paint().apply {
-                    isAntiAlias = true
-                    typeface = if (serif) android.graphics.Typeface.SERIF
-                    else android.graphics.Typeface.DEFAULT
-                }
-                fun estHeight(text: String, textSizePx: Float, lineMult: Float, extraPx: Float): Int {
-                    if (text.isEmpty()) return 0
-                    paint.textSize = textSizePx
-                    // 等宽均分估行数 ≥ 实际按词断行的行数：宁少放不溢出，
-                    // 页尾略空优于段落被裁
-                    val lines = kotlin.math.ceil(paint.measureText(text) / contentWidthPx)
-                        .toInt().coerceAtLeast(1)
-                    return (lines * textSizePx * lineMult).toInt() + extraPx.toInt()
-                }
-                val result = mutableListOf<List<Int>>()
-                var current = mutableListOf<Int>()
-                var used = 0
-                paragraphs.forEachIndexed { idx, para ->
-                    // 插图标记段按固定图块高度参与分箱（无文本可测）
-                    var h = if (com.eareyereading.util.BookImages.isImageMarker(para)) {
-                        imageBlockPx.toInt()
-                    } else {
-                        estHeight(para, fontSizePx, 1.8f, paragraphVPadPx)
-                    }
-                    if (idx in bookmarkedParagraphs) h += bookmarkRowPx.toInt()
-                    val trans = if (showTranslation) paragraphTranslations[idx] else null
-                    if (!trans.isNullOrBlank()) {
-                        h += estHeight(trans, transFontSizePx, 1.5f, transBlockPadPx)
-                    }
-                    if (h > pageBudgetPx) {
-                        // 超页高的单段独占一页（页内 verticalScroll 兜底可看全）
-                        if (current.isNotEmpty()) {
-                            result.add(current)
-                            current = mutableListOf()
-                        }
-                        result.add(mutableListOf(idx))
-                        used = 0
-                    } else if (used + h > pageBudgetPx && current.isNotEmpty()) {
-                        result.add(current)
-                        current = mutableListOf(idx)
-                        used = h
-                    } else {
-                        current.add(idx)
-                        used += h
-                    }
-                }
-                if (current.isNotEmpty()) result.add(current)
-                result
+                paginateBook(
+                    paragraphs = paragraphs,
+                    contentWidthPx = contentWidthPx,
+                    pageBudgetPx = pageBudgetPx.toFloat(),
+                    fontSizePx = fontSizePx,
+                    transFontSizePx = transFontSizePx,
+                    serif = serif,
+                    showTranslation = showTranslation,
+                    translations = paragraphTranslations,
+                    bookmarked = bookmarkedParagraphs,
+                    imageBlockPx = imageBlockPx,
+                    bookmarkRowPx = bookmarkRowPx,
+                    paragraphPadPx = paragraphPadPx,
+                    transBlockPadPx = transBlockPadPx,
+                )
             }
         }
 
         val pagerState = rememberPagerState(pageCount = { pages.size })
 
-        // 翻页回报：页 settle 后把该页首段回报 VM
+        // 翻页回报：页 settle 后把该页首切片的段落回报 VM
         // （底栏滑杆/进度/阅读统计跟上视口，播放中由播放循环主导，VM 侧会忽略）
         LaunchedEffect(pagerState, pages) {
             snapshotFlow { pagerState.currentPage }
                 .collect { page ->
-                    pages.getOrNull(page)?.firstOrNull()?.let(onVisibleParagraphChanged)
+                    pages.getOrNull(page)?.firstOrNull()?.let { onVisibleParagraphChanged(it.paraIndex) }
                 }
         }
-        // 程序推进跟随：朗读/滑杆/章节跳转把 currentIndex 推走时翻到目标页。
-        // 远距离（续读恢复/跳章）瞬时定位，相邻页动画翻页
+        // 程序推进跟随：朗读/滑杆/章节跳转把 currentIndex 推走时翻到
+        // 目标段首个切片所在页。远距离（续读恢复/跳章）瞬时定位，相邻页动画翻页
         LaunchedEffect(currentIndex, pages) {
             if (pages.isEmpty()) return@LaunchedEffect
-            val target = pages.indexOfFirst { currentIndex in it }
+            val target = pages.indexOfFirst { page -> page.any { it.paraIndex == currentIndex } }
             if (target >= 0 && target != pagerState.currentPage && !pagerState.isScrollInProgress) {
                 if (kotlin.math.abs(target - pagerState.currentPage) > 1) {
                     pagerState.scrollToPage(target)
@@ -1544,38 +1408,77 @@ fun PagedReadingView(
                                 .padding(bottom = 2.dp),
                         )
                     }
-                    // verticalScroll 兜底：超页高单段/估算偏差导致的内容溢出仍可滚动查看
+                    // verticalScroll 兜底：行高估算与 Compose 实际渲染的
+                    // 极小偏差导致的内容溢出仍可滚动查看
                     Column(
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxWidth()
                             .verticalScroll(rememberScrollState()),
                     ) {
-                        pages[page].forEach { idx ->
-                            ReaderParagraphBlock(
-                                index = idx,
-                                para = paragraphs[idx],
-                                isCurrent = idx == currentIndex,
-                                isBookmarked = idx in bookmarkedParagraphs,
-                                paraHighlights = highlights[idx] ?: emptyList(),
-                                alpha = if (idx == currentIndex) 1f else if (idx < currentIndex) 0.4f else 0.7f,
-                                fontSize = fontSize,
-                                textColor = textColor,
-                                showTranslation = showTranslation,
-                                translation = paragraphTranslations[idx],
-                                translationAlpha = translationAlpha,
-                                showWordLevelColors = showWordLevelColors,
-                                showKnownWordsHighlight = showKnownWordsHighlight,
-                                knownWords = knownWords,
-                                learnedWords = learnedWords,
-                                isAutoReading = isAutoReading,
-                                currentSentences = currentSentences,
-                                currentSentenceIndex = currentSentenceIndex,
-                                onWordClick = onWordClick,
-                                onSentenceDoubleTap = onSentenceDoubleTap,
-                                classifier = classifier,
-                                bookId = bookId,
-                            )
+                        pages[page].forEach { slice ->
+                            val para = paragraphs[slice.paraIndex]
+                            when {
+                                // 插图段：整块渲染为图片（与滚动视图一致，不参与分片）
+                                BookImages.isImageMarker(para) -> ReaderImageBlock(
+                                    ref = BookImages.markerRef(para).orEmpty(),
+                                    bookId = bookId,
+                                )
+                                // 整段都在本页：走与滚动视图完全一致的段落渲染
+                                slice.charStart == 0 && slice.charEnd >= para.length ->
+                                    ReaderParagraphBlock(
+                                        index = slice.paraIndex,
+                                        para = para,
+                                        isCurrent = slice.paraIndex == currentIndex,
+                                        isBookmarked = slice.paraIndex in bookmarkedParagraphs,
+                                        paraHighlights = highlights[slice.paraIndex] ?: emptyList(),
+                                        alpha = if (slice.paraIndex == currentIndex) 1f
+                                        else if (slice.paraIndex < currentIndex) 0.4f else 0.7f,
+                                        fontSize = fontSize,
+                                        textColor = textColor,
+                                        showTranslation = showTranslation,
+                                        translation = paragraphTranslations[slice.paraIndex],
+                                        translationAlpha = translationAlpha,
+                                        showWordLevelColors = showWordLevelColors,
+                                        showKnownWordsHighlight = showKnownWordsHighlight,
+                                        knownWords = knownWords,
+                                        learnedWords = learnedWords,
+                                        isAutoReading = isAutoReading,
+                                        currentSentences = currentSentences,
+                                        currentSentenceIndex = currentSentenceIndex,
+                                        onWordClick = onWordClick,
+                                        onSentenceDoubleTap = onSentenceDoubleTap,
+                                        classifier = classifier,
+                                        bookId = bookId,
+                                    )
+                                // 跨页切片：行级拆分渲染
+                                else -> ReaderSliceParagraphBlock(
+                                    para = para,
+                                    charStart = slice.charStart,
+                                    charEnd = slice.charEnd,
+                                    isCurrent = slice.paraIndex == currentIndex,
+                                    isAutoReading = isAutoReading,
+                                    currentSentences = currentSentences,
+                                    currentSentenceIndex = currentSentenceIndex,
+                                    alpha = if (slice.paraIndex == currentIndex) 1f
+                                    else if (slice.paraIndex < currentIndex) 0.4f else 0.7f,
+                                    fontSize = fontSize,
+                                    textColor = textColor,
+                                    showTranslation = showTranslation,
+                                    translation = paragraphTranslations[slice.paraIndex],
+                                    translationAlpha = translationAlpha,
+                                    showWordLevelColors = showWordLevelColors,
+                                    showKnownWordsHighlight = showKnownWordsHighlight,
+                                    knownWords = knownWords,
+                                    learnedWords = learnedWords,
+                                    onWordClick = onWordClick,
+                                    onSentenceDoubleTap = onSentenceDoubleTap,
+                                    classifier = classifier,
+                                    sliceHighlights = highlights[slice.paraIndex] ?: emptyList(),
+                                    showBookmarkMark = slice.isFirstOfPara &&
+                                        slice.paraIndex in bookmarkedParagraphs,
+                                )
+                            }
                         }
                     }
                     // 仿电子书页脚：页码 + 全书进度百分比
@@ -1589,6 +1492,480 @@ fun PagedReadingView(
                             .padding(top = 2.dp),
                     )
                 }
+            }
+        }
+    }
+}
+
+/**
+ * 整书分页：StaticLayout 按行测量（与 Compose 渲染同一文本、同一宽度、
+ * 同一字体），行高按 readerParagraphStyle 的倍数 + 2% 安全余量估算，
+ * 贪心装箱到每页预算内。段落可跨页拆分（行粒度），书签行/译文高度
+ * 计入所属切片（书签在段首切片、译文在段尾切片）。
+ *
+ * 必须在后台线程调用（数百次 StaticLayout 构建耗时几十毫秒）。
+ */
+private fun paginateBook(
+    paragraphs: List<String>,
+    contentWidthPx: Int,
+    pageBudgetPx: Float,
+    fontSizePx: Float,
+    transFontSizePx: Float,
+    serif: Boolean,
+    showTranslation: Boolean,
+    translations: Map<Int, String>,
+    bookmarked: Set<Int>,
+    imageBlockPx: Float,
+    bookmarkRowPx: Float,
+    paragraphPadPx: Float,
+    transBlockPadPx: Float,
+): List<List<PageSlice>> {
+    val typeface = if (serif) android.graphics.Typeface.SERIF else android.graphics.Typeface.DEFAULT
+    val bodyPaint = android.text.TextPaint().apply {
+        isAntiAlias = true
+        this.textSize = fontSizePx
+        this.typeface = typeface
+    }
+    val transPaint = android.text.TextPaint().apply {
+        isAntiAlias = true
+        textSize = transFontSizePx
+        this.typeface = typeface
+    }
+    // 行高对齐 readerParagraphStyle：正文 1.8 倍、译文 1.5 倍；
+    // 2% 余量宁可页尾略空，也不让渲染高度反超估算
+    val bodyLineH = fontSizePx * 1.8f * 1.02f
+    val transLineH = transFontSizePx * 1.5f * 1.02f
+
+    fun lineBounds(text: String, paint: android.text.TextPaint): List<IntArray> {
+        if (text.isEmpty()) return emptyList()
+        val layout = android.text.StaticLayout.Builder
+            .obtain(text, 0, text.length, paint, contentWidthPx)
+            .setAlignment(android.text.Layout.Alignment.ALIGN_NORMAL)
+            .setLineSpacing(0f, 1f)
+            .setIncludePad(false)
+            .build()
+        return (0 until layout.lineCount).map { i ->
+            intArrayOf(layout.getLineStart(i), layout.getLineEnd(i))
+        }
+    }
+
+    fun translationHeight(idx: Int): Float {
+        val t = if (showTranslation) translations[idx] else null
+        if (t.isNullOrBlank()) return 0f
+        val lines = lineBounds(t, transPaint).size.coerceAtLeast(1)
+        return lines * transLineH + transBlockPadPx
+    }
+
+    val pages = mutableListOf<List<PageSlice>>()
+    var current = mutableListOf<PageSlice>()
+    var used = 0f
+
+    fun closePage() {
+        if (current.isNotEmpty()) {
+            pages.add(current)
+            current = mutableListOf()
+            used = 0f
+        }
+    }
+
+    paragraphs.forEachIndexed { idx, para ->
+        // 插图标记段按固定图块高度整块参与装箱（无文本可测）
+        if (BookImages.isImageMarker(para)) {
+            if (used + imageBlockPx > pageBudgetPx) closePage()
+            current.add(PageSlice(idx, 0, para.length, isFirstOfPara = true, isLastOfPara = true))
+            used += imageBlockPx
+            return@forEachIndexed
+        }
+        val lines = lineBounds(para, bodyPaint)
+        if (lines.isEmpty()) {
+            // 空段占位（维持段落节奏）
+            if (used + fontSizePx > pageBudgetPx) closePage()
+            current.add(PageSlice(idx, 0, 0, isFirstOfPara = true, isLastOfPara = true))
+            used += fontSizePx
+            return@forEachIndexed
+        }
+        val transH = translationHeight(idx)
+        var i = 0
+        var first = true
+        while (i < lines.size) {
+            val isLastChunk = i + 1 >= lines.size
+            // 本切片的附加高度：段首/段尾 padding、书签行（段首切片）、译文（段尾切片）
+            val extra = (if (first) paragraphPadPx else 0f) +
+                (if (isLastChunk) paragraphPadPx else 0f) +
+                (if (first && idx in bookmarked) bookmarkRowPx else 0f) +
+                (if (isLastChunk) transH else 0f)
+            var fit = (((pageBudgetPx - used) - extra).coerceAtLeast(0f) / bodyLineH).toInt()
+            if (fit <= 0) {
+                // 当前页连一行都放不下：换页重算；仍放不下（附加块超高）则
+                // 单行兜底——该页 verticalScroll 可滚动查看
+                if (current.isNotEmpty()) {
+                    closePage()
+                    fit = (((pageBudgetPx - used) - extra).coerceAtLeast(0f) / bodyLineH).toInt()
+                }
+                if (fit <= 0) fit = 1
+            }
+            val take = minOf(fit, lines.size - i)
+            current.add(
+                PageSlice(
+                    paraIndex = idx,
+                    charStart = lines[i][0],
+                    charEnd = lines[i + take - 1][1],
+                    isFirstOfPara = first,
+                    isLastOfPara = i + take >= lines.size,
+                ),
+            )
+            used += extra + take * bodyLineH
+            i += take
+            first = false
+        }
+    }
+    closePage()
+    return pages
+}
+
+/**
+ * 跨页段落切片渲染：渲染 [para] 的 [charStart, charEnd) 行片段。
+ * 词色/生词高亮/用户高亮（offset 平移到切片坐标系）/译文（段尾切片）/
+ * 朗读句级同步（句子与切片求交，跨页句子在两页各显示各自片段）——
+ * 与 [ReaderParagraphBlock] 同一套逻辑。
+ */
+@Composable
+private fun ReaderSliceParagraphBlock(
+    para: String,
+    charStart: Int,
+    charEnd: Int,
+    isCurrent: Boolean,
+    isAutoReading: Boolean,
+    currentSentences: List<String>,
+    currentSentenceIndex: Int,
+    alpha: Float,
+    fontSize: Int,
+    textColor: Color,
+    showTranslation: Boolean,
+    translation: String?,
+    translationAlpha: Float,
+    showWordLevelColors: Boolean,
+    showKnownWordsHighlight: Boolean,
+    knownWords: Set<String>,
+    learnedWords: Set<String>,
+    onWordClick: (String) -> Unit,
+    onSentenceDoubleTap: (String) -> Unit,
+    classifier: CollinsClassifier,
+    sliceHighlights: List<HighlightData>,
+    showBookmarkMark: Boolean,
+) {
+    val start = charStart.coerceIn(0, para.length)
+    val end = charEnd.coerceIn(start, para.length)
+    val sliceText = remember(para, start, end) { para.substring(start, end) }
+    val isFirst = start == 0
+    val isLast = end >= para.length
+    // 切片级高亮：原段落坐标系 → 切片坐标系（求交后平移）
+    val shiftedHighlights = remember(para, sliceHighlights, start, end) {
+        sliceHighlights.mapNotNull { h ->
+            val s = h.startOffset.coerceIn(0, para.length)
+            val e = h.endOffset.coerceIn(s, para.length)
+            val ns = (s - start).coerceAtLeast(0)
+            val ne = (e - start).coerceAtMost(sliceText.length)
+            if (ne > ns) HighlightData(h.id, ns, ne, h.text, h.color) else null
+        }
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(
+                if (isCurrent && isAutoReading) {
+                    Modifier
+                        .background(LocalReaderAccent.current.copy(alpha = 0.06f), RoundedCornerShape(8.dp))
+                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                } else {
+                    Modifier
+                }
+            ),
+    ) {
+        if (showBookmarkMark) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp),
+                horizontalArrangement = Arrangement.Start,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    Icons.Default.Bookmark,
+                    "已书签",
+                    modifier = Modifier.size(16.dp),
+                    tint = Secondary,
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Divider(
+                    modifier = Modifier.weight(1f),
+                    thickness = 1.dp,
+                    color = Secondary.copy(alpha = 0.3f),
+                )
+            }
+        }
+
+        // 朗读句级同步：句子范围与切片求交，逐句分档透明度渲染
+        val sentenceRanges = remember(para, currentSentences) {
+            var from = 0
+            val ranges = mutableListOf<IntArray>()
+            for (s in currentSentences) {
+                val i = para.indexOf(s, from)
+                if (i < 0) return@remember null
+                ranges.add(intArrayOf(i, i + s.length))
+                from = i + s.length
+            }
+            ranges
+        }
+
+        if (isCurrent && isAutoReading && !sentenceRanges.isNullOrEmpty()) {
+            val accent = LocalReaderAccent.current
+            val annotated = remember(
+                sliceText, sentenceRanges, currentSentenceIndex,
+                showWordLevelColors, textColor, accent,
+            ) {
+                buildAutoReadingSliceAnnotated(
+                    para = para,
+                    sliceStart = start,
+                    sliceEnd = end,
+                    sentenceRanges = sentenceRanges,
+                    currentSentenceIndex = currentSentenceIndex,
+                    showWordLevelColors = showWordLevelColors,
+                    textColor = textColor,
+                    accent = accent,
+                    classifier = classifier,
+                )
+            }
+            TappableParagraphText(
+                text = annotated,
+                paragraph = sliceText,
+                onWordClick = onWordClick,
+                onSentenceDoubleTap = onSentenceDoubleTap,
+                // 句子可能跨页：双击时用全局 offset 在完整段落里找整句
+                sentenceLookup = { local -> findSentenceAtGlobalOffset(para, start + local) },
+                modifier = Modifier.alpha(1f),
+                style = readerParagraphStyle(fontSize),
+            )
+        } else {
+            val annotatedText = remember(
+                sliceText, textColor, showWordLevelColors,
+                showKnownWordsHighlight, knownWords, learnedWords, shiftedHighlights,
+            ) {
+                buildReaderAnnotated(
+                    text = sliceText,
+                    textColor = textColor,
+                    showWordLevelColors = showWordLevelColors,
+                    showKnownWordsHighlight = showKnownWordsHighlight,
+                    knownWords = knownWords,
+                    learnedWords = learnedWords,
+                    highlights = shiftedHighlights,
+                    classifier = classifier,
+                )
+            }
+            TappableParagraphText(
+                text = annotatedText,
+                paragraph = sliceText,
+                onWordClick = onWordClick,
+                onSentenceDoubleTap = onSentenceDoubleTap,
+                sentenceLookup = { local -> findSentenceAtGlobalOffset(para, start + local) },
+                modifier = Modifier
+                    .padding(
+                        top = if (isFirst) 6.dp else 0.dp,
+                        bottom = if (isLast) 6.dp else 0.dp,
+                    )
+                    .alpha(alpha),
+                style = readerParagraphStyle(fontSize),
+            )
+        }
+
+        // 译文跟随段尾切片（与整段渲染一致）
+        if (isLast && showTranslation && !translation.isNullOrBlank()) {
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = translation,
+                modifier = Modifier
+                    .padding(vertical = 2.dp)
+                    .alpha(alpha),
+                style = readerParagraphStyle(fontSize - 2, 1.5f).copy(
+                    color = LocalReaderAccent.current.copy(alpha = translationAlpha),
+                ),
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+        }
+    }
+}
+
+/**
+ * 朗读中的切片文本：句子范围 ∩ 切片范围的分段 AnnotatedString。
+ * 每段按句子档位（已读 0.45 / 当前 1f / 未读 0.6）上色，当前句带
+ * 强调色底；词频着色开启时在句子档位之上再叠词色（与
+ * [AutoReadingSentenceText] 同一套规则）。
+ */
+private fun buildAutoReadingSliceAnnotated(
+    para: String,
+    sliceStart: Int,
+    sliceEnd: Int,
+    sentenceRanges: List<IntArray>,
+    currentSentenceIndex: Int,
+    showWordLevelColors: Boolean,
+    textColor: Color,
+    accent: Color,
+    classifier: CollinsClassifier,
+): AnnotatedString = buildAnnotatedString {
+    var cursor = sliceStart
+    sentenceRanges.forEachIndexed { sIdx, range ->
+        val sStart = range[0]
+        val sEnd = range[1]
+        if (sEnd <= sliceStart || sStart >= sliceEnd) return@forEachIndexed
+        // 句间空白（切片内部分）
+        if (cursor < sStart) {
+            val gapEnd = sStart.coerceAtMost(sliceEnd)
+            if (gapEnd > cursor) {
+                withStyle(SpanStyle(color = textColor.copy(alpha = 0.6f))) {
+                    append(para.substring(cursor, gapEnd))
+                }
+            }
+        }
+        val fragStart = sStart.coerceAtLeast(sliceStart).coerceAtLeast(cursor)
+        val fragEnd = sEnd.coerceAtMost(sliceEnd)
+        if (fragEnd > fragStart) {
+            val sAlpha = when {
+                sIdx < currentSentenceIndex -> 0.45f
+                sIdx == currentSentenceIndex -> 1f
+                else -> 0.6f
+            }
+            val fragment = para.substring(fragStart, fragEnd)
+            val fragOffset = length
+            if (showWordLevelColors) {
+                WordSplitRegex.findAll(fragment).forEach { match ->
+                    val word = match.value
+                    if (PureWordRegex.matches(word)) {
+                        val level = classifier.classify(word)
+                        val color = when (level) {
+                            WordLevel.CORE -> WordLevelCore
+                            WordLevel.INTERMEDIATE -> WordLevelIntmd
+                            WordLevel.UPPER_INTERMEDIATE -> WordLevelUpper
+                            WordLevel.ADVANCED -> WordLevelAdv
+                            WordLevel.RARE -> WordLevelRare
+                            WordLevel.UNKNOWN -> textColor.copy(alpha = 0.5f)
+                        }
+                        withStyle(SpanStyle(color = color.copy(alpha = sAlpha))) { append(word) }
+                    } else {
+                        withStyle(SpanStyle(color = textColor.copy(alpha = sAlpha * 0.6f))) { append(word) }
+                    }
+                }
+            } else {
+                withStyle(SpanStyle(color = textColor.copy(alpha = sAlpha))) { append(fragment) }
+            }
+            if (sIdx == currentSentenceIndex) {
+                addStyle(
+                    SpanStyle(background = accent.copy(alpha = 0.10f)),
+                    fragOffset, length,
+                )
+            }
+            cursor = sEnd
+        }
+    }
+    // 尾部空白
+    if (cursor < sliceEnd) {
+        withStyle(SpanStyle(color = textColor.copy(alpha = 0.6f))) {
+            append(para.substring(cursor, sliceEnd))
+        }
+    }
+}
+
+/**
+ * 段落/切片通用的词色 AnnotatedString 构建器：
+ *  - 词频着色开 → Collins 词色（已认识词优先绿色）+ 用户高亮底色叠加；
+ *  - 仅生词高亮 → 已认识/已学词着色 + 高亮叠加；
+ *  - 都关 → 纯文本 + 用户高亮。
+ * ReaderParagraphBlock 与 ReaderSliceParagraphBlock 共用，保证滚屏/翻页同款渲染。
+ */
+private fun buildReaderAnnotated(
+    text: String,
+    textColor: Color,
+    showWordLevelColors: Boolean,
+    showKnownWordsHighlight: Boolean,
+    knownWords: Set<String>,
+    learnedWords: Set<String>,
+    highlights: List<HighlightData>,
+    classifier: CollinsClassifier,
+): AnnotatedString = buildAnnotatedString {
+    if (showWordLevelColors) {
+        WordSplitRegex.findAll(text).forEach { match ->
+            val word = match.value
+            if (PureWordRegex.matches(word)) {
+                val level = classifier.classify(word)
+                val lower = word.lowercase()
+                // 生词本优先：已认识的词用绿色
+                val color = when {
+                    showKnownWordsHighlight && lower in knownWords -> Success
+                    else -> when (level) {
+                        WordLevel.CORE -> WordLevelCore
+                        WordLevel.INTERMEDIATE -> WordLevelIntmd
+                        WordLevel.UPPER_INTERMEDIATE -> WordLevelUpper
+                        WordLevel.ADVANCED -> WordLevelAdv
+                        WordLevel.RARE -> WordLevelRare
+                        WordLevel.UNKNOWN -> textColor.copy(alpha = 0.5f)
+                    }
+                }
+                withStyle(SpanStyle(color = color)) { append(word) }
+            } else {
+                withStyle(SpanStyle(color = textColor.copy(alpha = 0.6f))) { append(word) }
+            }
+        }
+        // 词色之上叠加用户高亮背景
+        highlights.forEach { h ->
+            val s = h.startOffset.coerceIn(0, text.length)
+            val e = h.endOffset.coerceIn(s, text.length)
+            if (e > s) addStyle(SpanStyle(background = h.color.copy(alpha = 0.25f)), s, e)
+        }
+    } else if (showKnownWordsHighlight && knownWords.isNotEmpty()) {
+        WordSplitRegex.findAll(text).forEach { match ->
+            val word = match.value
+            if (PureWordRegex.matches(word)) {
+                val lower = word.lowercase()
+                val color = when {
+                    lower in knownWords -> Success
+                    lower in learnedWords -> KnownWord
+                    else -> textColor
+                }
+                withStyle(SpanStyle(color = color)) { append(word) }
+            } else {
+                withStyle(SpanStyle(color = textColor.copy(alpha = 0.6f))) { append(word) }
+            }
+        }
+        highlights.forEach { h ->
+            val s = h.startOffset.coerceIn(0, text.length)
+            val e = h.endOffset.coerceIn(s, text.length)
+            if (e > s) addStyle(SpanStyle(background = h.color.copy(alpha = 0.25f)), s, e)
+        }
+    } else {
+        // 纯文本 + 高亮渲染：按 offset 顺序处理高亮区域；重叠高亮不重复
+        // 输出重叠段，负值/反向/越界脏数据收敛后跳过
+        var cursor = 0
+        val sortedHighlights = highlights.sortedBy { it.startOffset }
+        for (highlight in sortedHighlights) {
+            val start = highlight.startOffset.coerceAtLeast(cursor)
+            val end = highlight.endOffset.coerceIn(start, text.length)
+            if (end <= start) continue
+            if (cursor < start) {
+                withStyle(SpanStyle(color = textColor.copy(alpha = 0.8f))) {
+                    append(text.substring(cursor, start))
+                }
+            }
+            withStyle(SpanStyle(
+                background = highlight.color.copy(alpha = 0.25f),
+                color = highlight.color,
+            )) {
+                append(text.substring(start, end))
+            }
+            cursor = end
+        }
+        if (cursor < text.length) {
+            withStyle(SpanStyle(color = textColor.copy(alpha = 0.8f))) {
+                append(text.substring(cursor))
             }
         }
     }
@@ -3168,9 +3545,17 @@ private fun findWordAtOffset(paragraph: String, offset: Offset, layout: TextLayo
  */
 private fun findSentenceAtOffset(paragraph: String, offset: Offset, layout: TextLayoutResult): String {
     val charIndex = layout.getOffsetForPosition(offset)
+    return findSentenceAtGlobalOffset(paragraph, charIndex)
+}
+
+/**
+ * 按字符 offset 在段落里找包含该位置的完整句子（跨页切片双击翻译用：
+ * 句子可能被分页切开，这里始终在完整段落文本上定位整句，避免拿到残句）。
+ */
+private fun findSentenceAtGlobalOffset(paragraph: String, charOffset: Int): String {
     val matches = SentenceEndRegex.findAll(paragraph).toList()
-    val start = matches.lastOrNull { it.range.first < charIndex }?.range?.last?.plus(1) ?: 0
-    val end = matches.firstOrNull { charIndex < it.range.first }?.range?.first?.plus(1)
+    val start = matches.lastOrNull { it.range.first < charOffset }?.range?.last?.plus(1) ?: 0
+    val end = matches.firstOrNull { charOffset < it.range.first }?.range?.first?.plus(1)
         ?: paragraph.length
     return paragraph.substring(start, end).trim()
 }
@@ -3187,6 +3572,9 @@ private fun TappableParagraphText(
     onSentenceDoubleTap: (String) -> Unit,
     modifier: Modifier = Modifier,
     style: TextStyle = TextStyle(),
+    // 跨页切片用：双击时把切片内局部 offset 换算到完整段落坐标系找整句
+    // （句子可能被分页切开，直接在切片文本上找只会得到残句）
+    sentenceLookup: ((localCharOffset: Int) -> String)? = null,
 ) {
     // issue 3.7：remember(paragraph) 而非 remember{}——LazyColumn 会对滚出又滚回的
     // 可见 item 复用同一组合实例，不带 key 时会在换段后残留上一段的 TextLayoutResult，
@@ -3204,7 +3592,11 @@ private fun TappableParagraphText(
                     },
                     onDoubleTap = { offset ->
                         textLayoutResult.value?.let { layout ->
-                            val sentence = findSentenceAtOffset(paragraph, offset, layout)
+                            val sentence = if (sentenceLookup != null) {
+                                sentenceLookup(layout.getOffsetForPosition(offset))
+                            } else {
+                                findSentenceAtOffset(paragraph, offset, layout)
+                            }
                             if (sentence.isNotBlank()) onSentenceDoubleTap(sentence)
                         }
                     },

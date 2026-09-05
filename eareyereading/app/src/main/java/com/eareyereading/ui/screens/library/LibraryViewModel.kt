@@ -55,6 +55,9 @@ data class LibraryUiState(
     val dueReviewCount: Int = 0,
     val readingStats: ReadingStatsSummary = ReadingStatsSummary(),
     val showArchived: Boolean = false,
+    // ── 书架分类：null = 全部（分组展示），非空 = 只看该分类 ──
+    val selectedCategory: String? = null,
+    val categories: List<String> = emptyList(),
     val showUrlDialog: Boolean = false,
     val urlInput: String = "",
     // 文章广场
@@ -147,12 +150,17 @@ class LibraryViewModel @Inject constructor(
                         .filter { c -> books.any { it.filePath.startsWith("$classicDir/${c.id}.") } }
                         .map { it.id }
                         .toSet()
+                    // 分类列表：按首现顺序去重，"未分类"固定垫底
+                    val cats = books.map { it.category.ifBlank { "未分类" } }
+                        .distinct()
+                        .sortedBy { it == "未分类" }
                     _uiState.value.copy(
                         books = filterBooks(query, books),
                         searchQuery = query,
                         totalWordCount = total,
                         learnedWordCount = learned,
                         ownedClassicIds = ownedClassics,
+                        categories = cats,
                     )
                 }.collect { state ->
                     _uiState.update { it.copy(
@@ -161,6 +169,7 @@ class LibraryViewModel @Inject constructor(
                         totalWordCount = state.totalWordCount,
                         learnedWordCount = state.learnedWordCount,
                         ownedClassicIds = state.ownedClassicIds,
+                        categories = state.categories,
                     ) }
                 }
             } catch (e: kotlinx.coroutines.CancellationException) {
@@ -289,6 +298,7 @@ class LibraryViewModel @Inject constructor(
                         author = extractDomain(fullUrl),
                         filePath = "",
                         content = result.paragraphs.joinToString("\n\n"),
+                        category = "文章",
                         addedAt = timestamp,
                     )
                     bookRepository.addBook(book)
@@ -463,6 +473,7 @@ class LibraryViewModel @Inject constructor(
                             author = classic.author,
                             filePath = dest.absolutePath,
                             language = "en",
+                            category = "经典名著",
                         ),
                     )
                 }
@@ -535,6 +546,28 @@ class LibraryViewModel @Inject constructor(
 
     fun dismissLoadingMessage() {
         _uiState.update { it.copy(loadingMessage = "") }
+    }
+
+    // ── 书架分类 ─────────────────────────────────
+    /** 分类筛选：null = 全部（分组展示所有书）。 */
+    fun setCategory(category: String?) {
+        _uiState.update { it.copy(selectedCategory = category) }
+    }
+
+    /** 修改书籍分类（书卡菜单入口；空串/空白在仓库层归一化为"未分类"）。
+     *  分类列表由 books Flow 异步刷新；被清空的选中分类由 UI 层
+     *  （effectiveCategory = selectedCategory?.takeIf { it in categories }）兜底回"全部"。 */
+    fun updateBookCategory(bookId: Long, category: String) {
+        viewModelScope.launch {
+            try {
+                bookRepository.updateCategory(bookId, category)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                android.util.Log.e("LibraryVM", "updateCategory failed", e)
+                setResultMessage("分类修改失败")
+            }
+        }
     }
 
     // ── 文章广场 ──────────────────────────────────
@@ -710,6 +743,7 @@ class LibraryViewModel @Inject constructor(
                         author = extractDomain(article.link),
                         filePath = "",
                         content = result.paragraphs.joinToString("\n\n"),
+                        category = "文章",
                         addedAt = dateFormat.format(Date()),
                     )
                     bookRepository.addBook(book)

@@ -381,6 +381,11 @@ class BookRepositoryImpl @Inject constructor(
         bookDao.setArchived(bookId, archived)
     }
 
+    override suspend fun updateCategory(bookId: Long, category: String) {
+        // 空白分类归一化为"未分类"，保证分组永远有落点
+        bookDao.updateCategory(bookId, category.trim().ifBlank { "未分类" }.take(12))
+    }
+
     override suspend fun deleteBook(bookId: Long) {
         // 删除前记下文件路径：事务成功后清理导入时拷贝的书籍文件，
         // 防孤儿文件无限累积（仅限应用 books 目录内的文件）
@@ -453,7 +458,7 @@ class BookRepositoryImpl @Inject constructor(
         totalWords = totalWords, readProgress = readProgress,
         lastReadPosition = lastReadPosition, lastReadTime = lastReadTime,
         dateAdded = dateAdded, language = language, isArchived = isArchived,
-        addedAt = addedAt,
+        category = category, addedAt = addedAt,
     )
 
     private fun BookEntity.toDomain() = Book(
@@ -463,7 +468,7 @@ class BookRepositoryImpl @Inject constructor(
         totalWords = totalWords, readProgress = readProgress,
         lastReadPosition = lastReadPosition, lastReadTime = lastReadTime,
         dateAdded = dateAdded, language = language, isArchived = isArchived,
-        content = content, addedAt = addedAt,
+        category = category, content = content, addedAt = addedAt,
     )
 
     private fun Book.toEntity() = BookEntity(
@@ -473,7 +478,7 @@ class BookRepositoryImpl @Inject constructor(
         totalWords = totalWords, readProgress = readProgress,
         lastReadPosition = lastReadPosition, lastReadTime = lastReadTime,
         dateAdded = dateAdded, language = language, isArchived = isArchived,
-        content = content, addedAt = addedAt,
+        category = category, content = content, addedAt = addedAt,
     )
 
     /**

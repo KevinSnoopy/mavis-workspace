@@ -166,18 +166,18 @@ fun HomeScreen(
 
             // 本周阅读趋势
             item {
-                Spacer(modifier = Modifier.height(28.dp))
+                Spacer(modifier = Modifier.height(20.dp))
                 Text(
                     "本周阅读",
                     style = SectionTitle,
                     modifier = Modifier.padding(horizontal = 16.dp),
                 )
-                Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(10.dp))
                 WeeklyChart(
                     data = uiState.weeklyData,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(160.dp)
+                        .height(150.dp)
                         .padding(horizontal = 16.dp),
                 )
             }
@@ -198,7 +198,7 @@ fun HomeScreen(
             // 最近阅读
             if (uiState.recentBooks.isNotEmpty()) {
                 item {
-                    Spacer(modifier = Modifier.height(28.dp))
+                    Spacer(modifier = Modifier.height(20.dp))
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -211,12 +211,12 @@ fun HomeScreen(
                             Text("查看全部", style = MaterialTheme.typography.labelMedium)
                         }
                     }
-                    Spacer(modifier = Modifier.height(12.dp))
+                    Spacer(modifier = Modifier.height(10.dp))
                 }
                 item {
                     LazyRow(
                         contentPadding = PaddingValues(horizontal = 16.dp),
-                        horizontalArrangement = Arrangement.spacedBy(14.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
                         items(uiState.recentBooks, key = { it.id }) { book ->
                             RecentBookCard(
@@ -438,29 +438,23 @@ private fun RecentBookCard(
 ) {
     Card(
         modifier = Modifier
-            .width(140.dp)
+            .width(124.dp)
             .clickable(onClick = onClick),
         shape = RoundedCornerShape(14.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
 
     ) {
-        Column(modifier = Modifier.padding(14.dp)) {
+        Column(modifier = Modifier.padding(10.dp)) {
+            // 生成式插图封面自带书名/作者，卡片内不再重复标题文字
             BookCover(
                 title = book.title,
                 coverPath = book.coverPath,
+                author = book.author,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(80.dp),
+                    .height(120.dp),
             )
-            Spacer(modifier = Modifier.height(10.dp))
-            Text(
-                text = book.title,
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Spacer(modifier = Modifier.height(6.dp))
+            Spacer(modifier = Modifier.height(8.dp))
             LinearProgressIndicator(
                 progress = book.readProgress,
                 modifier = Modifier
