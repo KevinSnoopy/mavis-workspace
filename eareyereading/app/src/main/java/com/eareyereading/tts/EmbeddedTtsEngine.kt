@@ -262,36 +262,21 @@ class EmbeddedTtsEngine @Inject constructor(
          */
         private const val MAX_PREWARM_CHARS = 40
 
-        /** 用户当前选中的模型 ID（用 SharedPreferences 持久化） */
-        private const val PREFS_NAME = "embedded_tts_prefs"
-        private const val KEY_SELECTED_MODEL = "selected_model"
-
-        /** 用户选中的音色 sid，按模型分别持久化（Piper 无多音色，仅 Kokoro 使用） */
-        private const val KEY_SELECTED_VOICE_PREFIX = "selected_voice_"
-
     }
 
-    private val prefs by lazy {
-        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-    }
+    /** 模型/音色偏好的持久化（见 [TtsModelPreferences]）。 */
+    private val modelPrefs = TtsModelPreferences(context)
 
-    fun getSelectedModelId(): String {
-        return prefs.getString(KEY_SELECTED_MODEL, DEFAULT_MODEL_ID) ?: DEFAULT_MODEL_ID
-    }
+    fun getSelectedModelId(): String = modelPrefs.selectedModelId()
 
-    fun setSelectedModelId(id: String) {
-        prefs.edit().putString(KEY_SELECTED_MODEL, id).apply()
-    }
+    fun setSelectedModelId(id: String) = modelPrefs.setSelectedModelId(id)
 
     /** 当前模型下用户选中的音色 sid（仅 Kokoro 有意义；越界/未设置回退 0） */
-    fun getSelectedSid(model: ModelInfo = getCurrentModelInfo()): Int {
-        val saved = prefs.getInt(KEY_SELECTED_VOICE_PREFIX + model.id, 0)
-        return if (saved in 0 until KOKORO_VOICES.size) saved else 0
-    }
+    fun getSelectedSid(model: ModelInfo = getCurrentModelInfo()): Int =
+        modelPrefs.selectedSid(model)
 
-    fun setSelectedSid(modelId: String, sid: Int) {
-        prefs.edit().putInt(KEY_SELECTED_VOICE_PREFIX + modelId, sid).apply()
-    }
+    fun setSelectedSid(modelId: String, sid: Int) =
+        modelPrefs.setSelectedSid(modelId, sid)
 
     /** 当前选中模型的音色信息（非 Kokoro 模型返回 null） */
     fun getSelectedVoice(): VoiceInfo? {
@@ -1059,18 +1044,6 @@ class EmbeddedTtsEngine @Inject constructor(
      * （2026-09-05 实测：点喇叭后 8 秒无声，实为 warmUp 收尾期排队）。
      */
     fun isWarmedUp(): Boolean = warmedUpModelId != null && warmedUpModelId == currentModelName
-
-    // ── 下载通知（委托 NotificationService 集中管理：进度 ongoing、完成可划掉）──
-
-    /** 显示/更新下载进度通知。progress 0..1，null 表示不确定。 */
-    fun showDownloadNotification(progress: Float?, contentText: String) {
-        notificationService.showTtsDownloadProgress(progress, contentText)
-    }
-
-    /** 下载成功后的收尾通知：替换掉 ongoing 的进度通知，保证可划掉并结束常驻状态。 */
-    private fun showDownloadCompleteNotification(contentText: String) {
-        notificationService.showTtsDownloadComplete(contentText)
-    }
 
     /** 取消下载通知。 */
     fun cancelDownloadNotification() {

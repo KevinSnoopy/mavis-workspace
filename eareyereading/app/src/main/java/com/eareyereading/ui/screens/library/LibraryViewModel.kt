@@ -321,19 +321,13 @@ class LibraryViewModel @Inject constructor(
             try {
                 val result = articleParser.parseFromUrl(fullUrl)
                 if (result != null && result.paragraphs.isNotEmpty()) {
-                    // 保存为本地"书"
-                    val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
-                    val timestamp = dateFormat.format(Date())
-
-                    val book = Book(
-                        title = result.title.ifBlank { extractDomain(fullUrl) },
-                        author = extractDomain(fullUrl),
-                        filePath = "",
-                        content = result.paragraphs.joinToString("\n\n"),
-                        category = "文章",
-                        addedAt = timestamp,
+                    bookRepository.addBook(
+                        articleBook(
+                            title = result.title.ifBlank { extractDomain(fullUrl) },
+                            link = fullUrl,
+                            paragraphs = result.paragraphs,
+                        ),
                     )
-                    bookRepository.addBook(book)
                     refreshDueTimestamp()
                     setResultMessage("文章已加入书库")
                 } else {
@@ -347,6 +341,50 @@ class LibraryViewModel @Inject constructor(
                 setResultMessage("抓取失败: ${e.message}")
             } finally {
                 endImportOp()
+            }
+        }
+    }
+
+    /**
+     * 文章类"书"的统一构造（URL 导入与文章广场共用，DRY）：
+     * 域名当作者、段落以空行拼接、category 固定"文章"、当前时间戳记 addedAt。
+     */
+    private fun articleBook(title: String, link: String, paragraphs: List<String>): Book {
+        val timestamp = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date())
+        return Book(
+            title = title,
+            author = extractDomain(link),
+            filePath = "",
+            content = paragraphs.joinToString("\n\n"),
+            category = "文章",
+            addedAt = timestamp,
+        )
+    }
+
+    /**
+     * 带上限的流拷贝（文件导入与经典书下载共用，DRY）：
+     * 256KB 缓冲减少系统调用，累计超限抛 IOException 由调用方统一处理。
+     * 调用方保证已在 IO 调度器上。
+     */
+    private fun copyStreamTo(
+        input: java.io.InputStream,
+        dest: File,
+        maxBytes: Long,
+        exceedMessage: String,
+    ) {
+        input.use { ins ->
+            dest.outputStream().use { output ->
+                // 256KB 缓冲：SAF 拷贝几十 MB 的 EPUB 时，
+                // 8KB 缓冲 = 数万次 read/write 系统调用
+                val buffer = ByteArray(262144)
+                var copied = 0L
+                while (true) {
+                    val n = ins.read(buffer)
+                    if (n < 0) break
+                    copied += n
+                    if (copied > maxBytes) throw java.io.IOException(exceedMessage)
+                    output.write(buffer, 0, n)
+                }
             }
         }
     }
@@ -385,23 +423,7 @@ class LibraryViewModel @Inject constructor(
                 // 整文件拷贝放 IO 线程，避免主线程拷贝大文件 ANR；
                 // 带上限并计数，超限即中止
                 withContext(Dispatchers.IO) {
-                    inputStream.use { input ->
-                        dest.outputStream().use { output ->
-                            // 256KB 缓冲：SAF 拷贝几十 MB 的 EPUB 时，
-                            // 8KB 缓冲 = 数万次 read/write 系统调用
-                            val buffer = ByteArray(262144)
-                            var copied = 0L
-                            while (true) {
-                                val n = input.read(buffer)
-                                if (n < 0) break
-                                copied += n
-                                if (copied > maxImportBytes) {
-                                    throw java.io.IOException("File exceeds import size limit")
-                                }
-                                output.write(buffer, 0, n)
-                            }
-                        }
-                    }
+                    copyStreamTo(inputStream, dest, maxImportBytes, "File exceeds import size limit")
                 }
 
                 val book = Book(
@@ -482,20 +504,12 @@ class LibraryViewModel @Inject constructor(
                                     throw java.io.IOException("HTTP ${conn.responseCode}")
                                 }
                                 // 30MB 上限：整本长篇绰绰有余，同时防异常来源撑爆磁盘
-                                val max = 30L * 1024 * 1024
-                                conn.inputStream.use { input ->
-                                    d.outputStream().use { output ->
-                                        val buffer = ByteArray(262144)
-                                        var done = 0L
-                                        while (true) {
-                                            val n = input.read(buffer)
-                                            if (n < 0) break
-                                            done += n
-                                            if (done > max) throw java.io.IOException("File too large")
-                                            output.write(buffer, 0, n)
-                                        }
-                                    }
-                                }
+                                copyStreamTo(
+                                    conn.inputStream,
+                                    d,
+                                    maxBytes = 30L * 1024 * 1024,
+                                    exceedMessage = "File too large",
+                                )
                             } finally {
                                 conn.disconnect()
                             }
@@ -843,16 +857,13 @@ class LibraryViewModel @Inject constructor(
                     articleParser.parseFromUrl(article.link)
                 }
                 if (result != null && result.paragraphs.isNotEmpty()) {
-                    val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
-                    val book = Book(
-                        title = article.title.ifBlank { "Web Article" },
-                        author = extractDomain(article.link),
-                        filePath = "",
-                        content = result.paragraphs.joinToString("\n\n"),
-                        category = "文章",
-                        addedAt = dateFormat.format(Date()),
+                    bookRepository.addBook(
+                        articleBook(
+                            title = article.title.ifBlank { "Web Article" },
+                            link = article.link,
+                            paragraphs = result.paragraphs,
+                        ),
                     )
-                    bookRepository.addBook(book)
                     // 成功后才标记"已添加"：失败时卡片保持可重试状态
                     _addedArticleLinks.update { it + article.link }
                     refreshDueTimestamp()
