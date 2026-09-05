@@ -337,27 +337,31 @@ class EmbeddedTtsEngine @Inject constructor(
         private const val STREAM_BUFFER_SECONDS = 4
 
         /**
-         * 开播前预缓冲（秒）：首次 offer 攒够约 0.8 秒 PCM 才建轨并 play()。
+         * 开播前预缓冲（秒）：首次 offer 攒够约 0.3 秒 PCM 才建轨并 play()。
          *
          * 为什么需要：旧实现第一段采样一到就 play()，AudioTrack 缓冲垫≈0，
          * 合成稍有抖动（如系统 binder 停顿/线程调度）就耗尽缓冲触发 underrun，
          * AudioTrack 被系统禁用后 restartIfDisabled 重启还伴随百毫秒级 binder
-         * 停顿，听感为卡顿/长停顿。0.8 秒的权衡：远小于当前 6 秒级的首块合成
-         * 时间（首声延迟几乎不变），又足够吸收一次秒级合成抖动。
+         * 停顿，听感为卡顿/长停顿。
+         *
+         * 2026-09-05：从 0.8 秒收紧到 0.3 秒。0.8 秒意味着首块要合成 0.8 秒
+         * 音频才开始播，首声延迟增加 0.5 秒。0.3 秒仍能吸收一次百毫秒级
+         * 合成抖动（binder 停顿/线程调度），underrun 风险由 STREAM_BUFFER_SECONDS=4
+         * 秒的硬件缓冲兜底。配合更小的 chunk（35 字符），首声延迟显著降低。
          */
-        private const val PREBUFFER_SECONDS = 0.8f
+        private const val PREBUFFER_SECONDS = 0.3f
 
         /**
          * 单块合成文本最大字符数：块内只有逗号没有句末标点时，sherpa-onnx
          * 内部按句切分的回调不触发，整块合成完才出声——块越长首声延迟越大、
          * 欠载爆炸半径越大（150 字符块实测首块 6 秒无输出）。
          *
-         * 2026-09-05：从 80 收紧到 50。Kokoro RTF≈0.65，80 字符 ≈ 6.5 秒音频
-         * 合成需 4.2 秒，首块等待过长；50 字符 ≈ 4 秒音频合成 ~2.6 秒，首声
-         * 延迟显著降低。配合 [hardChunks] 按次级标点（逗号/分号/冒号）切分，
-         * 每块更可能以标点结尾 → sherpa-onnx 内部回调更早触发 → 真正流式出声。
+         * 2026-09-05：从 80 → 50 → 35。Kokoro RTF≈0.65，每次 generate 有 ~2 秒
+         * 固定开销。35 字符 ≈ 2.8 秒音频合成 ~1.8 秒，配合按次级标点切分，
+         * 块内更可能有逗号 → sherpa-onnx 回调更早触发 → 首声延迟进一步降低。
+         * 再小会导致固定开销占比过高（2s 固定 / <1s 合成）。
          */
-        private const val MAX_CHUNK_CHARS = 50
+        private const val MAX_CHUNK_CHARS = 35
 
         /**
          * 推理预热文本（见 [warmUp]）：长度必须接近真实首块负载
