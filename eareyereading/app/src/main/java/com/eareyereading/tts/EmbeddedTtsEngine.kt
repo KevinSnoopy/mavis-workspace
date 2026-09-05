@@ -350,13 +350,14 @@ class EmbeddedTtsEngine @Inject constructor(
         /**
          * 单块合成文本最大字符数。
          *
-         * 2026-09-05：从 80 提高到 200。配合 maxNumSentences=4，native 端把
-         * 块内句子并行合成（默认 maxNumSentences=1 串行，每次 generate ~2s
-         * 固定开销，5 句 = 10s）。200 字符在 sherpa-onnx 安全范围内（~200 以内
-         * 稳定），native 端自己按句切分并行处理，回调仍按句触发流式出声。
-         * Kotlin 层不再切成 80 字符小块串行——那是固定开销倍增的根因。
+         * 2026-09-05：从 80 提高到 400。Kokoro 不支持 maxNumSentences 并行
+         *（native 日志：max_num_sentences != 1 is ignored for Kokoro），
+         * 真正的加速是减少 generate 调用次数——每次 generate 有 ~2s 固定开销。
+         * 把大块文本一次传给 native，native 端按句点切分逐句回调出声（流式），
+         * 首句合成完就回调，不用等整块合成完。400 字符覆盖典型段落，
+         * 在 sherpa-onnx 安全范围内（~500 以内稳定）。
          */
-        private const val MAX_CHUNK_CHARS = 200
+        private const val MAX_CHUNK_CHARS = 400
 
         /**
          * 推理预热文本（见 [warmUp]）：长度必须接近真实首块负载
@@ -1872,15 +1873,7 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
                         numThreads = NUM_THREADS,
                     )
                 }
-                val config = OfflineTtsConfig(
-                    model = modelConfig,
-                    ruleFsts = ruleFsts,
-                    // maxNumSentences：native 端一次 generate 内并行合成的最大句子数。
-                    // 默认 1 = 逐句串行，每次 generate 有 ~2s 固定开销，5 句 = 10s。
-                    // 设为 4：native 端把输入按句切分后并行合成，固定开销摊薄，
-                    // 整段朗读速度显著提升。回调仍按句触发，流式出声不受影响。
-                    maxNumSentences = 4,
-                )
+                val config = OfflineTtsConfig(model = modelConfig, ruleFsts = ruleFsts)
                 val newTts = OfflineTts(config = config)
                 // 关键：替换/释放旧 native 实例必须与 generate() 互斥。
                 // 只加 synchronized(this) 时，另一个协程可能正持有 speakMutex
@@ -2181,94 +2174,109 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
                 // 上层会"静音朗读"完整本书并推进进度。连续失败 3 句直接中止并报失败
                 var consecutiveFailures = 0
                 try {
-                    for ((idx, raw) in rawSentences.withIndex()) {
+                    // 把相邻句子合并成大块（≤MAX_CHUNK_CHARS）一次 generate：
+                    // Kokoro 每次 generate 有 ~2s 固定开销，逐句串行 N 句 = N×2s。
+                    // 合并后大块一次 generate，native 端按句点切分逐句回调出声（流式），
+                    // 首句合成完就回调，不用等整块合成完。固定开销从 N 次降到 ceil(N/k) 次。
+                    val blocks = mutableListOf<String>()
+                    val blockSentenceIndexMap = mutableListOf<Int>()
+                    val currentBuf = StringBuilder()
+                    var currentLastIdx = -1
+                    for ((sIdx, raw) in rawSentences.withIndex()) {
                         if (raw.isBlank()) continue
-                        // 每句之前检查协程是否已被取消（stop() 调用）
+                        val cleaned = if (isKokoro) preprocessForTtsLight(raw) else preprocessForTts(raw)
+                        if (cleaned.isBlank()) continue
+                        if (currentBuf.length + cleaned.length + 1 > MAX_CHUNK_CHARS && currentBuf.isNotEmpty()) {
+                            blocks.add(currentBuf.toString().trim())
+                            blockSentenceIndexMap.add(currentLastIdx)
+                            currentBuf.clear()
+                            currentLastIdx = -1
+                        }
+                        if (currentBuf.isNotEmpty()) currentBuf.append(' ')
+                        currentBuf.append(cleaned)
+                        currentLastIdx = sIdx
+                    }
+                    if (currentBuf.isNotEmpty()) {
+                        blocks.add(currentBuf.toString().trim())
+                        blockSentenceIndexMap.add(currentLastIdx)
+                    }
+                    for ((idx, block) in blocks.withIndex()) {
+                        if (block.isBlank()) continue
+                        // 每块之前检查协程是否已被取消（stop() 调用）
                         kotlinx.coroutines.yield()
                         if (speakJob?.isActive == false) {
                             throw kotlinx.coroutines.CancellationException("stop() requested")
                         }
-                        val cleaned = if (isKokoro) preprocessForTtsLight(raw) else preprocessForTts(raw)
-                        // 清洗后无内容（如 Piper 把短中文段过滤成空白）：跳过且不计入
-                        // 熔断失败数——与旧实现（先清洗再过滤空白句）语义一致
-                        if (cleaned.isBlank()) continue
-                        val framesBeforeSentence = player.framesOffered
-                        for (sub in splitSentences(cleaned)) {
-                            // 单句仍可能超长（超长标题/无标点中文长段）：切成 ≤MAX_CHUNK_CHARS
-                            // 字符的块逐块合成，旧实现 substring(0,150) 直接丢弃 150 字符后的
-                            // 全部内容。块长从 150 收紧到 80：块内无句末标点时 sherpa 内部
-                            // 按句切分的回调不触发，整块合成完才回调——块越长首声延迟越大
-                            for (chunk in hardChunks(sub, MAX_CHUNK_CHARS)) {
-                                val framesBeforeChunk = player.framesOffered
-                                // 预合成缓存命中（单词弹窗 selectWord 时后台预合成）：
-                                // 跳过 generate 直接播缓存 PCM——Kokoro 每次 generate 有
-                                // ~2s 固定开销（与文本长度无关），单词现场合成必然卡
-                                val cachedPcm = pcmCache.get(cacheKey(chunk, sid, speed))
-                                if (cachedPcm != null) {
-                                    if (speakJob?.isActive != false) {
-                                        player.offer(cachedPcm)
-                                        Log.i(
-                                            TAG,
-                                            "Embedded TTS chunk from cache: len=${chunk.length}, " +
-                                                "samples=${cachedPcm.size}",
-                                        )
-                                    }
-                                } else {
-                                val audio = try {
-                                    currentTts.generateWithCallback(chunk, sid = sid, speed = speed) { samples ->
-                                        // 返回 1 继续合成；协程已取消时返回 0 让 native 立即中止
-                                        if (speakJob?.isActive == false) 0 else player.offer(samples)
-                                    }
-                                } catch (e: kotlinx.coroutines.CancellationException) {
-                                    throw e
-                                } catch (e: Exception) {
-                                    // 单块 generate 崩溃（如 native G2P bug）：跳过该块，继续
-                                    Log.e(TAG, "chunk generate failed, skipping: '${chunk.take(60)}'", e)
-                                    null
-                                }
-                                // 兜底与日志均以 framesOffered（含预缓冲 pending 里的帧）为基准：
-                                // 预缓冲期间 framesWritten 恒为 0，若用它判断"一帧未写"会把
-                                // 首块音频在兜底路径重复 offer 一遍（声音重叠）
-                                // 链已被 stop() 取消时必须禁用兜底：回调被取消检查挡住
-                                // （返回 0 中止合成）并不代表"JNI 回调静默失效"，此时整段
-                                // 补写会让一条已停止的链在数秒后突然出声——真机表现为
-                                // "点了停止，几秒后突然又开始读"，且与用户随后启动的新链
-                                // 叠音（2026-09-05 顶栏两播报按钮"冲突"的机理）
-                                if (audio != null && player.framesOffered == framesBeforeChunk &&
-                                    audio.samples.isNotEmpty() && speakJob?.isActive != false
-                                ) {
-                                    // 兜底：JNI 回调静默失效（一帧未写）时整段补写，保证有声
-                                    player.offer(audio.samples)
-                                }
-                                }
-                                if (player.framesOffered > framesBeforeChunk) {
-                                    // 真实合成成功 = 本模型的首次推理开销已被消化，
-                                    // 与 warmUp() 的置位语义一致（幂等，@Volatile 写）
-                                    warmedUpModelId = currentModelName
-                                    Log.i(
-                                        TAG,
-                                        "Embedded TTS chunk queued: len=${chunk.length}, " +
-                                            "samples=${player.framesOffered - framesBeforeChunk}, " +
-                                            "totalFrames=${player.framesOffered}",
-                                    )
-                                }
-                            }
-                        }
-                        if (player.framesOffered > framesBeforeSentence) {
-                            consecutiveFailures = 0
-                            if (onSentenceDone != null) {
-                                // 句完成水位 = 该句最后一帧入队位置。用 framesOffered（含
-                                // 预缓冲 pending 里的帧）而非 framesWritten：预缓冲期间
-                                // framesWritten 恒为 0，首句水位会立即被 head≥0 满足，
-                                // 音频还没播就回调"句完成"——不超前语义被破坏
-                                pendingWatermarks.add(player.framesOffered to idx)
+                        val framesBeforeBlock = player.framesOffered
+                        // 预合成缓存命中（单词弹窗 selectWord 时后台预合成）：
+                        // 跳过 generate 直接播缓存 PCM——Kokoro 每次 generate 有
+                        // ~2s 固定开销（与文本长度无关），单词现场合成必然卡
+                        val cachedPcm = pcmCache.get(cacheKey(block, sid, speed))
+                        if (cachedPcm != null) {
+                            if (speakJob?.isActive != false) {
+                                player.offer(cachedPcm)
+                                Log.i(
+                                    TAG,
+                                    "Embedded TTS block from cache: len=${block.length}, " +
+                                        "samples=${cachedPcm.size}",
+                                )
                             }
                         } else {
+                        val audio = try {
+                            currentTts.generateWithCallback(block, sid = sid, speed = speed) { samples ->
+                                // 返回 1 继续合成；协程已取消时返回 0 让 native 立即中止
+                                if (speakJob?.isActive == false) 0 else player.offer(samples)
+                            }
+                        } catch (e: kotlinx.coroutines.CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            // 单块 generate 崩溃（如 native G2P bug）：跳过该块，继续
+                            Log.e(TAG, "block generate failed, skipping: '${block.take(60)}'", e)
+                            null
+                        }
+                        // 兜底与日志均以 framesOffered（含预缓冲 pending 里的帧）为基准：
+                        // 预缓冲期间 framesWritten 恒为 0，若用它判断"一帧未写"会把
+                        // 首块音频在兜底路径重复 offer 一遍（声音重叠）
+                        // 链已被 stop() 取消时必须禁用兜底：回调被取消检查挡住
+                        //（返回 0 中止合成）并不代表"JNI 回调静默失效"，此时整段
+                        // 补写会让一条已停止的链在数秒后突然出声——真机表现为
+                        // "点了停止，几秒后突然又开始读"，且与用户随后启动的新链
+                        // 叠音（2026-09-05 顶栏两播报按钮"冲突"的机理）
+                        if (audio != null && player.framesOffered == framesBeforeBlock &&
+                            audio.samples.isNotEmpty() && speakJob?.isActive != false
+                        ) {
+                            // 兜底：JNI 回调静默失效（一帧未写）时整段补写，保证有声
+                            player.offer(audio.samples)
+                        }
+                        }
+                        if (player.framesOffered > framesBeforeBlock) {
+                            // 真实合成成功 = 本模型的首次推理开销已被消化，
+                            // 与 warmUp() 的置位语义一致（幂等，@Volatile 写）
+                            warmedUpModelId = currentModelName
+                            Log.i(
+                                TAG,
+                                "Embedded TTS block queued: idx=$idx, len=${block.length}, " +
+                                    "samples=${player.framesOffered - framesBeforeBlock}, " +
+                                    "totalFrames=${player.framesOffered}",
+                            )
+                        }
+                        // 句完成水位：用 block 边界作为水位。onSentenceDone 回调
+                        // block 内最后一个句子的索引（block 可能含多个原句）。
+                        // 精确的句级高亮需要 native 回调报告句边界，当前按 block 粒度。
+                        if (onSentenceDone != null && player.framesOffered > framesBeforeBlock) {
+                            consecutiveFailures = 0
+                            // block 对应的原句索引范围：mergeIntoBlocks 返回每个 block
+                            // 包含的句子索引，用最后一个索引作为水位回调点
+                            val lastSentenceIdxInBlock = blockSentenceIndexMap[idx]
+                            if (lastSentenceIdxInBlock >= 0) {
+                                pendingWatermarks.add(player.framesOffered to lastSentenceIdxInBlock)
+                            }
+                        } else if (player.framesOffered == framesBeforeBlock) {
                             consecutiveFailures++
                             if (consecutiveFailures >= 3) {
                                 Log.e(
                                     TAG,
-                                    "3 consecutive sentence failures — aborting speak (model likely broken)",
+                                    "3 consecutive block failures — aborting speak (model likely broken)",
                                 )
                                 _state.value = EngineState.FAILED("语音合成连续失败，模型可能已损坏")
                                 circuitBroken = true
