@@ -8,7 +8,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -151,6 +150,11 @@ class TtsHelper @Inject constructor(
     /**
      * 逐句朗读 — 每个句子完成时触发 onSentenceDone。
      * 句子链进行中时不可被打断（直到全部读完或显式 stop()）。
+     *
+     * 底层走引擎的流式句链（speakSentencesStreaming）：整链共用一条
+     * MODE_STREAM AudioTrack，句 i 还在出声时句 i+1 已在合成——旧实现
+     * 逐句"整句合成完才开始播"，Kokoro 这类大模型句句之间都有
+     * 整句合成时长的静默 gap。
      */
     fun speakSentences(
         sentences: List<String>,
@@ -168,16 +172,10 @@ class TtsHelper @Inject constructor(
         sentenceChainJob?.cancel()
         sentenceChainJob = scope.launch {
             try {
-                for ((index, sentence) in sentences.withIndex()) {
-                    if (!isInSentenceChain) break  // 被 stop() 打断
-                    embeddedTts.speak(sentence, speed = currentSpeed)
-                    // 句间留一个短间隙：上一句 AudioTrack release 与下一句
-                    // build 之间零间隔会在部分设备上产生"啵"爆音
-                    // （AudioTrack: AUDIO_OUTPUT_FLAG_FAST denied）
-                    delay(20)
-                    withContext(Dispatchers.Main) {
-                        onSentenceDone(index)
-                    }
+                embeddedTts.speakSentencesStreaming(sentences, speed = currentSpeed) { index ->
+                    // 引擎回调来自 IO 线程（单生产者保序）；scope 是 Main 调度器，
+                    // launch 入队 FIFO，回调顺序与句子顺序一致
+                    scope.launch { onSentenceDone(index) }
                 }
             } finally {
                 isInSentenceChain = false

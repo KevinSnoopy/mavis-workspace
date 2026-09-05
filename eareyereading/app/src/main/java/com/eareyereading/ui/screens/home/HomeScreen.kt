@@ -440,15 +440,26 @@ private fun WeeklyChart(
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                     }
+                    // 柱条只能占"扣除顶部数值与底部周标签后的剩余高度"：
+                    // 旧实现 fillMaxHeight(fraction) 以整列（含上下文本）为基准，
+                    // ratio 接近 1 时柱高+文本超出 150dp 容器，柱条溢出盖住底部文字。
+                    // 外层 weight(1f) 吃掉剩余空间，内层再按比例填充，永不越界
                     Box(
                         modifier = Modifier
                             .fillMaxWidth(0.5f)
-                            .fillMaxHeight(
-                                (effectiveRatio * growProgress).coerceAtLeast(0.03f),
-                            )
-                            .clip(RoundedCornerShape(topStart = 4.dp, topEnd = 4.dp))
-                            .background(barColor),
-                    )
+                            .weight(1f),
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .fillMaxHeight(
+                                    (effectiveRatio * growProgress).coerceAtLeast(0.03f),
+                                )
+                                .align(Alignment.BottomCenter)
+                                .clip(RoundedCornerShape(topStart = 4.dp, topEnd = 4.dp))
+                                .background(barColor),
+                        )
+                    }
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
                         day.dayLabel,

@@ -16,6 +16,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -277,9 +278,15 @@ class EmbeddedTtsEngine @Inject constructor(
 
         /**
          * 解压 IO 缓冲：读（BufferedInputStream 归并 BZip2 位读取器的小粒度
-         * read）与写（整轮复用的复制缓冲）共用 256KB，减少 syscall 与 GC 压力。
+         * read）与写（整轮复制的复制缓冲）共用 256KB，减少 syscall 与 GC 压力。
          */
         private const val EXTRACTION_IO_BUFFER_BYTES = 256 * 1024
+
+        /**
+         * 流式朗读的 AudioTrack 环形缓冲（秒）：大于典型单句音频时长，
+         * 句间合成抖动不产生断音；合成快于播放时阻塞写自然形成背压。
+         */
+        private const val STREAM_BUFFER_SECONDS = 4
 
         /**
          * 内置可用模型列表。
@@ -796,8 +803,13 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
     fun getCurrentModelInfo(): ModelInfo {
         // firstOrNull 全程兜底：持久化的模型 id 可能已被新版本移除，
         // first{} 会直接抛 NoSuchElementException（且本方法会在 Compose 组合期被调用）
-        return AVAILABLE_MODELS.firstOrNull { it.id == currentModelName }
-            ?: AVAILABLE_MODELS.firstOrNull { it.id == getSelectedModelId() }
+        //
+        // 优先级必须是"用户选择 > 已加载模型"：切换模型时 setSelectedModelId 先落盘、
+        // currentModelName 还是旧模型——若旧模型优先，setEmbeddedModel 拿到的仍是旧
+        // ModelInfo（initialize 快路径直接复用旧实例），设置页单选还会被
+        // refreshEmbeddedStatus 翻回旧模型——引擎永远切不过去（2026-09-05 修复）
+        return AVAILABLE_MODELS.firstOrNull { it.id == getSelectedModelId() }
+            ?: AVAILABLE_MODELS.firstOrNull { it.id == currentModelName }
             ?: AVAILABLE_MODELS.first()
     }
 
@@ -1818,35 +1830,69 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
         }
 
     /**
-     * 朗读一段文字（同步阻塞版本，由调用方在协程中调用）。
+     * 朗读一段文字（阻塞至音频播放完毕，由调用方在协程中调用）。
+     *
+     * 流式播放：文本按句入队，sherpa-onnx 每合成完一小段（内部按句）就回调，
+     * 采样边合成边写入 MODE_STREAM 的 AudioTrack 立即出声——Kokoro 这类大模型
+     * "整段合成完才开始播"的首句静默等待（手机 CPU 上可达十几秒）被压缩到
+     * 首小段的合成时间。
      *
      * @param text 要朗读的文本
      * @param speed 语速倍率，1.0 = 正常
-     * @param onDone 完成回调（可选）
-     * @return true 表示开始播放
+     * @param onDone 完成回调（音频播完时触发；失败/取消不触发）
+     * @return true 表示播放完成
      */
     suspend fun speak(
         text: String,
         speed: Float = 1.0f,
         onDone: () -> Unit = {},
+    ): Boolean {
+        val ok = speakViaQueue(splitSentences(text), speed, onSentenceDone = null)
+        if (ok) onDone()
+        return ok
+    }
+
+    /**
+     * 句链流式朗读（TtsHelper.speakSentences 的底层）。
+     *
+     * 整条链共用一条 MODE_STREAM AudioTrack：句 i 的音频还在播放时句 i+1 已在
+     * 合成并按序排队写入——消除旧实现（每句单独 speak，合成期间完全静默）在
+     * Kokoro 这类大模型下句句之间"整句合成时长"的 gap。
+     *
+     * @param sentences 原始句子列表（引擎内部按当前模型做预处理再切分）
+     * @param speed 语速倍率，1.0 = 正常
+     * @param onSentenceDone 第 i 句音频播完时回调（IO 线程触发，单生产者保序；
+     *        调用方自行切回主线程）
+     * @return true 表示全部播完
+     */
+    suspend fun speakSentencesStreaming(
+        sentences: List<String>,
+        speed: Float = 1.0f,
+        onSentenceDone: (Int) -> Unit,
+    ): Boolean = speakViaQueue(sentences, speed, onSentenceDone)
+
+    /**
+     * speak / speakSentencesStreaming 的公共入口：注册 Job（stop() 全量取消，
+     * 含正在播的与挂在锁上等锁的）+ speakMutex 串行化——native OfflineTts
+     * 指针不能并发使用，两个协程同时 generate() 会触发 JNI 段错误 SIGSEGV。
+     */
+    private suspend fun speakViaQueue(
+        rawSentences: List<String>,
+        speed: Float,
+        onSentenceDone: ((Int) -> Unit)?,
     ): Boolean = withContext(Dispatchers.IO) {
         // issue 2.11：入口即检查取消。TtsHelper.speak 先 cancel 旧 job 再 launch
         // 新 job——cancel() 非阻塞，旧协程可能还挂在 speakMutex 上等锁，新协程
         // 已在队列里；入口 ensureActive 让被取消的旧协程在抢锁前就放弃，避免
-        // 两个 speak 协程几乎同时进入 doSpeakLocked 造成音频叠播/错序。
+        // 两个 speak 协程几乎同时进入 doSpeakQueueLocked 造成音频叠播/错序。
         coroutineContext[Job]?.ensureActive()
-        // 关键：native sherpa-onnx OfflineTts 指针不能并发使用。
-        // 之前 TtsHelper.speak() 在 scope.launch 里多次并发调用，
-        // 两个 IO 协程同时调 generate() → JNI 段错误 SIGSEGV。
-        // 用 Mutex 串行化整个 speak 调用。
-        // 注册进 activeSpeakJobs：stop() 取消所有调用者（含正在播的与等锁的）
         val myJob = coroutineContext[Job]
         synchronized(speakJobLock) {
             myJob?.let { activeSpeakJobs.add(it) }
         }
         try {
             speakMutex.withLock {
-                doSpeakLocked(text, speed, onDone)
+                doSpeakQueueLocked(rawSentences, speed, onSentenceDone)
             }
         } finally {
             synchronized(speakJobLock) {
@@ -1855,99 +1901,304 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
         }
     }
 
-    private suspend fun doSpeakLocked(
-        text: String,
+    private suspend fun doSpeakQueueLocked(
+        rawSentences: List<String>,
         speed: Float,
-        onDone: () -> Unit,
+        onSentenceDone: ((Int) -> Unit)?,
     ): Boolean {
         val currentTts = tts ?: run {
             Log.w(TAG, "speak() called but tts not initialized")
             return false
         }
-        if (text.isBlank()) {
-            onDone()
-            return true
-        }
+        if (rawSentences.isEmpty()) return true
 
+        val speakJob = kotlin.coroutines.coroutineContext[Job]
+        isPlaying.set(true)
+        // 流式播放器：整条链共用一条 AudioTrack，边合成边写边播
+        val player = StreamingTrackPlayer(currentTts.sampleRate())
+        var circuitBroken = false
         try {
-            isPlaying.set(true)
-            // 先做文本预处理：
-            // - Piper：把 OOV 字符替换成可发音等价物（数字→英文单词、CJK→占位符），
-            //   否则 chunks[0] 直接传给 generate() 会触发 native 段错误 (SIGSEGV)。
-            // - Kokoro：双语模型自带中英 G2P（espeak-ng + 中文词典 + ruleFst 数字
-            //   归一化），数字/缩写/CJK 均可原生朗读；只做空白归一化——
-            //   Piper 专用的数字→英文单词、CJK 过滤反而会破坏中文文本
-            val isKokoro = currentModelIsKokoro
-            val cleaned = if (isKokoro) preprocessForTtsLight(text) else preprocessForTts(text)
-            // 逐句朗读：按句子边界切分，每句单独 generate+play。
-            // 不累积多句成一个 chunk——累积会导致单次 generate 输入过长触发 native 空指针崩溃。
-            // 每句通常 < 150 字符，是 sherpa-onnx VITS/MeloTTS 的安全区间。
-            val sentences = splitSentences(cleaned)
-            // Kokoro 音色：用户在设置页选择的 sid（Piper 单说话人恒为 0）。
-            // 每次生成时读取偏好：朗读中途切换音色，下一句立即生效
-            val sid = if (isKokoro) getSelectedSid() else 0
-            Log.i(
-                TAG,
-                "Embedded TTS speak: inputLen=${text.length}, cleanedLen=${cleaned.length}, " +
-                    "sentences=${sentences.size}, sid=$sid",
-            )
-            // 熔断器：模型损坏时每句都会抛异常，旧实现逐句"跳过"后照常返回成功，
-            // 上层会"静音朗读"完整本书并推进进度。连续失败 3 句直接中止并报失败
-            var consecutiveFailures = 0
-            for ((idx, sentence) in sentences.withIndex()) {
-                if (sentence.isBlank()) continue
-                // 每句之前检查协程是否已被取消（stop() 调用）。
-                kotlinx.coroutines.yield()
-                kotlinx.coroutines.currentCoroutineContext()[Job]?.let { job ->
-                    if (!job.isActive) throw kotlinx.coroutines.CancellationException("stop() requested")
-                }
-                // 单句仍可能超长（超长标题/无标点中文长段）：切成 ≤150 字符的块逐块合成，
-                // 旧实现 substring(0,150) 直接丢弃 150 字符之后的全部内容
-                val chunks = hardChunks(sentence, 150)
-                var anyOk = false
-                for (chunk in chunks) {
-                    try {
-                        val audio = currentTts.generate(chunk, sid = sid, speed = speed)
-                        val pcm = audio.samples
-                        val sr = audio.sampleRate
-                        Log.i(
-                            TAG,
-                            "Embedded TTS sentence $idx/${sentences.size}: len=${chunk.length}, " +
-                                "generated ${pcm.size} samples, duration=${"%.1f".format(pcm.size / sr.toFloat())}s",
-                        )
-                        playPcm(pcm, sr)
-                        anyOk = true
-                    } catch (e: kotlinx.coroutines.CancellationException) {
-                        throw e
-                    } catch (e: Exception) {
-                        // 单句 generate 崩溃（如 native G2P bug）：跳过该句，继续下一句
-                        Log.e(TAG, "sentence $idx chunk generate failed, skipping: '${chunk.take(60)}'", e)
+            kotlinx.coroutines.coroutineScope {
+                // 文本预处理（模型相关）：
+                // - Piper：把 OOV 字符替换成可发音等价物（数字→英文单词、CJK→占位符），
+                //   否则裸文本进 generate() 会触发 native 段错误 (SIGSEGV)。
+                // - Kokoro：双语模型自带中英 G2P（espeak-ng + 中文词典 + ruleFst 数字
+                //   归一化），只做空白归一化——Piper 专用的替换反而会破坏中文文本
+                val isKokoro = currentModelIsKokoro
+                // Kokoro 音色：用户在设置页选择的 sid（Piper 单说话人恒为 0）。
+                // 每条链入队时读取一次偏好：朗读中途切音色，下一条链生效
+                val sid = if (isKokoro) getSelectedSid() else 0
+                Log.i(TAG, "Embedded TTS speak queue: sentences=${rawSentences.size}, sid=$sid, streaming")
+                // 句完成水位队列 + 单监视协程：句 i 的全部帧被硬件消费完（水位到达）
+                // 才回调 onSentenceDone(i)，既不超前（音频没播完就推进）也不滞后；
+                // 单消费者保证回调顺序与句子顺序一致
+                val pendingWatermarks = java.util.concurrent.ConcurrentLinkedQueue<Pair<Long, Int>>()
+                val generationDone = java.util.concurrent.atomic.AtomicBoolean(false)
+                if (onSentenceDone != null) {
+                    launch {
+                        while (true) {
+                            kotlinx.coroutines.delay(20)
+                            if (player.isTrackTakenOver()) {
+                                // 轨道已被 stop() 接管释放：未播完的句不再回调
+                                //（父协程随即被取消，监视协程一并退出）
+                                pendingWatermarks.clear()
+                                return@launch
+                            }
+                            val head = player.currentHead()
+                            if (head >= 0L) {
+                                while (true) {
+                                    val next = pendingWatermarks.peek() ?: break
+                                    if (head < next.first) break
+                                    pendingWatermarks.poll()
+                                    onSentenceDone(next.second)
+                                }
+                            }
+                            if (generationDone.get() && pendingWatermarks.isEmpty()) return@launch
+                        }
                     }
                 }
-                if (anyOk) {
-                    consecutiveFailures = 0
-                } else {
-                    consecutiveFailures++
-                    if (consecutiveFailures >= 3) {
-                        Log.e(TAG, "3 consecutive sentence failures — aborting speak (model likely broken)")
-                        _state.value = EngineState.FAILED("语音合成连续失败，模型可能已损坏")
-                        isPlaying.set(false)
-                        return false
+                // 熔断器：模型损坏时每句都会抛异常，旧实现逐句"跳过"后照常返回成功，
+                // 上层会"静音朗读"完整本书并推进进度。连续失败 3 句直接中止并报失败
+                var consecutiveFailures = 0
+                try {
+                    for ((idx, raw) in rawSentences.withIndex()) {
+                        if (raw.isBlank()) continue
+                        // 每句之前检查协程是否已被取消（stop() 调用）
+                        kotlinx.coroutines.yield()
+                        if (speakJob?.isActive == false) {
+                            throw kotlinx.coroutines.CancellationException("stop() requested")
+                        }
+                        val cleaned = if (isKokoro) preprocessForTtsLight(raw) else preprocessForTts(raw)
+                        // 清洗后无内容（如 Piper 把短中文段过滤成空白）：跳过且不计入
+                        // 熔断失败数——与旧实现（先清洗再过滤空白句）语义一致
+                        if (cleaned.isBlank()) continue
+                        val framesBeforeSentence = player.framesWritten
+                        for (sub in splitSentences(cleaned)) {
+                            // 单句仍可能超长（超长标题/无标点中文长段）：切成 ≤150 字符的块
+                            // 逐块合成，旧实现 substring(0,150) 直接丢弃 150 字符后的全部内容
+                            for (chunk in hardChunks(sub, 150)) {
+                                val framesBeforeChunk = player.framesWritten
+                                val audio = try {
+                                    currentTts.generateWithCallback(chunk, sid = sid, speed = speed) { samples ->
+                                        // 返回 1 继续合成；协程已取消时返回 0 让 native 立即中止
+                                        if (speakJob?.isActive == false) 0 else player.offer(samples)
+                                    }
+                                } catch (e: kotlinx.coroutines.CancellationException) {
+                                    throw e
+                                } catch (e: Exception) {
+                                    // 单块 generate 崩溃（如 native G2P bug）：跳过该块，继续
+                                    Log.e(TAG, "chunk generate failed, skipping: '${chunk.take(60)}'", e)
+                                    null
+                                }
+                                if (audio != null && player.framesWritten == framesBeforeChunk &&
+                                    audio.samples.isNotEmpty()
+                                ) {
+                                    // 兜底：JNI 回调静默失效（一帧未写）时整段补写，保证有声
+                                    player.offer(audio.samples)
+                                }
+                                if (player.framesWritten > framesBeforeChunk) {
+                                    Log.i(
+                                        TAG,
+                                        "Embedded TTS chunk queued: len=${chunk.length}, " +
+                                            "samples=${audio?.samples?.size ?: 0}, " +
+                                            "totalFrames=${player.framesWritten}",
+                                    )
+                                }
+                            }
+                        }
+                        if (player.framesWritten > framesBeforeSentence) {
+                            consecutiveFailures = 0
+                            if (onSentenceDone != null) {
+                                // 句完成水位 = 该句最后一帧入队位置
+                                pendingWatermarks.add(player.framesWritten to idx)
+                            }
+                        } else {
+                            consecutiveFailures++
+                            if (consecutiveFailures >= 3) {
+                                Log.e(
+                                    TAG,
+                                    "3 consecutive sentence failures — aborting speak (model likely broken)",
+                                )
+                                _state.value = EngineState.FAILED("语音合成连续失败，模型可能已损坏")
+                                circuitBroken = true
+                                return@coroutineScope
+                            }
+                        }
                     }
+                    // 全部生成完毕：等最后水位排空（音频真正播完）本链才算结束。
+                    // onSentenceDone 为 null 时监视协程不存在，这里是唯一的排水口
+                    player.awaitWatermark(player.framesWritten)
+                } finally {
+                    generationDone.set(true)
                 }
             }
-            isPlaying.set(false)
-            onDone()
-            return true
         } catch (e: kotlinx.coroutines.CancellationException) {
-            // playPcm 内部的 delay() 会在协程取消时抛出 CancellationException；
+            // 播放等待的 delay() 会在协程取消时抛出 CancellationException；
             // 不能吞掉，否则 withContext 不会正确传播取消信号。
             isPlaying.set(false)
+            player.releaseIfCurrent()
             throw e
         } catch (e: Exception) {
             Log.e(TAG, "speak failed", e)
             isPlaying.set(false)
+            player.releaseIfCurrent()
             return false
+        }
+        isPlaying.set(false)
+        player.releaseIfCurrent()
+        return !circuitBroken
+    }
+
+    /**
+     * 流式播放器：一条朗读链专用一条 MODE_STREAM AudioTrack。
+     *
+     * sherpa-onnx 的 generateWithCallback 每合成完一小段（内部按句）就回调一次，
+     * 采样转 16-bit PCM 后直接写入流式 AudioTrack 立即出声——后续小段还在
+     * 合成时本段已在播放，把"按下朗听到听见声音"的等待从整段合成时间缩短到
+     * 首小段合成时间。
+     *
+     * 线程模型：[offer] 由 JNI 回调在合成线程（与 generateWithCallback 同线程）
+     * 调用，阻塞写提供天然背压（缓冲写满时等硬件消费，合成永不跑飞内存）；
+     * [awaitWatermark]/[currentHead] 由水位监视协程轮询。与 stop() 的互斥靠
+     * audioTrack 字段 + audioTrackLock：stop() 释放并置空字段后，写失败/
+     * 水位检查发现轨道已死并快速中止。
+     */
+    private inner class StreamingTrackPlayer(private val sampleRate: Int) {
+
+        /** 已写入硬件的帧数（水位基准）；仅合成线程写，监视协程读快照 */
+        var framesWritten: Long = 0L
+            private set
+
+        private var track: AudioTrack? = null
+
+        /** 轨道已损坏（构建/播放/写入失败）：后续 offer 拒绝 */
+        @Volatile
+        private var broken = false
+
+        /**
+         * 写入一段采样（[-1,1] Float → 16-bit PCM）。在 JNI 回调内调用，
+         * 绝不能抛异常（会穿过 JNI 边界变成 pending exception 破坏后续调用）。
+         * @return 1 继续合成；0 立即中止合成（轨道坏/写入失败）
+         */
+        fun offer(samples: FloatArray): Int {
+            if (broken || samples.isEmpty()) return 1
+            val t = track ?: buildAndStartTrack() ?: return 0
+            val pcm16 = ShortArray(samples.size) { i ->
+                (samples[i] * 32767f).toInt().coerceIn(-32768, 32767).toShort()
+            }
+            var offset = 0
+            while (offset < pcm16.size) {
+                val written = t.write(pcm16, offset, pcm16.size - offset)
+                if (written < 0) {
+                    // write 失败（轨道被 stop() 释放等）：中止合成，交由调用方按句跳过
+                    Log.w(TAG, "stream write failed: $written")
+                    broken = true
+                    return 0
+                }
+                offset += written
+                framesWritten += written
+            }
+            return 1
+        }
+
+        /** 当前硬件已播帧数；轨道未建/已被外部接管（stop()）返回 -1。 */
+        fun currentHead(): Long {
+            val t = track ?: return -1L
+            return synchronized(audioTrackLock) {
+                if (audioTrack !== t) -1L else t.playbackHeadPosition.toLong()
+            }
+        }
+
+        /**
+         * 轨道是否已被外部接管（stop() 释放了 audioTrack 字段）。
+         * 轨道尚未建立时返回 false——生成还在进行，稍后会有音频写入，
+         * 水位监视必须继续等待而不是退出。
+         */
+        fun isTrackTakenOver(): Boolean {
+            val t = track ?: return false
+            return synchronized(audioTrackLock) { audioTrack !== t }
+        }
+
+        /**
+         * 等待水位（已播帧数 ≥ [frames]）。轨道被外部接管（stop() 释放）时
+         * 返回 false；自然排空返回 true。
+         */
+        suspend fun awaitWatermark(frames: Long): Boolean {
+            val t = track ?: return frames <= 0L
+            while (true) {
+                kotlinx.coroutines.delay(20)
+                val head = synchronized(audioTrackLock) {
+                    if (audioTrack !== t) return false
+                    t.playbackHeadPosition.toLong()
+                }
+                if (head >= frames) return true
+            }
+        }
+
+        /** 释放轨道（仅当仍是当前 audioTrack，避免与 stop() 双重释放）。 */
+        fun releaseIfCurrent() {
+            val t = track ?: return
+            synchronized(audioTrackLock) {
+                if (audioTrack === t) {
+                    audioTrack = null
+                    try {
+                        if (t.state == AudioTrack.STATE_INITIALIZED) {
+                            t.pause()
+                            t.flush()
+                        }
+                        t.release()
+                    } catch (_: Exception) {}
+                }
+            }
+            track = null
+        }
+
+        private fun buildAndStartTrack(): AudioTrack? {
+            if (broken) return null
+            val newTrack = try {
+                val minBuffer = AudioTrack.getMinBufferSize(
+                    sampleRate,
+                    AudioFormat.CHANNEL_OUT_MONO,
+                    AudioFormat.ENCODING_PCM_16BIT,
+                )
+                val targetBytes = sampleRate * 2 * STREAM_BUFFER_SECONDS
+                val bufferSize = if (minBuffer > 0) maxOf(minBuffer, targetBytes) else targetBytes
+                AudioTrack.Builder()
+                    .setAudioAttributes(
+                        AudioAttributes.Builder()
+                            .setUsage(AudioAttributes.USAGE_MEDIA)
+                            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                            .build()
+                    )
+                    .setAudioFormat(
+                        AudioFormat.Builder()
+                            .setSampleRate(sampleRate)
+                            .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                            .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                            .build()
+                    )
+                    .setBufferSizeInBytes(bufferSize)
+                    .setTransferMode(AudioTrack.MODE_STREAM)
+                    .build()
+            } catch (e: Exception) {
+                Log.w(TAG, "stream track build failed", e)
+                broken = true
+                return null
+            }
+            // 注册进 audioTrack：stop() 才能立刻停掉正在播的流
+            synchronized(audioTrackLock) { audioTrack = newTrack }
+            track = newTrack
+            // 播放前申请音频焦点：让音乐/播客让路，朗读结束/停止后归还
+            requestAudioFocusIfNeeded()
+            return try {
+                newTrack.play()
+                newTrack
+            } catch (e: Exception) {
+                Log.w(TAG, "stream track play failed", e)
+                releaseIfCurrent()
+                broken = true
+                null
+            }
         }
     }
 
@@ -1955,7 +2206,7 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
      * 停止当前播放。
      */
     fun stop() {
-        // 取消全部 speak 协程：让 doSpeakLocked 立刻退出（协程取消时
+        // 取消全部 speak 协程：让 doSpeakQueueLocked 立刻退出（协程取消时
         // kotlinx coroutines Mutex.withLock 会在 finally 释放锁）。
         // 之前只停 AudioTrack 会导致旧 speak 继续在 mutex 里跑完整段，
         // 用户的"停止"按钮实际无效——新的 speak 必须等旧协程跑完才能进。
@@ -1980,131 +2231,6 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
         isPlaying.set(false)
         // 停止即归还音频焦点，让被压低的音乐/播客恢复
         abandonAudioFocusIfHeld()
-    }
-
-    /**
-     * 播放 PCM 浮点音频数据。
-     *
-     * 改为 suspend 函数后用 [delay] 替代 [Thread.sleep]，使播放等待期间
-     * 能响应协程取消（如 viewModelScope 被清除时），避免占用 IO 线程直到
-     * 整段音频播完。
-     */
-    private suspend fun playPcm(samples: FloatArray, sampleRate: Int) {
-        if (samples.isEmpty()) return
-        // 注意：不能调 stop()！stop() 会 cancel currentSpeakJob（即当前协程自己），
-        // 导致多 chunk 播放时第二个 chunk 的 playPcm 立刻取消整个 speak 协程。
-        // 这里只需释放上一个 AudioTrack（如果有），不取消协程。
-        synchronized(audioTrackLock) {
-            try {
-                audioTrack?.let {
-                    if (it.state == AudioTrack.STATE_INITIALIZED) {
-                        it.pause()
-                        it.flush()
-                    }
-                    it.release()
-                }
-            } catch (_: Exception) {}
-            audioTrack = null
-        }
-
-        // sherpa-onnx 输出范围 [-1, 1] 的 Float，AudioTrack 需要 16-bit PCM
-        val pcm16 = ShortArray(samples.size) { i ->
-            (samples[i] * 32767f).toInt().coerceIn(-32768, 32767).toShort()
-        }
-
-        // MODE_STATIC 要求 buffer ≥ 数据长度，同时部分设备的 AudioTrack mixer
-        // 有自己的最小 buffer 门槛：只给 pcm16.size*2 时短数据 write() 返回 -22，
-        // 整句静默丢弃（长句尾部 chunk 最常踩中）
-        val minBuffer = AudioTrack.getMinBufferSize(
-            sampleRate,
-            AudioFormat.CHANNEL_OUT_MONO,
-            AudioFormat.ENCODING_PCM_16BIT,
-        )
-        val bufferSize = maxOf(pcm16.size * 2, minBuffer)
-        val track = AudioTrack.Builder()
-            .setAudioAttributes(
-                AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_MEDIA)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                    .build()
-            )
-            .setAudioFormat(
-                AudioFormat.Builder()
-                    .setSampleRate(sampleRate)
-                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                    .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
-                    .build()
-            )
-            .setBufferSizeInBytes(bufferSize)
-            .setTransferMode(AudioTrack.MODE_STATIC)
-            .build()
-
-        synchronized(audioTrackLock) {
-            audioTrack = track
-        }
-
-        // 播放前申请音频焦点：让音乐/播客让路，朗读结束/停止后归还
-        requestAudioFocusIfNeeded()
-
-        val written = track.write(pcm16, 0, pcm16.size)
-        if (written < 0) {
-            // write 失败（ERROR_*）：别播了，释放该 track 交由调用方按句跳过
-            Log.w(TAG, "AudioTrack.write failed: $written")
-            synchronized(audioTrackLock) {
-                if (audioTrack === track) {
-                    audioTrack = null
-                    try { track.release() } catch (_: Exception) {}
-                }
-            }
-            return
-        }
-        try {
-            track.play()
-        } catch (e: IllegalStateException) {
-            Log.w(TAG, "AudioTrack.play failed", e)
-            synchronized(audioTrackLock) {
-                if (audioTrack === track) {
-                    audioTrack = null
-                    try { track.release() } catch (_: Exception) {}
-                }
-            }
-            return
-        }
-
-        // 等待播放完成：以硬件已消费的帧数（playbackHeadPosition）为准。
-        // 旧实现用 (字节数/采样率) 估算时长，估算偏短时 release() 会把
-        // 还在硬件 buffer 里排队的尾音硬切掉（句尾元音中间"啪"地断）
-        try {
-            while (true) {
-                kotlinx.coroutines.delay(20)
-                val head = synchronized(audioTrackLock) {
-                    if (audioTrack !== track) {
-                        // 被 stop()/新的 playPcm 接管：对方已在锁内 release 过这个 track。
-                        // 这里不能再 release（双重释放会抛 IllegalStateException）
-                        return
-                    }
-                    track.playbackHeadPosition
-                }
-                if (head >= pcm16.size) break
-            }
-        } catch (e: kotlinx.coroutines.CancellationException) {
-            // scope 销毁等取消路径：若 track 仍是当前则释放，
-            // 否则 MODE_STATIC 音频会继续播完且 native 资源悬挂到 GC
-            synchronized(audioTrackLock) {
-                if (audioTrack === track) {
-                    audioTrack = null
-                    try { track.release() } catch (_: Exception) {}
-                }
-            }
-            throw e
-        }
-        // 自然播完：在锁内确认仍是当前 track 才释放，避免与 stop() 竞态双重释放
-        synchronized(audioTrackLock) {
-            if (audioTrack === track) {
-                audioTrack = null
-                track.release()
-            }
-        }
     }
 
     /**
