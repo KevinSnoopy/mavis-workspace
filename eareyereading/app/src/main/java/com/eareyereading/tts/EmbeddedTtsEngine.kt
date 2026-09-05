@@ -337,31 +337,26 @@ class EmbeddedTtsEngine @Inject constructor(
         private const val STREAM_BUFFER_SECONDS = 4
 
         /**
-         * 开播前预缓冲（秒）：首次 offer 攒够约 0.3 秒 PCM 才建轨并 play()。
+         * 开播前预缓冲（秒）：首次 offer 攒够约 0.8 秒 PCM 才建轨并 play()。
          *
          * 为什么需要：旧实现第一段采样一到就 play()，AudioTrack 缓冲垫≈0，
          * 合成稍有抖动（如系统 binder 停顿/线程调度）就耗尽缓冲触发 underrun，
          * AudioTrack 被系统禁用后 restartIfDisabled 重启还伴随百毫秒级 binder
-         * 停顿，听感为卡顿/长停顿。
-         *
-         * 2026-09-05：从 0.8 秒收紧到 0.3 秒。0.8 秒意味着首块要合成 0.8 秒
-         * 音频才开始播，首声延迟增加 0.5 秒。0.3 秒仍能吸收一次百毫秒级
-         * 合成抖动（binder 停顿/线程调度），underrun 风险由 STREAM_BUFFER_SECONDS=4
-         * 秒的硬件缓冲兜底。配合更小的 chunk（35 字符），首声延迟显著降低。
+         * 停顿，听感为卡顿/长停顿。0.8 秒的权衡：远小于当前 6 秒级的首块合成
+         * 时间（首声延迟几乎不变），又足够吸收一次秒级合成抖动。
          */
-        private const val PREBUFFER_SECONDS = 0.3f
+        private const val PREBUFFER_SECONDS = 0.8f
 
         /**
-         * 单块合成文本最大字符数：块内只有逗号没有句末标点时，sherpa-onnx
-         * 内部按句切分的回调不触发，整块合成完才出声——块越长首声延迟越大、
-         * 欠载爆炸半径越大（150 字符块实测首块 6 秒无输出）。
+         * 单块合成文本最大字符数。
          *
-         * 2026-09-05：从 80 → 50 → 35。Kokoro RTF≈0.65，每次 generate 有 ~2 秒
-         * 固定开销。35 字符 ≈ 2.8 秒音频合成 ~1.8 秒，配合按次级标点切分，
-         * 块内更可能有逗号 → sherpa-onnx 回调更早触发 → 首声延迟进一步降低。
-         * 再小会导致固定开销占比过高（2s 固定 / <1s 合成）。
+         * 2026-09-05：从 80 提高到 200。配合 maxNumSentences=4，native 端把
+         * 块内句子并行合成（默认 maxNumSentences=1 串行，每次 generate ~2s
+         * 固定开销，5 句 = 10s）。200 字符在 sherpa-onnx 安全范围内（~200 以内
+         * 稳定），native 端自己按句切分并行处理，回调仍按句触发流式出声。
+         * Kotlin 层不再切成 80 字符小块串行——那是固定开销倍增的根因。
          */
-        private const val MAX_CHUNK_CHARS = 35
+        private const val MAX_CHUNK_CHARS = 200
 
         /**
          * 推理预热文本（见 [warmUp]）：长度必须接近真实首块负载
@@ -855,14 +850,8 @@ private fun splitSentences(text: String): List<String> {
 }
 
 /**
- * 超长句切块（≤maxLen）：优先在次级标点（逗号/分号/冒号）处断，其次在空白处断，
- * 找不到就硬切。替代旧的 substring(0,150)——那是直接丢弃 150 字符以后的全部内容。
- *
- * 为什么优先按次级标点切（2026-09-05 长句慢修复）：sherpa-onnx generateWithCallback
- * 的回调由 native 端按句末标点触发。块内只有逗号没有句末标点时，整块合成完才回调
- * 一次——块越长首声延迟越大（80 字符块实测首块 6 秒无输出）。按逗号切分后，每块
- * 以标点结尾，native 端在标点处触发回调，采样边合成边写入 AudioTrack 立即出声，
- * 首声延迟从"整块合成时间"降到"首小句合成时间"。
+ * 超长句切块（≤maxLen）：优先在空白处断，找不到就硬切。
+ * 替代旧的 substring(0,150)——那是直接丢弃 150 字符以后的全部内容。
  */
 private fun hardChunks(sentence: String, maxLen: Int): List<String> {
     if (sentence.length <= maxLen) return listOf(sentence)
@@ -871,21 +860,8 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
     while (start < sentence.length) {
         val end = minOf(start + maxLen, sentence.length)
         val cut = if (end < sentence.length) {
-            // 优先在次级标点处断（逗号/分号/冒号/中文逗号/中文分号）：
-            // 标点后切分让块以标点结尾，sherpa-onnx 内部回调更早触发
-            val punctChars = charArrayOf(',', ';', ':', '，', '；', '：')
-            var bestPunct = -1
-            for (i in end - 1 downTo start + maxLen / 2) {
-                if (sentence[i] in punctChars) {
-                    bestPunct = i + 1  // 标点之后切，保留标点在块尾
-                    break
-                }
-            }
-            if (bestPunct > start) bestPunct else {
-                // 次级标点找不到：回退到空白处断
-                val ws = sentence.lastIndexOf(' ', end)
-                if (ws > start + maxLen - 40) ws else end
-            }
+            val ws = sentence.lastIndexOf(' ', end)
+            if (ws > start + maxLen - 40) ws else end
         } else {
             end
         }
@@ -1896,7 +1872,15 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
                         numThreads = NUM_THREADS,
                     )
                 }
-                val config = OfflineTtsConfig(model = modelConfig, ruleFsts = ruleFsts)
+                val config = OfflineTtsConfig(
+                    model = modelConfig,
+                    ruleFsts = ruleFsts,
+                    // maxNumSentences：native 端一次 generate 内并行合成的最大句子数。
+                    // 默认 1 = 逐句串行，每次 generate 有 ~2s 固定开销，5 句 = 10s。
+                    // 设为 4：native 端把输入按句切分后并行合成，固定开销摊薄，
+                    // 整段朗读速度显著提升。回调仍按句触发，流式出声不受影响。
+                    maxNumSentences = 4,
+                )
                 val newTts = OfflineTts(config = config)
                 // 关键：替换/释放旧 native 实例必须与 generate() 互斥。
                 // 只加 synchronized(this) 时，另一个协程可能正持有 speakMutex
