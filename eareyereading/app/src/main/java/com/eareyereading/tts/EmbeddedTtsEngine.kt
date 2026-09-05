@@ -1951,16 +1951,25 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
      * 7-8 秒是纯冷启动开销，全部落在"用户点击朗读后的首声延迟"上。
      * 把这笔开销挪到进书/初始化后的空闲时间，用户点击时引擎已热，
      * 首声延迟从 10s 级降到稳态首块合成时间（约 1-3 秒）。
+     */
+
+    /**
+     * 预热取消标志：用户点朗读时设 true，warmUp 的 generate 回调返回 0 中止合成，
+     * 释放 speakMutex 让用户请求立即开始。warmUp 是优化，绝不能阻塞用户 10 秒。
+     */
+    @Volatile
+    private var warmUpCancelled = false
+
+    /**
+     * 后台预热：跑一次与真实首块等长的合成并丢弃音频，提前消化
+     * ONNX Runtime **首次** generate 的一次性开销（图优化、线程池爬升、
+     * arena 内存池扩张与物理页缺页）。
      *
-     * **预热形状必须匹配真实负载**：用 [WARMUP_TEXT]（~90 字符，与首块
-     * 同规模）。短句预热（如 "Ok."）只把 arena 内存池长到小句规模，
-     * 真实长句推理时大额扩张与缺页成本会重现，预热近乎无效。
-     *
-     * 锁语义：tryLock 立即返回——拿不到锁说明有真实朗读正在合成
-     * （它自己就会完成预热，[doSpeakQueueLocked] 成功后同样置位），
-     * 本次预热直接放弃，绝不排在用户请求后面反向增加首声延迟；
-     * 预热期间新来的真实请求会挂在 mutex 上等预热结束，但预热剩余
-     * 时间 ≤ 无预热时该请求自己要付的冷启动时间，只会更快不会更慢。
+     * **锁语义**：tryLock 拿不到（正在朗读）直接放弃。拿到锁后开始合成，
+     * 但合成期间用户点朗读时，speakViaQueue 会设 [warmUpCancelled] = true，
+     * generate 回调返回 0 中止合成、释放锁，用户请求立即开始——
+     * 不让预热阻塞用户 10 秒（2026-09-05 真机实测：warmUp 10s 未完成时
+     * 用户点朗读，speak 挂锁等 10s 才出声）。
      */
     suspend fun warmUp() = withContext(Dispatchers.IO) {
         val modelId = currentModelName
@@ -1972,10 +1981,14 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
             if (currentModelName != modelId) return@withContext
             val sid = if (currentModelIsKokoro) getSelectedSid() else 0
             val startMs = System.currentTimeMillis()
+            warmUpCancelled = false
             try {
                 // 与真实朗读同一代码路径（generateWithCallback + sid），
-                // 确保 ONNX 会话/内存池/线程池全部被预热
-                engine.generateWithCallback(WARMUP_TEXT, sid = sid, speed = 1.0f) { _ -> 1 }
+                // 确保 ONNX 会话/内存池/线程池全部被预热。
+                // 回调检查 warmUpCancelled：用户点朗读时返回 0 中止合成
+                engine.generateWithCallback(WARMUP_TEXT, sid = sid, speed = 1.0f) {
+                    if (warmUpCancelled) 0 else 1
+                }
                 warmedUpModelId = modelId
                 Log.i(
                     TAG,
@@ -2099,6 +2112,10 @@ private fun hardChunks(sentence: String, maxLen: Int): List<String> {
         // 已在队列里；入口 ensureActive 让被取消的旧协程在抢锁前就放弃，避免
         // 两个 speak 协程几乎同时进入 doSpeakQueueLocked 造成音频叠播/错序。
         coroutineContext[Job]?.ensureActive()
+        // 用户点朗读时取消正在进行的 warmUp：warmUp 持有 speakMutex 合成 ~10s，
+        // 不取消的话 speak 挂锁等 10s 才出声。设标志让 warmUp 的 generate 回调
+        // 返回 0 中止合成、释放锁，用户请求立即开始
+        warmUpCancelled = true
         val myJob = coroutineContext[Job]
         synchronized(speakJobLock) {
             myJob?.let { activeSpeakJobs.add(it) }
