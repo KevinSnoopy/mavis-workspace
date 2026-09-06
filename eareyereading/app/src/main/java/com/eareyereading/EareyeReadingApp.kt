@@ -8,6 +8,7 @@ import android.content.IntentFilter
 import androidx.core.content.ContextCompat
 import com.eareyereading.domain.repository.SettingsRepository
 import com.eareyereading.tts.EmbeddedTtsEngine
+import com.eareyereading.tts.warmUp
 import com.eareyereading.util.NotificationHelper
 import com.eareyereading.util.ReminderPrefs
 import com.eareyereading.util.TranslationHelper

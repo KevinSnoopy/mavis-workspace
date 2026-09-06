@@ -4,6 +4,7 @@ import android.content.Context
 import com.eareyereading.domain.repository.SettingsRepository
 import com.eareyereading.tts.EmbeddedTtsEngine
 import com.eareyereading.tts.TencentTtsEngine
+import com.eareyereading.tts.warmUp
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers

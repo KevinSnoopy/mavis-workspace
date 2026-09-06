@@ -7,10 +7,6 @@ import android.media.AudioTrack
 import android.util.Log
 import com.eareyereading.util.NotificationService
 import com.k2fsa.sherpa.onnx.OfflineTts
-import com.k2fsa.sherpa.onnx.OfflineTtsConfig
-import com.k2fsa.sherpa.onnx.OfflineTtsKokoroModelConfig
-import com.k2fsa.sherpa.onnx.OfflineTtsModelConfig
-import com.k2fsa.sherpa.onnx.OfflineTtsVitsModelConfig
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
@@ -25,7 +21,6 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -47,6 +42,11 @@ import kotlinx.coroutines.withContext
  *     中文书朗读不再被预处理过滤成静音。音色通过 generate(sid) 切换。
  *
  * 模型文件从 CDN 下载到 app 的私有目录（Piper 约 66MB / Kokoro 约 147MB 压缩包）。
+ *
+ * **职责边界**（拆分见同包扩展文件）：本类只保留生命周期与并发语义——
+ * 朗读队列在 [doSpeakQueueLocked]（EmbeddedTtsEngineSpeak.kt）、预热/预合成在
+ * EmbeddedTtsEngineWarmup.kt、下载链在 TtsModelDownloader.kt、native 配置构造在
+ * TtsEngineConfigFactory、首声埋点在 TtsFirstAudioTrace、分块在 TtsBlockChunker。
  */
 @Singleton
 class EmbeddedTtsEngine @Inject constructor(
@@ -54,93 +54,54 @@ class EmbeddedTtsEngine @Inject constructor(
     private val notificationService: NotificationService,
 ) {
     @Volatile
-    private var tts: OfflineTts? = null
+    internal var tts: OfflineTts? = null
+
     @Volatile
     private var currentModelName: String = ""
+
     /** 当前已加载模型是否为 Kokoro（决定 generate 时是否传音色 sid） */
     @Volatile
-    private var currentModelIsKokoro: Boolean = false
+    internal var currentModelIsKokoro: Boolean = false
+
     @Volatile
     private var sampleRate: Int = 22050
 
     /**
-     * 已完成"首次推理预热"的模型 id（见 [warmUp]）。
+     * 已完成"首次推理预热"的模型 id（见 EmbeddedTtsEngineWarmup.kt 的 warmUp）。
      * release()/换模型后置 null——新的 OfflineTts 实例要重新预热；
      * 任何一次真实合成成功也会置位（真实请求本身就完成了预热）。
      */
     @Volatile
-    private var warmedUpModelId: String? = null
-
-    // ── 首声四段埋点（TTS_LATENCY_DIAGNOSIS_2026-09-06 第五节）─────────────
-    // click→firstOffer→trackPlayed→headMoved 四段耗时一条日志量化首声延迟，
-    // 不再靠 awaitWatermark 的 head=0 反推。会话级单例够用：speakMutex 保证
-    // 同一时刻只有一条朗读链，新链 beginFirstAudioTrace 会重置全部字段。
-    /** 用户点击朗读的时刻（ms）；由 beginFirstAudioTrace 在 UI 线程写入 */
-    @Volatile
-    private var firstAudioClickMs: Long = 0L
-    /** 首帧 PCM 入队时刻（ms）；doSpeakQueueLocked 的 generateWithCallback 首次回调时写 */
-    @Volatile
-    private var firstAudioOfferMs: Long = 0L
-    /** AudioTrack.play() 时刻（ms）；StreamingTrackPlayer.startTrack 首次成功时写 */
-    @Volatile
-    private var firstAudioPlayedMs: Long = 0L
-    /** 硬件首次消费帧时刻（ms）；awaitWatermark 首次 head>0 时写 */
-    @Volatile
-    private var firstAudioHeadMovedMs: Long = 0L
-    /** 本链首块字符数与句子数，首声日志里一并报出 */
-    @Volatile
-    private var firstAudioBlockChars: Int = 0
-    @Volatile
-    private var firstAudioSentenceCount: Int = 0
+    internal var warmedUpModelId: String? = null
 
     /**
-     * 在 UI 点击朗读的瞬间调用，标记本条朗读链首声计时的起点。
-     * 必须在 speakViaQueue 拿锁之前调用——首声延迟含等锁时间。
-     * 幂等重置：连点会重置起点，与 speakViaQueue 取消旧 job 的语义一致。
-     * sentenceCount 在 doSpeakQueueLocked 进链时补全（click 瞬间尚未切句）。
+     * 预热取消标志：用户点朗读时设 true，warmUp 的 generate 回调返回 0 中止合成，
+     * 释放 speakMutex 让用户请求立即开始（见 EmbeddedTtsEngineWarmup.kt）。
      */
-    fun beginFirstAudioTrace() {
-        firstAudioClickMs = System.currentTimeMillis()
-        firstAudioOfferMs = 0L
-        firstAudioPlayedMs = 0L
-        firstAudioHeadMovedMs = 0L
-        firstAudioBlockChars = 0
-        firstAudioSentenceCount = 0
-    }
+    @Volatile
+    internal var warmUpCancelled = false
 
-    /**
-     * 短文本（单词）预合成 PCM 缓存：key = "清洗后文本|sid|speed"。
-     *
-     * 为什么需要：Kokoro 每次 generate 调用有 ~2 秒**固定开销**（与文本长度
-     * 无关——真机实测：7 字符单词合成 1.2 秒音频耗时 2.9 秒；80 字符长块
-     * 6.5 秒音频耗时 4.2 秒，反推固定成本 ~2s + RTF≈0.34）。固定开销在
-     * native 推理层，预热消不掉、每次都付——单词/短句现场合成必然卡。
-     * 单词弹窗打开时后台预合成进缓存，点喇叭时零推理延迟直接播
-     * （2026-09-05 "读一个单词都卡"修复）。
-     *
-     * android.util.LruCache 的 get/put 方法级 synchronized，线程安全。
-     */
-    private val pcmCache = android.util.LruCache<String, FloatArray>(PCM_CACHE_ENTRIES)
+    /** 首声四段埋点（click→firstOffer→trackPlayed→headMoved） */
+    internal val firstAudioTrace = TtsFirstAudioTrace()
 
-    /** 缓存键：与 [doSpeakQueueLocked] 的消费端保持一致（清洗后文本 + 音色 + 语速）。 */
-    private fun cacheKey(text: String, sid: Int, speed: Float): String =
-        "${text.trim().lowercase()}|$sid|$speed"
+    /** 短文本（单词）预合成 PCM 缓存（见 EmbeddedTtsEngineWarmup.kt） */
+    internal val pcmCache = TtsPcmCache()
 
     // 是否正在播放
-    private val isPlaying = AtomicBoolean(false)
+    internal val isPlaying = AtomicBoolean(false)
 
     // speak() 调用串行化锁：
     // sherpa-onnx OfflineTts 的 native 指针不能并发使用，
     // 否则两个协程同时调 generate() 会触发 JNI 段错误 (SIGSEGV)。
     // TtsHelper.speak() 在 scope.launch 里多次调用本方法，必须串行。
-    private val speakMutex = Mutex()
+    internal val speakMutex = Mutex()
 
     // 当前播放轨道槽：流式播放器建轨时注册，stop() 经此接管释放（见 StreamingTrackPlayer.kt）
-    private val trackSlot = AudioTrackSlot()
+    internal val trackSlot = AudioTrackSlot()
 
     // ── 音频焦点：此前完全不申请，朗读会压在音乐/播客上（或被电话打断后不恢复）。
     // 焦点丢失时先发 externalStop 再停引擎（保序），循环播放驱动才能同步收闸
-    private val audioManager: AudioManager? by lazy {
+    internal val audioManager: AudioManager? by lazy {
         context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
     }
 
@@ -153,7 +114,7 @@ class EmbeddedTtsEngine @Inject constructor(
      * start 成功、状态 PLAYING，但 mixer 恒不消费（playbackHeadPosition=0），
      * 扬声器完全无声；pcmPeak/musicVol 诊断排除数据与音量因素后锁定于此。
      */
-    private val playbackAudioAttributes: AudioAttributes = AudioAttributes.Builder()
+    internal val playbackAudioAttributes: AudioAttributes = AudioAttributes.Builder()
         .setUsage(AudioAttributes.USAGE_MEDIA)
         .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
         .build()
@@ -169,7 +130,7 @@ class EmbeddedTtsEngine @Inject constructor(
     val externalStop: SharedFlow<Unit> = _externalStop.asSharedFlow()
 
     /** 焦点控制器：请求/归还集中在 TtsAudioFocusController，丢失回调先发信号再停引擎 */
-    private val audioFocus = TtsAudioFocusController(
+    internal val audioFocus = TtsAudioFocusController(
         audioManager = audioManager,
         audioAttributes = playbackAudioAttributes,
         onFocusLost = {
@@ -186,6 +147,15 @@ class EmbeddedTtsEngine @Inject constructor(
      */
     fun abandonAudioFocus() {
         audioFocus.abandonIfHeld()
+    }
+
+    /**
+     * 在 UI 点击朗读的瞬间调用，标记本条朗读链首声计时的起点（委托
+     * [TtsFirstAudioTrace.begin]）。必须在 speakViaQueue 拿锁之前调用——
+     * 首声延迟含等锁时间。幂等重置：连点会重置起点。
+     */
+    fun beginFirstAudioTrace() {
+        firstAudioTrace.begin()
     }
 
     // 当前正在跑的 speak() 协程的 Job 集合。stop() 全部取消，连带释放 mutex。
@@ -244,57 +214,6 @@ class EmbeddedTtsEngine @Inject constructor(
 
     companion object {
         private const val TAG = "EmbeddedTtsEngine"
-        private const val NUM_THREADS = 2
-        /** Kokoro（82M 参数）合成开销大，官方演示对带 voices 的模型用 4 线程 */
-        private const val NUM_THREADS_KOKORO = 4
-
-        /**
-         * 单块合成文本最大字符数。
-         *
-         * 2026-09-05：从 80 提高到 400。Kokoro 不支持 maxNumSentences 并行
-         *（native 日志：max_num_sentences != 1 is ignored for Kokoro），
-         * 真正的加速是减少 generate 调用次数——每次 generate 有 ~2s 固定开销。
-         * 把大块文本一次传给 native，native 端按句点切分逐句回调出声（流式），
-         * 首句合成完就回调，不用等整块合成完。400 字符覆盖典型段落，
-         * 在 sherpa-onnx 安全范围内（~500 以内稳定）。
-         */
-        private const val MAX_CHUNK_CHARS = 400
-
-        /**
-         * 首块合并上限（字符数）。
-         *
-         * 2026-09-06 真机实测（Kokoro int8 / 4 线程）：G2P 对 179 字符整块要 ~7.5s，
-         * 占首声延迟 68%。G2P 在 native ConvertTextToTokenIds 里对整块一次性做
-         *（espeak-ng + jieba + 3 ruleFST），逐句回调只发生在 G2P 完成后的推理阶段。
-         * 首块减小直接降低 G2P 耗时，首声从 ~11s 降到 ~6s。
-         * 后续块维持 [MAX_CHUNK_CHARS]（400）合并——G2P 摊薄到可接受，且减少
-         * generate 调用次数（每次 generate 有 ~2s 固定开销）。
-         */
-        private const val FIRST_BLOCK_MAX_CHARS = 120
-
-        /**
-         * 推理预热文本（见 [warmUp]）：长度必须接近真实首块负载
-         * （~90 字符 ≈ 4-6 秒音频）。用 "Ok." 这类短句预热时，ONNX Runtime
-         * 的 arena 内存池只长到小句规模，真实首句推理仍要触发大额 arena
-         * 扩张与物理页缺页，冷启动成本大部分重现（2026-09-05 真机实测：
-         * 短句预热后首句出声仍 ~8s）。长句预热把内存池/页表一次性长到
-         * 峰值形状，真实首句直接复用。合成出的音频直接丢弃，
-         * 不建 AudioTrack、不申请音频焦点。
-         */
-        private const val WARMUP_TEXT =
-            "The morning sun rises slowly over the quiet hills, and the birds begin to sing in the trees."
-
-        /**
-         * 预合成 PCM 缓存条目数（单词场景）：单条约 100-300KB
-         * （1-3 秒 24kHz Float PCM），24 条峰值 ~7MB。
-         */
-        private const val PCM_CACHE_ENTRIES = 24
-
-        /**
-         * 预合成仅面向短文本（单词/短语）：超长文本的每次 generate 固定开销
-         * 占比小，缓存价值低且浪费内存。
-         */
-        private const val MAX_PREWARM_CHARS = 40
 
         /** 用户当前选中的模型 ID（用 SharedPreferences 持久化） */
         private const val PREFS_NAME = "embedded_tts_prefs"
@@ -302,7 +221,6 @@ class EmbeddedTtsEngine @Inject constructor(
 
         /** 用户选中的音色 sid，按模型分别持久化（Piper 无多音色，仅 Kokoro 使用） */
         private const val KEY_SELECTED_VOICE_PREFIX = "selected_voice_"
-
     }
 
     private val prefs by lazy {
@@ -466,6 +384,9 @@ class EmbeddedTtsEngine @Inject constructor(
 
     /**
      * 初始化 OfflineTts 实例（同步方法，调用前确保模型已下载）。
+     *
+     * 并发语义（本方法保留的核心）：native 实例的构造在锁外、替换进锁；
+     * 状态写入与 release() 同锁，避免 READY∧tts=null 的说谎状态。
      */
     suspend fun initialize(
         modelInfo: ModelInfo = getCurrentModelInfo(),
@@ -505,88 +426,8 @@ class EmbeddedTtsEngine @Inject constructor(
                     }
                     return@withContext false
                 }
-                val dir = File(context.filesDir, MODELS_DIR_NAME)
-                val modelDir = File(dir, modelInfo.id)
-
-                // 通过文件名在已下载文件中查找路径，避免依赖 files 数组下标顺序
-                fun findFile(name: String): String? =
-                    modelInfo.files.firstOrNull { it.relativePath.endsWith("/$name") }
-                        ?.let { File(dir, it.relativePath).absolutePath }
-
-                // 主模型文件名各家不同（model.onnx / en_US-lessac-medium.onnx），
-                // 按 .onnx 后缀找而不是写死文件名
-                val modelPath = modelInfo.files
-                    .firstOrNull { it.relativePath.endsWith(".onnx") }
-                    ?.let { File(dir, it.relativePath).absolutePath }
-                    ?: throw IllegalStateException("缺少 .onnx 模型文件")
-                val tokensPath = findFile("tokens.txt")
-                    ?: throw IllegalStateException("缺少 tokens.txt")
-                // Piper 不用 lexicon（G2P 走 espeak-ng）；其余模型可选
-                val lexiconPath = if (modelInfo.usesEspeakNg) null else findFile("lexicon.txt")
-                // MeloTTS 的 jieba 词典目录名为 dict
-                val dictDirPath = modelInfo.files
-                    .firstOrNull { it.relativePath.endsWith("/dict") }
-                    ?.let { File(dir, it.relativePath).absolutePath }
-                // Piper 的 dataDir 必须指向 espeak-ng-data 目录（G2P 数据），
-                // 其余模型保持模型目录本身（MeloTTS 另用 dict 子目录）
-                val dataDirPath = if (modelInfo.usesEspeakNg) {
-                    File(modelDir, "espeak-ng-data").absolutePath
-                } else {
-                    modelDir.absolutePath
-                }
-
-                // 配置构造：Kokoro 与 VITS 走不同的 ModelConfig 分支。
-                // Kokoro 官方 Android 演示配置（sherpa-onnx v1.13.7）：
-                //   model/voices/tokens/dataDir(espeak-ng-data) +
-                //   lexicon = "lexicon-us-en.txt,lexicon-zh.txt"（逗号分隔）+
-                //   ruleFsts = "phone-zh.fst,date-zh.fst,number-zh.fst"
-                //   （中文电话号/日期/数字归一化）。jieba dict/ 由 native 端
-                //   按模型目录自动加载，无需显式配置。
-                val modelConfig: OfflineTtsModelConfig
-                var ruleFsts = ""
-                if (modelInfo.isKokoro) {
-                    val voicesPath = findFile("voices.bin")
-                        ?: throw IllegalStateException("缺少 voices.bin")
-                    // 2026-09-06 实测：省略中文 lexicon/ruleFST 只降 1.2s G2P（10.6→9.4s），
-                    // 但引入 3s 重新初始化开销 + 并发竞态，净负。始终全配。
-                    // G2P 9s 是 Kokoro 英文 lexicon + espeak-ng 的固有性能，Kotlin 侧无法优化。
-                    val lexicons = listOfNotNull(
-                        findFile("lexicon-us-en.txt"),
-                        findFile("lexicon-zh.txt"),
-                    ).joinToString(",")
-                    ruleFsts = listOfNotNull(
-                        findFile("phone-zh.fst"),
-                        findFile("date-zh.fst"),
-                        findFile("number-zh.fst"),
-                    ).joinToString(",")
-                    val kokoroConfig = OfflineTtsKokoroModelConfig(
-                        model = modelPath,
-                        voices = voicesPath,
-                        tokens = tokensPath,
-                        dataDir = dataDirPath,
-                        lexicon = lexicons,
-                    )
-                    // 官方 getOfflineTtsConfig 对带 voices 的模型（Kokoro/Kitten）
-                    // 推荐 4 线程：82M 参数模型合成开销远大于 Piper
-                    modelConfig = OfflineTtsModelConfig(
-                        kokoro = kokoroConfig,
-                        numThreads = NUM_THREADS_KOKORO,
-                    )
-                } else {
-                    // VITS 模型配置（使用构造参数，避免依赖 var 字段默认值）
-                    val vitsConfig = OfflineTtsVitsModelConfig(
-                        model = modelPath,
-                        tokens = tokensPath,
-                        lexicon = lexiconPath ?: "",
-                        dataDir = dataDirPath,
-                        dictDir = dictDirPath ?: "",
-                    )
-                    modelConfig = OfflineTtsModelConfig(
-                        vits = vitsConfig,
-                        numThreads = NUM_THREADS,
-                    )
-                }
-                val config = OfflineTtsConfig(model = modelConfig, ruleFsts = ruleFsts)
+                val modelsRoot = File(context.filesDir, MODELS_DIR_NAME)
+                val config = TtsEngineConfigFactory.create(modelInfo, modelsRoot)
                 val newTts = OfflineTts(config = config)
                 // 关键：替换/释放旧 native 实例必须与 generate() 互斥。
                 // 只加 synchronized(this) 时，另一个协程可能正持有 speakMutex
@@ -652,131 +493,6 @@ class EmbeddedTtsEngine @Inject constructor(
                 false
             }
         }
-
-    /**
-     * 后台预热：跑一次与真实首块等长的合成并丢弃音频，提前消化
-     * ONNX Runtime **首次** generate 的一次性开销（图优化、线程池爬升、
-     * arena 内存池扩张与物理页缺页）。
-     *
-     * **为什么需要**（2026-09-05 真机日志实测，Kokoro int8 / 4 线程）：
-     * 首次 generateWithCallback 从入队到攒满 0.8s 预缓冲花了 **10.4 秒**，
-     * 而稳态第二块仅 4.2 秒合成 6.5 秒音频（RTF≈0.65）——即首块里约
-     * 7-8 秒是纯冷启动开销，全部落在"用户点击朗读后的首声延迟"上。
-     * 把这笔开销挪到进书/初始化后的空闲时间，用户点击时引擎已热，
-     * 首声延迟从 10s 级降到稳态首块合成时间（约 1-3 秒）。
-     */
-
-    /**
-     * 预热取消标志：用户点朗读时设 true，warmUp 的 generate 回调返回 0 中止合成，
-     * 释放 speakMutex 让用户请求立即开始。warmUp 是优化，绝不能阻塞用户 10 秒。
-     */
-    @Volatile
-    private var warmUpCancelled = false
-
-    /**
-     * 后台预热：跑一次与真实首块等长的合成并丢弃音频，提前消化
-     * ONNX Runtime **首次** generate 的一次性开销（图优化、线程池爬升、
-     * arena 内存池扩张与物理页缺页）。
-     *
-     * **锁语义**：tryLock 拿不到（正在朗读）直接放弃。拿到锁后开始合成，
-     * 但合成期间用户点朗读时，speakViaQueue 会设 [warmUpCancelled] = true，
-     * generate 回调返回 0 中止合成、释放锁，用户请求立即开始——
-     * 不让预热阻塞用户 10 秒（2026-09-05 真机实测：warmUp 10s 未完成时
-     * 用户点朗读，speak 挂锁等 10s 才出声）。
-     */
-    suspend fun warmUp() = withContext(Dispatchers.IO) {
-        val modelId = currentModelName
-        if (modelId.isEmpty() || modelId == warmedUpModelId) return@withContext
-        if (!speakMutex.tryLock()) return@withContext
-        try {
-            // 双检：等锁/调度期间引擎可能已被 release() 或换了模型
-            val engine = synchronized(this@EmbeddedTtsEngine) { tts } ?: return@withContext
-            if (currentModelName != modelId) return@withContext
-            val sid = if (currentModelIsKokoro) getSelectedSid() else 0
-            val startMs = System.currentTimeMillis()
-            warmUpCancelled = false
-            try {
-                // 与真实朗读同一代码路径（generateWithCallback + sid），
-                // 确保 ONNX 会话/内存池/线程池全部被预热。
-                // 回调检查 warmUpCancelled：用户点朗读时返回 0 中止合成
-                engine.generateWithCallback(WARMUP_TEXT, sid = sid, speed = 1.0f) {
-                    if (warmUpCancelled) 0 else 1
-                }
-                // P0-2 修复：被中止时不要置位 warmedUpModelId。
-                // 中止意味着预热没真正完成（ONNX arena 没长到峰值、首次推理开销
-                // 没被完全消化），置位后 isWarmedUp() 返回 true、hintTtsWarmUpIfNeeded
-                // 不再提示、warmUp 早退——本进程永不再预热，但引擎实际仍是冷的。
-                // 用户在 app 启动预热完成前点朗读（预热要 8-10s，这是常态）就会命中：
-                // 8-15s 无声且无提示。中止后不置位，下次 warmUp 会重新预热。
-                if (warmUpCancelled) {
-                    Log.i(TAG, "warmUp: model=$modelId cancelled, will retry on next idle")
-                } else {
-                    warmedUpModelId = modelId
-                    Log.i(
-                        TAG,
-                        "warmUp: model=$modelId done in ${System.currentTimeMillis() - startMs}ms",
-                    )
-                }
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                // 预热失败静默：真实朗读路径有自己的重试/熔断处理，
-                // 下次 initialize 后还会再尝试
-                Log.w(TAG, "warmUp generate failed (harmless, first real speak will retry)", e)
-            }
-        } finally {
-            speakMutex.unlock()
-        }
-    }
-
-    /**
-     * 预合成一段短文本（≤[MAX_PREWARM_CHARS]，单词/短语）并把 PCM 存入
-     * [pcmCache]；朗读路径命中缓存时跳过 generate 直接播（见
-     * [doSpeakQueueLocked]），避开 Kokoro 每次 generate ~2s 的固定开销。
-     *
-     * 典型用法：单词释义弹窗打开时调用——用户看释义的几秒内合成完成，
-     * 点喇叭时缓存命中立即出声；若用户在预合成完成前点喇叭，speak 挂在
-     * mutex 上等预合成结束，缓存随即命中，总延迟仍严格小于现场合成。
-     *
-     * 锁语义与 [warmUp] 一致：tryLock 拿不到（正文朗读进行中）直接放弃——
-     * 预合成是体验优化，绝不能反过来阻塞用户的正文朗读。
-     * 引擎未加载/文本超长/已在缓存：零成本 no-op。
-     */
-    suspend fun prewarmSynthesis(text: String, speed: Float = 1.0f) = withContext(Dispatchers.IO) {
-        val trimmed = text.trim()
-        if (trimmed.isEmpty() || trimmed.length > MAX_PREWARM_CHARS) return@withContext
-        if (synchronized(this@EmbeddedTtsEngine) { tts } == null) return@withContext
-        val isKokoro = currentModelIsKokoro
-        val sid = if (isKokoro) getSelectedSid() else 0
-        // 与朗读路径同一套清洗：缓存键与合成输入都必须和 doSpeakQueueLocked 对齐
-        val cleaned = if (isKokoro) preprocessForTtsLight(trimmed) else preprocessForTts(trimmed)
-        if (cleaned.isBlank()) return@withContext
-        val key = cacheKey(cleaned, sid, speed)
-        if (pcmCache.get(key) != null) return@withContext
-        if (!speakMutex.tryLock()) return@withContext
-        try {
-            // 双检：等锁期间可能已被另一条路径合成并缓存 / 引擎被 release
-            val engine = synchronized(this@EmbeddedTtsEngine) { tts } ?: return@withContext
-            if (pcmCache.get(key) != null) return@withContext
-            val audio = engine.generateWithCallback(cleaned, sid = sid, speed = speed) { _ -> 1 }
-            if (audio.samples.isNotEmpty()) {
-                pcmCache.put(key, audio.samples)
-                // 顺带完成引擎级预热置位（本次 generate 已消化首次推理开销）
-                warmedUpModelId = currentModelName
-                Log.i(
-                    TAG,
-                    "prewarmSynthesis cached: '${cleaned.take(30)}', samples=${audio.samples.size}",
-                )
-            }
-        } catch (e: kotlinx.coroutines.CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            // 预合成失败静默：点喇叭时走正常合成路径兜底
-            Log.w(TAG, "prewarmSynthesis failed for '${trimmed.take(30)}'", e)
-        } finally {
-            speakMutex.unlock()
-        }
-    }
 
     /**
      * 朗读一段文字（阻塞至音频播放完毕，由调用方在协程中调用）。
@@ -854,282 +570,6 @@ class EmbeddedTtsEngine @Inject constructor(
         }
     }
 
-    private suspend fun doSpeakQueueLocked(
-        rawSentences: List<String>,
-        speed: Float,
-        onSentenceDone: ((Int) -> Unit)?,
-    ): Boolean {
-        val currentTts = tts ?: run {
-            Log.w(TAG, "speak() called but tts not initialized")
-            return false
-        }
-        if (rawSentences.isEmpty()) return true
-
-        // 首声埋点：补全本链句子数（click 瞬间尚未切句，进链时才有）
-        if (firstAudioSentenceCount == 0 && firstAudioClickMs != 0L) {
-            firstAudioSentenceCount = rawSentences.size
-        }
-
-        val speakJob = kotlin.coroutines.coroutineContext[Job]
-        isPlaying.set(true)
-        // 流式播放器：整条链共用一条 AudioTrack，边合成边写边播
-        val player = StreamingTrackPlayer(
-            sampleRate = currentTts.sampleRate(),
-            audioManager = audioManager,
-            audioAttributes = playbackAudioAttributes,
-            trackSlot = trackSlot,
-            requestAudioFocus = audioFocus::requestIfNeeded,
-            onFirstTrackPlayed = {
-                if (firstAudioPlayedMs == 0L && firstAudioClickMs != 0L) {
-                    firstAudioPlayedMs = System.currentTimeMillis()
-                }
-            },
-            onFirstHeadMoved = {
-                if (firstAudioHeadMovedMs == 0L && firstAudioClickMs != 0L) {
-                    firstAudioHeadMovedMs = System.currentTimeMillis()
-                    // 完整首声日志：四段耗时一条，量化首声延迟
-                    // click→firstOffer=合成+G2P，→trackPlayed=预缓冲攒够+建轨，
-                    // →headMoved=硬件开始消费；blockChars/sentences 标首块规模
-                    Log.i(
-                        TAG,
-                        "TTS first-audio: click→firstOffer=${firstAudioOfferMs - firstAudioClickMs}ms, " +
-                            "→trackPlayed=${firstAudioPlayedMs - firstAudioClickMs}ms, " +
-                            "→headMoved=${firstAudioHeadMovedMs - firstAudioClickMs}ms, " +
-                            "blockChars=$firstAudioBlockChars, sentences=$firstAudioSentenceCount",
-                    )
-                }
-            },
-        )
-        var circuitBroken = false
-        try {
-            kotlinx.coroutines.coroutineScope {
-                // 文本预处理（模型相关）：
-                // - Piper：把 OOV 字符替换成可发音等价物（数字→英文单词、CJK→占位符），
-                //   否则裸文本进 generate() 会触发 native 段错误 (SIGSEGV)。
-                // - Kokoro：双语模型自带中英 G2P（espeak-ng + 中文词典 + ruleFst 数字
-                //   归一化），只做空白归一化——Piper 专用的替换反而会破坏中文文本
-                val isKokoro = currentModelIsKokoro
-                // Kokoro 音色：用户在设置页选择的 sid（Piper 单说话人恒为 0）。
-                // 每条链入队时读取一次偏好：朗读中途切音色，下一条链生效
-                val sid = if (isKokoro) getSelectedSid() else 0
-                Log.i(TAG, "Embedded TTS speak queue: sentences=${rawSentences.size}, sid=$sid, streaming")
-                // 句完成水位队列 + 单监视协程：句 i 的全部帧被硬件消费完（水位到达）
-                // 才回调 onSentenceDone(i)，既不超前（音频没播完就推进）也不滞后；
-                // 单消费者保证回调顺序与句子顺序一致
-                val pendingWatermarks = java.util.concurrent.ConcurrentLinkedQueue<Pair<Long, Int>>()
-                val generationDone = java.util.concurrent.atomic.AtomicBoolean(false)
-                if (onSentenceDone != null) {
-                    launch {
-                        while (true) {
-                            kotlinx.coroutines.delay(20)
-                            if (player.isTrackTakenOver()) {
-                                // 轨道已被 stop() 接管释放：未播完的句不再回调
-                                //（父协程随即被取消，监视协程一并退出）
-                                pendingWatermarks.clear()
-                                return@launch
-                            }
-                            val head = player.currentHead()
-                            if (head >= 0L) {
-                                while (true) {
-                                    val next = pendingWatermarks.peek() ?: break
-                                    if (head < next.first) break
-                                    pendingWatermarks.poll()
-                                    onSentenceDone(next.second)
-                                }
-                            }
-                            if (generationDone.get() && pendingWatermarks.isEmpty()) return@launch
-                        }
-                    }
-                }
-                // 熔断器：模型损坏时每句都会抛异常，旧实现逐句"跳过"后照常返回成功，
-                // 上层会"静音朗读"完整本书并推进进度。连续失败 3 句直接中止并报失败
-                var consecutiveFailures = 0
-                try {
-                    // 把相邻句子合并成大块（≤MAX_CHUNK_CHARS）一次 generate：
-                    // Kokoro 每次 generate 有 ~2s 固定开销，逐句串行 N 句 = N×2s。
-                    // 合并后大块一次 generate，native 端按句点切分逐句回调出声（流式），
-                    // 首句合成完就回调，不用等整块合成完。固定开销从 N 次降到 ceil(N/k) 次。
-                    //
-                    // 首块用更小的 FIRST_BLOCK_MAX_CHARS 上限：G2P 对整块一次性做，
-                    // 首块减小直接降低首声延迟（2026-09-06 实测 G2P 占首声 68%）。
-                    val blocks = mutableListOf<String>()
-                    val blockSentenceIndexMap = mutableListOf<Int>()
-                    val currentBuf = StringBuilder()
-                    var currentLastIdx = -1
-                    for ((sIdx, raw) in rawSentences.withIndex()) {
-                        if (raw.isBlank()) continue
-                        val cleaned = if (isKokoro) preprocessForTtsLight(raw) else preprocessForTts(raw)
-                        if (cleaned.isBlank()) continue
-                        // 首块用 FIRST_BLOCK_MAX_CHARS，后续块用 MAX_CHUNK_CHARS
-                        val chunkLimit = if (blocks.isEmpty()) FIRST_BLOCK_MAX_CHARS else MAX_CHUNK_CHARS
-                        if (currentBuf.length + cleaned.length + 1 > chunkLimit && currentBuf.isNotEmpty()) {
-                            blocks.add(currentBuf.toString().trim())
-                            blockSentenceIndexMap.add(currentLastIdx)
-                            currentBuf.clear()
-                            currentLastIdx = -1
-                        }
-                        if (currentBuf.isNotEmpty()) currentBuf.append(' ')
-                        currentBuf.append(cleaned)
-                        currentLastIdx = sIdx
-                    }
-                    if (currentBuf.isNotEmpty()) {
-                        blocks.add(currentBuf.toString().trim())
-                        blockSentenceIndexMap.add(currentLastIdx)
-                    }
-                    for ((idx, block) in blocks.withIndex()) {
-                        if (block.isBlank()) continue
-                        // 每块之前检查协程是否已被取消（stop() 调用）
-                        kotlinx.coroutines.yield()
-                        if (speakJob?.isActive == false) {
-                            throw kotlinx.coroutines.CancellationException("stop() requested")
-                        }
-                        val framesBeforeBlock = player.framesOffered
-                        // 预合成缓存命中（单词弹窗 selectWord 时后台预合成）：
-                        // 跳过 generate 直接播缓存 PCM——Kokoro 每次 generate 有
-                        // ~2s 固定开销（与文本长度无关），单词现场合成必然卡
-                        val cachedPcm = pcmCache.get(cacheKey(block, sid, speed))
-                        if (cachedPcm != null) {
-                            if (speakJob?.isActive != false) {
-                                // 首声埋点：缓存命中路径同样记录 firstOffer
-                                if (firstAudioOfferMs == 0L && firstAudioClickMs != 0L) {
-                                    firstAudioOfferMs = System.currentTimeMillis()
-                                    firstAudioBlockChars = block.length
-                                }
-                                player.offer(cachedPcm)
-                                Log.i(
-                                    TAG,
-                                    "Embedded TTS block from cache: len=${block.length}, " +
-                                        "samples=${cachedPcm.size}",
-                                )
-                            }
-                        } else {
-                        // G2P+回调粒度埋点：拆解首块 10.8s 的归因（G2P vs 推理 vs 回调粒度）
-                        val blockGenStartMs = System.currentTimeMillis()
-                        var firstCallbackMs = 0L
-                        var lastCallbackMs = 0L
-                        var callbackCount = 0
-                        var firstCallbackSamples = 0
-                        val audio = try {
-                            currentTts.generateWithCallback(block, sid = sid, speed = speed) { samples ->
-                                // 返回 1 继续合成；协程已取消时返回 0 让 native 立即中止
-                                if (speakJob?.isActive == false) 0 else {
-                                    callbackCount++
-                                    if (callbackCount == 1) {
-                                        firstCallbackMs = System.currentTimeMillis()
-                                        firstCallbackSamples = samples.size
-                                    }
-                                    lastCallbackMs = System.currentTimeMillis()
-                                    // 首声埋点：首次 offer 时记录 firstOffer 时间戳
-                                    if (firstAudioOfferMs == 0L && firstAudioClickMs != 0L) {
-                                        firstAudioOfferMs = System.currentTimeMillis()
-                                        firstAudioBlockChars = block.length
-                                    }
-                                    player.offer(samples)
-                                }
-                            }
-                        } catch (e: kotlinx.coroutines.CancellationException) {
-                            throw e
-                        } catch (e: Exception) {
-                            // 单块 generate 崩溃（如 native G2P bug）：跳过该块，继续
-                            Log.e(TAG, "block generate failed, skipping: '${block.take(60)}'", e)
-                            null
-                        }
-                        // G2P+回调粒度汇总日志（仅首块打，避免噪声）
-                        if (firstAudioOfferMs != 0L && firstAudioClickMs != 0L && callbackCount > 0) {
-                            val g2pMs = firstCallbackMs - blockGenStartMs
-                            val synthMs = lastCallbackMs - firstCallbackMs
-                            Log.i(
-                                TAG,
-                                "TTS block-decomp: g2p+firstCallback=${g2pMs}ms, " +
-                                    "synth=${synthMs}ms, callbackCount=$callbackCount, " +
-                                    "firstCallbackSamples=$firstCallbackSamples, " +
-                                    "blockChars=${block.length}",
-                            )
-                        }
-                        // 兜底与日志均以 framesOffered（含预缓冲 pending 里的帧）为基准：
-                        // 预缓冲期间 framesWritten 恒为 0，若用它判断"一帧未写"会把
-                        // 首块音频在兜底路径重复 offer 一遍（声音重叠）
-                        // 链已被 stop() 取消时必须禁用兜底：回调被取消检查挡住
-                        //（返回 0 中止合成）并不代表"JNI 回调静默失效"，此时整段
-                        // 补写会让一条已停止的链在数秒后突然出声——真机表现为
-                        // "点了停止，几秒后突然又开始读"，且与用户随后启动的新链
-                        // 叠音（2026-09-05 顶栏两播报按钮"冲突"的机理）
-                        if (audio != null && player.framesOffered == framesBeforeBlock &&
-                            audio.samples.isNotEmpty() && speakJob?.isActive != false
-                        ) {
-                            // 兜底：JNI 回调静默失效（一帧未写）时整段补写，保证有声
-                            player.offer(audio.samples)
-                        }
-                        }
-                        if (player.framesOffered > framesBeforeBlock) {
-                            // 真实合成成功 = 本模型的首次推理开销已被消化，
-                            // 与 warmUp() 的置位语义一致（幂等，@Volatile 写）
-                            warmedUpModelId = currentModelName
-                            Log.i(
-                                TAG,
-                                "Embedded TTS block queued: idx=$idx, len=${block.length}, " +
-                                    "samples=${player.framesOffered - framesBeforeBlock}, " +
-                                    "totalFrames=${player.framesOffered}",
-                            )
-                        }
-                        // 句完成水位：用 block 边界作为水位。onSentenceDone 回调
-                        // block 内最后一个句子的索引（block 可能含多个原句）。
-                        // 精确的句级高亮需要 native 回调报告句边界，当前按 block 粒度。
-                        if (onSentenceDone != null && player.framesOffered > framesBeforeBlock) {
-                            consecutiveFailures = 0
-                            // block 对应的原句索引范围：mergeIntoBlocks 返回每个 block
-                            // 包含的句子索引，用最后一个索引作为水位回调点
-                            val lastSentenceIdxInBlock = blockSentenceIndexMap[idx]
-                            if (lastSentenceIdxInBlock >= 0) {
-                                pendingWatermarks.add(player.framesOffered to lastSentenceIdxInBlock)
-                            }
-                        } else if (player.framesOffered == framesBeforeBlock) {
-                            consecutiveFailures++
-                            if (consecutiveFailures >= 3) {
-                                Log.e(
-                                    TAG,
-                                    "3 consecutive block failures — aborting speak (model likely broken)",
-                                )
-                                _state.value = EngineState.FAILED("语音合成连续失败，模型可能已损坏")
-                                circuitBroken = true
-                                return@coroutineScope
-                            }
-                        }
-                    }
-                    // 整条链音频总量可能不足预缓冲阈值（如单句短文本）：此时全部帧还在
-                    // pending 队列、轨道从未开播——冲刷出去并开播，否则最后一段静音丢失。
-                    // 必须在 awaitWatermark 之前：flush 后 pending 帧才计入 framesWritten，
-                    // 排水水位才是完整帧数。
-                    // 先做协作式取消检查（与循环内每句前的检查同级）：stop() 之后
-                    // 不能再建新轨道开播残留音频
-                    if (speakJob?.isActive == false) {
-                        throw kotlinx.coroutines.CancellationException("stop() requested")
-                    }
-                    player.flushPendingAndPlay()
-                    // 全部生成完毕：等最后水位排空（音频真正播完）本链才算结束。
-                    // onSentenceDone 为 null 时监视协程不存在，这里是唯一的排水口
-                    player.awaitWatermark(player.framesWritten)
-                } finally {
-                    generationDone.set(true)
-                }
-            }
-        } catch (e: kotlinx.coroutines.CancellationException) {
-            // 播放等待的 delay() 会在协程取消时抛出 CancellationException；
-            // 不能吞掉，否则 withContext 不会正确传播取消信号。
-            isPlaying.set(false)
-            player.releaseIfCurrent()
-            throw e
-        } catch (e: Exception) {
-            Log.e(TAG, "speak failed", e)
-            isPlaying.set(false)
-            player.releaseIfCurrent()
-            return false
-        }
-        isPlaying.set(false)
-        player.releaseIfCurrent()
-        return !circuitBroken
-    }
-
     /**
      * 停止当前播放。
      */
@@ -1190,7 +630,7 @@ class EmbeddedTtsEngine @Inject constructor(
     fun isPlaying(): Boolean = isPlaying.get()
 
     /**
-     * 引擎是否已完成首次推理预热（[warmUp] 成功或任一真实合成成功后为 true）。
+     * 引擎是否已完成首次推理预热（warmUp 成功或任一真实合成成功后为 true）。
      * UI 用于在"引擎未热"的等待窗口给用户即时反馈：speak 挂锁等启动预热
      * 完成的数秒内无声是预期行为，无提示时用户会误判"没声音/卡死"
      * （2026-09-05 实测：点喇叭后 8 秒无声，实为 warmUp 收尾期排队）。

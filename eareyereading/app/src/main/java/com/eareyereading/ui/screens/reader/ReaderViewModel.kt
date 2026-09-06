@@ -14,6 +14,7 @@ import com.eareyereading.data.local.entity.HighlightEntity
 import com.eareyereading.domain.model.*
 import com.eareyereading.domain.repository.*
 import com.eareyereading.tts.EmbeddedTtsEngine
+import com.eareyereading.tts.prewarmSynthesis
 import com.eareyereading.ui.theme.*
 import com.eareyereading.util.*
 import com.eareyereading.util.CollinsClassifier.WordLevel

@@ -15,6 +15,7 @@ import com.eareyereading.domain.repository.VocabularyRepository
 import com.eareyereading.tts.AVAILABLE_MODELS
 import com.eareyereading.tts.EmbeddedTtsEngine
 import com.eareyereading.tts.KOKORO_VOICES
+import com.eareyereading.tts.warmUp
 import com.eareyereading.ui.theme.*
 import com.eareyereading.util.NotificationHelper
 import com.eareyereading.util.NotificationService
