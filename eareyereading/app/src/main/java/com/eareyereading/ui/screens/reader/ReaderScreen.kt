@@ -2,7 +2,6 @@ package com.eareyereading.ui.screens.reader
 
 import android.widget.Toast
 import androidx.compose.animation.*
-import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.*
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
@@ -14,6 +13,7 @@ import androidx.compose.material.icons.outlined.Translate
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
@@ -212,193 +212,17 @@ fun ReaderScreen(
         contentWindowInsets = WindowInsets(0),
         // issue 5.1：阅读完成入口依托 Snackbar 展示
         snackbarHost = { SnackbarHost(snackbarHostState) },
-        topBar = {
-            // issue 3.8：chrome 显隐用 AnimatedVisibility（200ms 滑动+淡入，不瞬切）
-            AnimatedVisibility(
-                visible = chromeVisible,
-                enter = slideInVertically(initialOffsetY = { -it }) + fadeIn(),
-                exit = slideOutVertically(targetOffsetY = { -it }) + fadeOut(),
-            ) {
-            TopAppBar(
-                title = {
-                    Text(
-                        text = uiState.book?.title ?: "加载中...",
-                        style = MaterialTheme.typography.titleLarge,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                },
-                // 跟随阅读主题的背景必须同时指定内容色：
-                // 深色主题下默认内容色是深色墨，标题/返回/操作图标会整个看不见
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = backgroundColor,
-                    titleContentColor = textColor,
-                    navigationIconContentColor = textColor,
-                    actionIconContentColor = textColor,
-                ),
-                navigationIcon = {
-                    IconButton(onClick = {
-                        viewModel.saveProgress()
-                        onBack()
-                    }) {
-                        Icon(Icons.Default.ArrowBack, "返回")
-                    }
-                },
-                actions = {
-                    // TTS
-                    IconButton(onClick = viewModel::toggleTts) {
-                        Icon(
-                            if (uiState.isTtsPlaying) Icons.Default.VolumeUp else Icons.Default.VolumeOff,
-                            "朗读"
-                        )
-                    }
-                    // 翻译
-                    IconButton(onClick = viewModel::toggleTranslation) {
-                        if (uiState.isTranslating) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(24.dp),
-                                strokeWidth = 2.dp,
-                                color = LocalReaderAccent.current,
-                            )
-                        } else {
-                            Icon(
-                                if (uiState.showTranslation) Icons.Default.Translate else Icons.Outlined.Translate,
-                                "翻译",
-                                tint = if (uiState.showTranslation) LocalReaderAccent.current else LocalContentColor.current,
-                            )
-                        }
-                    }
-                    // 播放 / 暂停（NORMAL 模式下等价于从当前段开始自动朗读）
-                    // §4.6.2 关键重设计：播放是主操作——放大到 28dp + 强调色 +
-                    // 实心图标，与其余 24dp 中性图标拉开视觉权重（原图 6 个图标
-                    // 权重完全一致，用户无法判断哪个是主操作）
-                    IconButton(onClick = { viewModel.togglePlay() }) {
-                        Icon(
-                            // isTtsPlaying 也要算播放中：挖空/听写等模式走单段朗读
-                            if (uiState.isPlaying || uiState.isAutoReading || uiState.isTtsPlaying)
-                                Icons.Default.Pause else Icons.Default.PlayArrow,
-                            "播放",
-                            tint = LocalReaderAccent.current,
-                            modifier = Modifier.size(28.dp),
-                        )
-                    }
-                    // 书签
-                    IconButton(
-                        onClick = { viewModel.toggleBookmark(uiState.currentParagraphIndex) },
-                    ) {
-                        Icon(
-                            if (uiState.currentParagraphIndex in uiState.bookmarkedParagraphs)
-                                Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
-                            "书签",
-                            tint = if (uiState.currentParagraphIndex in uiState.bookmarkedParagraphs)
-                                Secondary else LocalContentColor.current,
-                        )
-                    }
-                    // 阅读模式
-                    IconButton(onClick = viewModel::showModeSelector) {
-                        Icon(Icons.Default.MenuBook, "阅读模式")
-                    }
-                    // 更多（溢出菜单）
-                    var showOverflowMenu by remember { mutableStateOf(false) }
-                    Box {
-                        IconButton(onClick = { showOverflowMenu = true }) {
-                            Icon(Icons.Default.MoreVert, "更多")
-                        }
-                        DropdownMenu(
-                            expanded = showOverflowMenu,
-                            onDismissRequest = { showOverflowMenu = false },
-                        ) {
-                            DropdownMenuItem(
-                                text = {
-                                    Text(if (uiState.isAutoReading) "停止自动朗读" else "自动朗读")
-                                },
-                                leadingIcon = { Icon(Icons.Default.Headphones, null) },
-                                onClick = {
-                                    showOverflowMenu = false
-                                    viewModel.toggleAutoRead()
-                                },
-                            )
-                            DropdownMenuItem(
-                                text = { Text("目录") },
-                                leadingIcon = { Icon(Icons.Default.List, null) },
-                                onClick = {
-                                    showOverflowMenu = false
-                                    viewModel.toggleChapterNav()
-                                },
-                            )
-                            DropdownMenuItem(
-                                text = {
-                                    Text(
-                                        if (uiState.showWordLevelColors) "关闭词频颜色" else "开启词频颜色"
-                                    )
-                                },
-                                leadingIcon = { Icon(Icons.Default.ColorLens, null) },
-                                onClick = {
-                                    showOverflowMenu = false
-                                    viewModel.toggleWordLevelColors()
-                                },
-                            )
-                            DropdownMenuItem(
-                                text = {
-                                    Text(
-                                        if (uiState.showKnownWordsHighlight) "关闭生词高亮" else "开启生词高亮"
-                                    )
-                                },
-                                leadingIcon = { Icon(Icons.Default.AutoAwesome, null) },
-                                onClick = {
-                                    showOverflowMenu = false
-                                    viewModel.toggleKnownWordsHighlight()
-                                },
-                            )
-                            DropdownMenuItem(
-                                text = { Text("设置") },
-                                leadingIcon = { Icon(Icons.Default.Settings, null) },
-                                onClick = {
-                                    showOverflowMenu = false
-                                    viewModel.toggleSettings()
-                                },
-                            )
-                        }
-                    }
-                },
-            )
-            } // 关闭 AnimatedVisibility(topBar)
-        },
-        bottomBar = {
-            // issue 3.8：底部 chrome 同款显隐
-            AnimatedVisibility(
-                visible = chromeVisible,
-                enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
-                exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
-            ) {
-            ReadingBottomBar(
-                uiState = uiState,
-                onPrev = viewModel::prevParagraph,
-                onNext = viewModel::nextParagraph,
-                onSeek = viewModel::goToParagraph,
-                textColor = textColor,
-                onFontDelta = viewModel::adjustFontSize,
-                onCycleTheme = viewModel::cycleReadingTheme,
-                onToggleSerif = viewModel::toggleSerifFont,
-            )
-            }
-        },
     ) { padding ->
-        // 沉浸态系统栏避让：chrome 收起后 topBar/bottomBar 槽位高度归零，
-        // 正文会顶进状态栏/手势导航条区域，首行文字被时钟电量图标压住。
-        // 这里按 chrome 显隐补回系统栏内边距；animateDpAsState 与
-        // AnimatedVisibility 的收起动画同节奏过渡，收起过程不跳变。
+        // 详情页始终保持沉浸态布局：正文区域恒定预留系统栏避让空间，
+        // 不随 chrome 显隐变化。工具栏（TopAppBar/BottomBar）作为叠加层
+        // （overlay）在正文之上显示/隐藏，不再占用 Scaffold 的 topBar/
+        // bottomBar 槽位——否则槽位高度会随 AnimatedVisibility 变化，
+        // 驱动 Scaffold 传入的 padding 变化 → BoxWithConstraints.maxHeight
+        // 变化 → pageBudgetPx 变化 → paginateBook 整书重新分页（重排）。
+        // 上下滚动模式（NormalReadingView）本就自适应视口大小，亦不受影响。
         val insetsDensity = LocalDensity.current
-        val immersiveTopPad by animateDpAsState(
-            targetValue = if (chromeVisible) 0.dp
-            else with(insetsDensity) { WindowInsets.statusBars.getTop(this).toDp() },
-            label = "immersiveTopPad",
-        )
-        val immersiveBottomPad by animateDpAsState(
-            targetValue = if (chromeVisible) 0.dp
-            else with(insetsDensity) { WindowInsets.navigationBars.getBottom(this).toDp() },
-            label = "immersiveBottomPad",
-        )
+        val statusBarPad = with(insetsDensity) { WindowInsets.statusBars.getTop(this).toDp() }
+        val navBarPad = with(insetsDensity) { WindowInsets.navigationBars.getBottom(this).toDp() }
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -411,12 +235,16 @@ fun ReaderScreen(
                 .pointerInput(Unit) {
                     detectTapGestures { chromeVisible = !chromeVisible }
                 }
-                .padding(padding)
-                // 沉浸态补回系统栏避让（chrome 显示时这两段为 0，由 TopAppBar/
-                // ReadingBottomBar 自己处理 insets，不会叠加双份）
-                .padding(top = immersiveTopPad, bottom = immersiveBottomPad)
-                .padding(horizontal = 20.dp),
+                .padding(padding),
         ) {
+            // 正文层：恒定沉浸态系统栏避让，不随 chrome 显隐变化，避免触发重排。
+            // chrome 显示时工具栏叠加在此空间上方，不遮挡正文首行/末行。
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(top = statusBarPad, bottom = navBarPad)
+                    .padding(horizontal = 20.dp),
+            ) {
             if (uiState.isLoading) {
                 // 骨架屏：按正文排版预演段落形状（Spotify 式微光），
                 // 替代居中转圈，感知加载更快
@@ -576,6 +404,178 @@ fun ReaderScreen(
                         onVisibleParagraphChanged = viewModel::onVisibleParagraphChanged,
                     )
                 }
+            }
+        }
+            // 顶部工具栏叠加层：AnimatedVisibility 滑动+淡入，不占用布局尺寸
+            // （overlay），不会驱动正文 BoxWithConstraints.maxHeight 变化 → 不重排。
+            // TopAppBar 自带 statusBars inset 避让，无需额外 padding。
+            AnimatedVisibility(
+                visible = chromeVisible,
+                enter = slideInVertically(initialOffsetY = { -it }) + fadeIn(),
+                exit = slideOutVertically(targetOffsetY = { -it }) + fadeOut(),
+                modifier = Modifier.align(Alignment.TopStart),
+            ) {
+                TopAppBar(
+                    title = {
+                        Text(
+                            text = uiState.book?.title ?: "加载中...",
+                            style = MaterialTheme.typography.titleLarge,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    },
+                    // 跟随阅读主题的背景必须同时指定内容色：
+                    // 深色主题下默认内容色是深色墨，标题/返回/操作图标会整个看不见
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = backgroundColor,
+                        titleContentColor = textColor,
+                        navigationIconContentColor = textColor,
+                        actionIconContentColor = textColor,
+                    ),
+                    navigationIcon = {
+                        IconButton(onClick = {
+                            viewModel.saveProgress()
+                            onBack()
+                        }) {
+                            Icon(Icons.Default.ArrowBack, "返回")
+                        }
+                    },
+                    actions = {
+                        // TTS
+                        IconButton(onClick = viewModel::toggleTts) {
+                            Icon(
+                                if (uiState.isTtsPlaying) Icons.Default.VolumeUp else Icons.Default.VolumeOff,
+                                "朗读"
+                            )
+                        }
+                        // 翻译
+                        IconButton(onClick = viewModel::toggleTranslation) {
+                            if (uiState.isTranslating) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(24.dp),
+                                    strokeWidth = 2.dp,
+                                    color = LocalReaderAccent.current,
+                                )
+                            } else {
+                                Icon(
+                                    if (uiState.showTranslation) Icons.Default.Translate else Icons.Outlined.Translate,
+                                    "翻译",
+                                    tint = if (uiState.showTranslation) LocalReaderAccent.current else LocalContentColor.current,
+                                )
+                            }
+                        }
+                        // 播放 / 暂停（NORMAL 模式下等价于从当前段开始自动朗读）
+                        // §4.6.2 关键重设计：播放是主操作——放大到 28dp + 强调色 +
+                        // 实心图标，与其余 24dp 中性图标拉开视觉权重（原图 6 个图标
+                        // 权重完全一致，用户无法判断哪个是主操作）
+                        IconButton(onClick = { viewModel.togglePlay() }) {
+                            Icon(
+                                // isTtsPlaying 也要算播放中：挖空/听写等模式走单段朗读
+                                if (uiState.isPlaying || uiState.isAutoReading || uiState.isTtsPlaying)
+                                    Icons.Default.Pause else Icons.Default.PlayArrow,
+                                "播放",
+                                tint = LocalReaderAccent.current,
+                                modifier = Modifier.size(28.dp),
+                            )
+                        }
+                        // 书签
+                        IconButton(
+                            onClick = { viewModel.toggleBookmark(uiState.currentParagraphIndex) },
+                        ) {
+                            Icon(
+                                if (uiState.currentParagraphIndex in uiState.bookmarkedParagraphs)
+                                    Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
+                                "书签",
+                                tint = if (uiState.currentParagraphIndex in uiState.bookmarkedParagraphs)
+                                    Secondary else LocalContentColor.current,
+                            )
+                        }
+                        // 阅读模式
+                        IconButton(onClick = viewModel::showModeSelector) {
+                            Icon(Icons.Default.MenuBook, "阅读模式")
+                        }
+                        // 更多（溢出菜单）
+                        var showOverflowMenu by remember { mutableStateOf(false) }
+                        Box {
+                            IconButton(onClick = { showOverflowMenu = true }) {
+                                Icon(Icons.Default.MoreVert, "更多")
+                            }
+                            DropdownMenu(
+                                expanded = showOverflowMenu,
+                                onDismissRequest = { showOverflowMenu = false },
+                            ) {
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(if (uiState.isAutoReading) "停止自动朗读" else "自动朗读")
+                                    },
+                                    leadingIcon = { Icon(Icons.Default.Headphones, null) },
+                                    onClick = {
+                                        showOverflowMenu = false
+                                        viewModel.toggleAutoRead()
+                                    },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("目录") },
+                                    leadingIcon = { Icon(Icons.Default.List, null) },
+                                    onClick = {
+                                        showOverflowMenu = false
+                                        viewModel.toggleChapterNav()
+                                    },
+                                )
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            if (uiState.showWordLevelColors) "关闭词频颜色" else "开启词频颜色"
+                                        )
+                                    },
+                                    leadingIcon = { Icon(Icons.Default.ColorLens, null) },
+                                    onClick = {
+                                        showOverflowMenu = false
+                                        viewModel.toggleWordLevelColors()
+                                    },
+                                )
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            if (uiState.showKnownWordsHighlight) "关闭生词高亮" else "开启生词高亮"
+                                        )
+                                    },
+                                    leadingIcon = { Icon(Icons.Default.AutoAwesome, null) },
+                                    onClick = {
+                                        showOverflowMenu = false
+                                        viewModel.toggleKnownWordsHighlight()
+                                    },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("设置") },
+                                    leadingIcon = { Icon(Icons.Default.Settings, null) },
+                                    onClick = {
+                                        showOverflowMenu = false
+                                        viewModel.toggleSettings()
+                                    },
+                                )
+                            }
+                        }
+                    },
+                )
+            }
+            // 底部工具栏叠加层：ReadingBottomBar 自带 navigationBarsPadding 避让。
+            AnimatedVisibility(
+                visible = chromeVisible,
+                enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
+                exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
+                modifier = Modifier.align(Alignment.BottomStart),
+            ) {
+                ReadingBottomBar(
+                    uiState = uiState,
+                    onPrev = viewModel::prevParagraph,
+                    onNext = viewModel::nextParagraph,
+                    onSeek = viewModel::goToParagraph,
+                    textColor = textColor,
+                    onFontDelta = viewModel::adjustFontSize,
+                    onCycleTheme = viewModel::cycleReadingTheme,
+                    onToggleSerif = viewModel::toggleSerifFont,
+                )
             }
         }
     } // 关闭 Scaffold
