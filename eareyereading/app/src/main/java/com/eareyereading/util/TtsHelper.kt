@@ -1,7 +1,9 @@
 package com.eareyereading.util
 
 import android.content.Context
+import com.eareyereading.domain.repository.SettingsRepository
 import com.eareyereading.tts.EmbeddedTtsEngine
+import com.eareyereading.tts.TencentTtsEngine
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -11,6 +13,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.Locale
@@ -41,7 +44,15 @@ import javax.inject.Singleton
 class TtsHelper @Inject constructor(
     @ApplicationContext private val context: Context,
     private val embeddedTts: EmbeddedTtsEngine,
+    private val tencentTts: TencentTtsEngine,
+    private val settingsRepository: SettingsRepository,
 ) {
+    /**
+     * 当前 TTS 引擎类型："embedded"（离线）或 "tencent"（在线腾讯云 TTS）。
+     * 从 SettingsRepository 读取，设置页切换时更新。
+     */
+    @Volatile
+    private var engineType: String = "embedded"
     /**
      * 内部协程作用域：用 var 而非 val — shutdown() 后会换新 scope。
      * 否则旧 scope.cancel 后所有 launch 都落进已取消 scope，embeddedTTS 永久静默失效。
@@ -81,17 +92,39 @@ class TtsHelper @Inject constructor(
     /** 朗读速度调节 */
     fun setSpeed(speed: Float) {
         currentSpeed = speed
+        tencentTts.setSpeed(speed)
     }
 
     fun getSpeed(): Float = currentSpeed
 
     /**
-     * 初始化内置 TTS 引擎。
-     * - 模型未下载：返回 false，引导用户去设置页下载
-     * - 模型已下载：构造 OfflineTts 实例，置 isInitialized=true
+     * 初始化 TTS 引擎（按当前引擎类型路由）。
+     * - embedded：模型未下载返回 false，引导用户去设置页下载
+     * - edge：在线引擎，始终返回 true（网络可达性在首次合成时检验）
      */
-    suspend fun initialize(language: String = "en"): Boolean =
-        initializeEmbeddedForced(language)
+    suspend fun initialize(language: String = "en"): Boolean {
+        refreshEngineType()
+        if (engineType == "tencent") {
+            val ok = tencentTts.initialize(language)
+            if (ok) {
+                isInitialized = true
+                _ttsModeState.value = TtsMode.EMBEDDED
+            }
+            return ok
+        }
+        return initializeEmbeddedForced(language)
+    }
+
+    /** 从 SettingsRepository 刷新引擎类型 + 腾讯云凭证/音色（设置页切换后调用） */
+    suspend fun refreshEngineType() {
+        engineType = settingsRepository.getTtsEngineType().first()
+        val tencentId = settingsRepository.getTencentSecretId().first()
+        val tencentKey = settingsRepository.getTencentSecretKey().first()
+        tencentTts.setCredentials(tencentId, tencentKey)
+        val voiceId = settingsRepository.getTencentVoiceId().first()
+        tencentTts.setVoiceId(voiceId)
+        tencentTts.setSpeed(currentSpeed)
+    }
 
     /** 兼容旧 API，等价于 initialize */
     suspend fun initializeWith(language: String = "en", enginePackage: String?): Boolean =
@@ -107,7 +140,7 @@ class TtsHelper @Inject constructor(
             android.util.Log.w(TAG, "initializeEmbeddedForced: no model downloaded")
             return false
         }
-        val ok = embeddedTts.initialize(modelInfo)
+        val ok = embeddedTts.initialize(modelInfo, language = language)
         if (ok) {
             isInitialized = true
             currentLocale = Locale.US
@@ -146,14 +179,19 @@ class TtsHelper @Inject constructor(
             return
         }
 
-        android.util.Log.d(TAG, "speak(): embedded, len=${text.length}, '${text.take(50)}'")
+        android.util.Log.d(TAG, "speak(): engine=$engineType, len=${text.length}, '${text.take(50)}'")
 
         // 取消仍挂在 speakMutex 上的上一次朗读，避免旧文本在新朗读之后才播出
         embeddedSpeakJob?.cancel()
         embeddedSpeakJob = scope.launch {
-            embeddedTts.speak(text, speed = currentSpeed)
-            // 自然播完归还音频焦点（被 stop() 取消路径已自行归还，幂等）
-            embeddedTts.abandonAudioFocus()
+            if (engineType == "tencent") {
+                tencentTts.speak(text, speed = currentSpeed)
+                tencentTts.abandonAudioFocus()
+            } else {
+                embeddedTts.speak(text, speed = currentSpeed)
+                // 自然播完归还音频焦点（被 stop() 取消路径已自行归还，幂等）
+                embeddedTts.abandonAudioFocus()
+            }
             withContext(Dispatchers.Main) {
                 onComplete?.invoke()
             }
@@ -185,15 +223,21 @@ class TtsHelper @Inject constructor(
         sentenceChainJob?.cancel()
         sentenceChainJob = scope.launch {
             try {
-                embeddedTts.speakSentencesStreaming(sentences, speed = currentSpeed) { index ->
-                    // 引擎回调来自 IO 线程（单生产者保序）；scope 是 Main 调度器，
-                    // launch 入队 FIFO，回调顺序与句子顺序一致
-                    scope.launch { onSentenceDone(index) }
+                if (engineType == "tencent") {
+                    tencentTts.speakSentencesStreaming(sentences, speed = currentSpeed) { index ->
+                        scope.launch { onSentenceDone(index) }
+                    }
+                } else {
+                    embeddedTts.speakSentencesStreaming(sentences, speed = currentSpeed) { index ->
+                        // 引擎回调来自 IO 线程（单生产者保序）；scope 是 Main 调度器，
+                        // launch 入队 FIFO，回调顺序与句子顺序一致
+                        scope.launch { onSentenceDone(index) }
+                    }
                 }
             } finally {
                 isInSentenceChain = false
                 // 链结束（自然读完或被 stop() 取消）统一归还音频焦点
-                embeddedTts.abandonAudioFocus()
+                if (engineType == "tencent") tencentTts.abandonAudioFocus() else embeddedTts.abandonAudioFocus()
                 // scope 在 Dispatchers.Main 上，直接回调即可
                 onAllDone()
             }
@@ -207,6 +251,7 @@ class TtsHelper @Inject constructor(
         embeddedSpeakJob?.cancel()
         embeddedSpeakJob = null
         embeddedTts.stop()
+        tencentTts.stop()
     }
 
     fun pause() {
@@ -221,7 +266,7 @@ class TtsHelper @Inject constructor(
     /**
      * 是否正在播放（包括单句朗读）
      */
-    fun isSpeaking(): Boolean = embeddedTts.isPlaying()
+    fun isSpeaking(): Boolean = embeddedTts.isPlaying() || tencentTts.isPlaying()
 
     /**
      * 切换内置 TTS 模型以匹配新书语言（跨语言换书时调用）。
@@ -256,6 +301,7 @@ class TtsHelper @Inject constructor(
         embeddedSpeakJob?.cancel()
         embeddedSpeakJob = null
         try { embeddedTts.stop() } catch (_: Exception) {}
+        try { tencentTts.stop() } catch (_: Exception) {}
         // cancel 内部协程 scope + 换新 scope，避免后续 launch 落进已取消 scope
         val oldScope = scope
         scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
@@ -267,6 +313,12 @@ class TtsHelper @Inject constructor(
      * 暴露 embedded TTS 给上层（用于模型下载管理 UI）
      */
     fun getEmbeddedEngine(): EmbeddedTtsEngine = embeddedTts
+
+    /** 暴露腾讯云 TTS 引擎给上层 */
+    fun getTencentEngine(): TencentTtsEngine = tencentTts
+
+    /** 当前引擎类型（"embedded" / "tencent"） */
+    fun getEngineType(): String = engineType
 
     /**
      * 内置引擎被外部 release() 后调用：复位初始化状态。

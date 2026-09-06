@@ -79,6 +79,16 @@ internal class StreamingTrackPlayer(
     private val audioAttributes: AudioAttributes,
     private val trackSlot: AudioTrackSlot,
     private val requestAudioFocus: () -> Unit,
+    /**
+     * 首声埋点：AudioTrack.play() 首次成功时回调（合成线程）。
+     * 由 EmbeddedTtsEngine 注入，记录 trackPlayed 时间戳。
+     */
+    private val onFirstTrackPlayed: () -> Unit = {},
+    /**
+     * 首声埋点：硬件首次消费帧（awaitWatermark 首次 head>0）时回调（水位监视协程）。
+     * 由 EmbeddedTtsEngine 注入，记录 headMoved 时间戳并输出完整首声日志。
+     */
+    private val onFirstHeadMoved: () -> Unit = {},
 ) {
 
     /** 已写入硬件的帧数（水位基准）；仅合成线程写，监视协程读快照 */
@@ -100,6 +110,10 @@ internal class StreamingTrackPlayer(
     /** 轨道已损坏（构建/播放/写入失败）：后续 offer 拒绝 */
     @Volatile
     private var broken = false
+
+    /** 首声埋点守卫：startTrack 成功只回调一次（offer 与 flushPendingAndPlay 互斥，仍加守卫防双重计费） */
+    @Volatile
+    private var firstTrackPlayedCalled = false
 
     /**
      * 预缓冲 pending 队列：开播前攒够 [prebufferFrames] 的 16-bit PCM。
@@ -267,6 +281,8 @@ internal class StreamingTrackPlayer(
     suspend fun awaitWatermark(frames: Long): Boolean {
         val t = track ?: return frames <= 0L
         var lastLogMs = 0L
+        // 首声埋点：head 首次 >0 时回调一次（记录 headMoved 时间戳 + 输出完整首声日志）
+        var firstHeadMovedCalled = false
         // MIUI/HyperOS workaround：play() 后 mixer 可能不消费（head 恒 0）。
         // 检测到该现象持续 >1.5s 时重新 play() 一次——实测部分 MIUI 版本
         // 二次 play 能激活 mixer 消费（首次 play 被低功耗策略拦截）。
@@ -291,6 +307,11 @@ internal class StreamingTrackPlayer(
             if (head >= frames) return true
             // head 增长说明 mixer 已开始消费，重置计时
             if (head > 0) {
+                // 首声埋点：首次 head>0，记录 headMoved 并输出完整首声日志
+                if (!firstHeadMovedCalled) {
+                    firstHeadMovedCalled = true
+                    onFirstHeadMoved()
+                }
                 stillSinceMs = now
             } else if (now - stillSinceMs > replayThresholdMs && replayAttempts < maxReplayAttempts) {
                 replayAttempts++
@@ -356,12 +377,10 @@ internal class StreamingTrackPlayer(
             if (trackSlot.track === t) {
                 trackSlot.track = null
                 // 欠载诊断（API 24+）：硬件侧欠载计数在 release 前读取。
-                // >0 说明播放期缓冲仍被击穿，真机可据此加大 PREBUFFER_SECONDS
+                // 始终打（含 0）：0 = 缓冲垫足够，>0 = 句间/块间断音，真机可据此调 PREBUFFER_SECONDS
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
                     val underruns = t.underrunCount
-                    if (underruns > 0) {
-                        Log.w(TAG, "AudioTrack underrun count: $underruns over $framesWritten frames")
-                    }
+                    Log.i(TAG, "TTS gap: underrunCount=$underruns, framesWritten=$framesWritten")
                 }
                 try {
                     if (t.state == AudioTrack.STATE_INITIALIZED) {
@@ -422,6 +441,11 @@ internal class StreamingTrackPlayer(
     private fun startTrack(newTrack: AudioTrack): Int {
         return try {
             newTrack.play()
+            // 首声埋点：play() 成功，记录 trackPlayed 时间戳
+            if (!firstTrackPlayedCalled) {
+                firstTrackPlayedCalled = true
+                onFirstTrackPlayed()
+            }
             1
         } catch (e: Exception) {
             Log.w(TAG, "stream track play failed", e)

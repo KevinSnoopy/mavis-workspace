@@ -74,6 +74,14 @@ interface SettingsRepository {
     fun getCollinsHighlight(): Flow<Boolean>
     /** TTS 语速倍率（0.5 - 2.0），用于内置/系统 TTS 的 speak 调用 */
     fun getTtsSpeed(): Flow<Float>
+    /** TTS 引擎类型："embedded"（离线 sherpa-onnx）或 "tencent"（在线腾讯云 TTS） */
+    fun getTtsEngineType(): Flow<String>
+    /** 腾讯云 TTS SecretId */
+    fun getTencentSecretId(): Flow<String>
+    /** 腾讯云 TTS SecretKey */
+    fun getTencentSecretKey(): Flow<String>
+    /** 腾讯云 TTS 音色 id（如 101001） */
+    fun getTencentVoiceId(): Flow<Int>
     /** 阅读器正文字体：true=衬线（FontFamily.Serif），false=默认无衬线 */
     fun getSerifFont(): Flow<Boolean>
     /** 阅读方式：true=左右翻页（仿书页 HorizontalPager），false=上下滚动（默认） */
@@ -101,6 +109,10 @@ interface SettingsRepository {
     suspend fun setNotificationDownloadComplete(enabled: Boolean)
     suspend fun setCollinsHighlight(enabled: Boolean)
     suspend fun setTtsSpeed(speed: Float)
+    suspend fun setTtsEngineType(type: String)
+    suspend fun setTencentSecretId(id: String)
+    suspend fun setTencentSecretKey(key: String)
+    suspend fun setTencentVoiceId(voiceId: Int)
     suspend fun setSerifFont(enabled: Boolean)
     suspend fun setReadingPageMode(enabled: Boolean)
     suspend fun setDynamicColor(enabled: Boolean)

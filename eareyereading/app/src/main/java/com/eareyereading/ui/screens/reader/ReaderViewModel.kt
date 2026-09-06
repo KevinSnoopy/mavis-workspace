@@ -146,6 +146,11 @@ class ReaderViewModel @Inject constructor(
     // 单段朗读的初始化尝试（防初始化窗口内连点产生重复朗读）
     internal var ttsInitJob: kotlinx.coroutines.Job? = null
 
+    // 朗读按钮防抖：连点（<500ms）直接忽略，避免并发 initialize 竞争
+    //（2026-09-06 实测：连点触发多次 initialize，竞相构造 OfflineTts 实例，
+    // 抢先者加载完被后到者 reuse，白加载一次 + 浪费 3s）
+    internal var lastTogglePlayMs: Long = 0L
+
     // TTS 引导弹窗防抖：本会话内已经弹过则不再弹（避免用户每次点朗读都看到同一个弹窗）
     internal var ttsPromptShownThisSession = false
 
@@ -212,7 +217,10 @@ class ReaderViewModel @Inject constructor(
         // 单段朗读的 onComplete 也会被取消路径吞掉导致 isTtsPlaying 卡 true
         viewModelScope.launch {
             try {
-                ttsHelper.getEmbeddedEngine().externalStop.collect {
+                kotlinx.coroutines.flow.merge(
+                    ttsHelper.getEmbeddedEngine().externalStop,
+                    ttsHelper.getTencentEngine().externalStop,
+                ).collect {
                     android.util.Log.i("ReaderViewModel", "external stop received, halting all playback")
                     stopAllPlayback()
                 }
@@ -713,8 +721,11 @@ class ReaderViewModel @Inject constructor(
                 // 正文朗读持锁时自动放弃，绝不阻塞正文播放
                 viewModelScope.launch {
                     try {
-                        ttsHelper.getEmbeddedEngine()
-                            .prewarmSynthesis(clean, speed = ttsHelper.getSpeed())
+                        // 腾讯云 TTS 在线无固定开销，无需预合成
+                        if (ttsHelper.getEngineType() != "tencent") {
+                            ttsHelper.getEmbeddedEngine()
+                                .prewarmSynthesis(clean, speed = ttsHelper.getSpeed())
+                        }
                     } catch (e: kotlinx.coroutines.CancellationException) {
                         throw e
                     } catch (_: Exception) {

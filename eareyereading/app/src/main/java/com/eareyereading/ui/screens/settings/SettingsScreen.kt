@@ -384,10 +384,44 @@ fun SettingsScreen(
                 SettingsSectionTitle("语音")
             }
             item {
+                var showTtsEngineDialog by remember { mutableStateOf(false) }
                 var showTtsModelDialog by remember { mutableStateOf(false) }
                 var showTtsVoiceDialog by remember { mutableStateOf(false) }
+                var showTencentVoiceDialog by remember { mutableStateOf(false) }
+                var showTencentCredDialog by remember { mutableStateOf(false) }
 
                 SettingsListCard {
+                    // 引擎类型选择：离线 / 在线腾讯云 TTS
+                    SettingRowClickable(
+                        icon = Icons.Default.GraphicEq,
+                        iconBg = SurfaceHover,
+                        iconColor = Primary,
+                        title = "语音引擎",
+                        subtitle = if (uiState.ttsEngineType == "tencent") "在线腾讯云 TTS" else "离线 sherpa-onnx",
+                        onClick = { showTtsEngineDialog = true },
+                    )
+
+                    if (uiState.ttsEngineType == "tencent") {
+                        // 腾讯云模式：凭证配置 + 音色选择
+                        Divider(modifier = Modifier.padding(horizontal = 20.dp))
+                        SettingRowClickable(
+                            icon = Icons.Default.Key,
+                            iconBg = SurfaceHover,
+                            iconColor = Primary,
+                            title = "腾讯云凭证",
+                            subtitle = if (uiState.tencentSecretId.isNotEmpty()) "已配置（${uiState.tencentSecretId.take(8)}...）" else "未配置，点击设置",
+                            onClick = { showTencentCredDialog = true },
+                        )
+                        Divider(modifier = Modifier.padding(horizontal = 20.dp))
+                        SettingRowClickable(
+                            icon = Icons.Default.RecordVoiceOver,
+                            iconBg = SurfaceHover,
+                            iconColor = Primary,
+                            title = "腾讯云音色",
+                            subtitle = uiState.tencentVoiceDisplay,
+                            onClick = { showTencentVoiceDialog = true },
+                        )
+                    } else {
                     SettingRowClickable(
                         icon = Icons.Default.RecordVoiceOver,
                         iconBg = SurfaceHover,
@@ -493,10 +527,165 @@ fun SettingsScreen(
                             onClick = { viewModel.deleteEmbeddedTts() },
                         )
                     }
+                    } // end if engineType == "tencent" else (离线分区)
                 }
                 Spacer(modifier = Modifier.height(20.dp))
 
-                // 模型选择弹窗：Piper 轻量英文 / Kokoro 中英多音色
+                // 引擎类型选择弹窗
+                if (showTtsEngineDialog) {
+                    AlertDialog(
+                        onDismissRequest = { showTtsEngineDialog = false },
+                        title = { Text("语音引擎") },
+                        text = {
+                            Column {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            viewModel.setTtsEngineType("embedded")
+                                            showTtsEngineDialog = false
+                                        }
+                                        .padding(vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    RadioButton(
+                                        selected = uiState.ttsEngineType == "embedded",
+                                        onClick = {
+                                            viewModel.setTtsEngineType("embedded")
+                                            showTtsEngineDialog = false
+                                        },
+                                    )
+                                    Column {
+                                        Text("离线 sherpa-onnx", style = MaterialTheme.typography.bodyMedium, fontWeight = if (uiState.ttsEngineType == "embedded") FontWeight.Bold else FontWeight.Normal)
+                                        Text("无需联网，英文男声，首声 <1s", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                }
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            viewModel.setTtsEngineType("tencent")
+                                            showTtsEngineDialog = false
+                                        }
+                                        .padding(vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    RadioButton(
+                                        selected = uiState.ttsEngineType == "tencent",
+                                        onClick = {
+                                            viewModel.setTtsEngineType("tencent")
+                                            showTtsEngineDialog = false
+                                        },
+                                    )
+                                    Column {
+                                        Text("在线腾讯云 TTS", style = MaterialTheme.typography.bodyMedium, fontWeight = if (uiState.ttsEngineType == "tencent") FontWeight.Bold else FontWeight.Normal)
+                                        Text("100 万字/月免费 · 101 音色 · 国内稳定 · 需配置凭证", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                }
+                            }
+                        },
+                        confirmButton = {
+                            TextButton(onClick = { showTtsEngineDialog = false }) { Text("关闭") }
+                        },
+                    )
+                }
+
+                // 腾讯云凭证配置弹窗
+                if (showTencentCredDialog) {
+                    var secretId by remember { mutableStateOf(uiState.tencentSecretId) }
+                    var secretKey by remember { mutableStateOf(uiState.tencentSecretKey) }
+                    AlertDialog(
+                        onDismissRequest = { showTencentCredDialog = false },
+                        title = { Text("腾讯云凭证") },
+                        text = {
+                            Column {
+                                Text(
+                                    text = "在腾讯云控制台 → 访问管理 → API 密钥管理获取",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+                                OutlinedTextField(
+                                    value = secretId,
+                                    onValueChange = { secretId = it },
+                                    label = { Text("SecretId") },
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+                                OutlinedTextField(
+                                    value = secretKey,
+                                    onValueChange = { secretKey = it },
+                                    label = { Text("SecretKey") },
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                            }
+                        },
+                        confirmButton = {
+                            TextButton(onClick = {
+                                viewModel.setTencentCredentials(secretId, secretKey)
+                                showTencentCredDialog = false
+                            }) { Text("保存") }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { showTencentCredDialog = false }) { Text("取消") }
+                        },
+                    )
+                }
+
+                // 腾讯云音色选择弹窗
+                if (showTencentVoiceDialog) {
+                    AlertDialog(
+                        onDismissRequest = { showTencentVoiceDialog = false },
+                        title = { Text("选择腾讯云音色") },
+                        text = {
+                            LazyColumn(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(max = 420.dp),
+                            ) {
+                                item {
+                                    Text(
+                                        text = "腾讯云 TTS 101 种音色，点击切换",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                                com.eareyereading.tts.TENCENT_VOICES.forEach { v ->
+                                    item(key = "tencent_${v.id}") {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clickable {
+                                                    viewModel.setTencentVoiceId(v.id)
+                                                    showTencentVoiceDialog = false
+                                                }
+                                                .padding(vertical = 8.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                        ) {
+                                            RadioButton(
+                                                selected = uiState.tencentVoiceId == v.id,
+                                                onClick = {
+                                                    viewModel.setTencentVoiceId(v.id)
+                                                    showTencentVoiceDialog = false
+                                                },
+                                            )
+                                            Text(
+                                                text = v.displayName,
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                fontWeight = if (uiState.tencentVoiceId == v.id) FontWeight.Bold else FontWeight.Normal,
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        confirmButton = {
+                            TextButton(onClick = { showTencentVoiceDialog = false }) { Text("关闭") }
+                        },
+                    )
+                }
+
+                // 模型选择弹窗：Piper 英文男声
                 if (showTtsModelDialog) {
                     AlertDialog(
                         onDismissRequest = { showTtsModelDialog = false },
@@ -543,7 +732,7 @@ fun SettingsScreen(
                     )
                 }
 
-                // 音色选择弹窗（仅 Kokoro）：103 个音色按性别/口音分组，点击即试听。
+                // 音色选择弹窗（Kokoro 已下线，此弹窗不再显示，保留代码兼容）
                 // LazyColumn：103 行的 Column 会超出弹窗高度且无法滚动
                 if (showTtsVoiceDialog) {
                     AlertDialog(

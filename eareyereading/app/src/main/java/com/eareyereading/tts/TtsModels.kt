@@ -1,11 +1,13 @@
 package com.eareyereading.tts
 
-import com.k2fsa.sherpa.onnx.OfflineTtsKokoroModelConfig
 import java.net.URL
 
 /**
- * 内置 TTS 模型目录：模型清单（Piper / Kokoro）、文件镜像配置与 Kokoro 音色表。
+ * 内置 TTS 模型目录：Piper 英文模型清单与文件镜像配置。
  * 纯数据，由引擎与设置页读取。
+ *
+ * 2026-09-06：Kokoro 已下线（G2P 9s 固有性能无法优化，多音色改走
+ * 在线 Edge TTS）。离线只保留 Piper 英文男声。
  */
 /**
  * 模型配置：模型名 → CDN URL
@@ -30,9 +32,8 @@ data class ModelInfo(
      */
     val usesEspeakNg: Boolean = false,
     /**
-     * Kokoro 系模型（kokoro-multi-lang-v1_1）：初始化走
-     * OfflineTtsKokoroModelConfig（voices.bin + 双 lexicon + ruleFsts），
-     * generate() 时传 sid 选择 103 种音色之一。
+     * Kokoro 系模型标识（已下线，保留字段让 ModelInfo 构造不破坏，
+     * AVAILABLE_MODELS 里不再有 isKokoro=true 的模型）。
      */
     val isKokoro: Boolean = false,
 ) {
@@ -59,12 +60,10 @@ data class ModelFile(
 /**
  * 内置可用模型列表。
  *
- * 默认 = Piper lessac-medium（见 DEFAULT_MODEL_ID）：韵律自然、英文发音
- * 地道、体积小；G2P 走 espeak-ng（归档自带 espeak-ng-data/）。
+ * 仅 Piper lessac-medium：韵律自然、英文发音地道、体积小（66MB）；
+ * G2P 走 espeak-ng（归档自带 espeak-ng-data/），首声 <1s。
  *
- * Kokoro int8 中英双语（2026-09-04 新增）：103 种音色 + 原生中英混读。
- * 归档含 jieba dict/、三个 ruleFst（phone/date/number-zh.fst，中文数字
- * 日期归一化）与双 lexicon；官方 Android 演示同款配置。
+ * 多音色/中文朗读走在线腾讯云 TTS（见 TencentTtsEngine）。
  */
 val AVAILABLE_MODELS = listOf(
     ModelInfo(
@@ -90,44 +89,13 @@ val AVAILABLE_MODELS = listOf(
             ModelFile("vits-piper-en_US-lessac-medium/espeak-ng-data", url = ""),
         ),
     ),
-    ModelInfo(
-        id = "kokoro-int8-multi-lang-v1_1",
-        displayName = "Kokoro 中英双语·多音色（约 205MB，103 种音色）",
-        language = "zh,en",
-        // 解压后总大小（model.int8.onnx 114MB + voices.bin 54MB + 词典/分词数据）。
-        // 下载进度分母优先用响应 Content-Length（压缩包 ~147MB），此处数值
-        // 仅作磁盘预检（×3）与解压估算的基准
-        sizeBytes = 205_000_000L,
-        tarballUrl = "https://ghfast.top/https%3A%2F%2Fgithub.com%2Fk2-fsa%2Fsherpa-onnx%2Freleases%2Fdownload%2Ftts-models%2Fkokoro-int8-multi-lang-v1_1.tar.bz2",
-        tarballMirrorUrls = listOf(
-            "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-int8-multi-lang-v1_1.tar.bz2",
-        ),
-        usesEspeakNg = true,
-        isKokoro = true,
-        // URL 留空 = 仅归档下载：espeak-ng-data / dict 各含数百个小文件
-        files = listOf(
-            ModelFile("kokoro-int8-multi-lang-v1_1/model.int8.onnx", url = ""),
-            ModelFile("kokoro-int8-multi-lang-v1_1/voices.bin", url = ""),
-            ModelFile("kokoro-int8-multi-lang-v1_1/tokens.txt", url = ""),
-            ModelFile("kokoro-int8-multi-lang-v1_1/espeak-ng-data", url = ""),
-            ModelFile("kokoro-int8-multi-lang-v1_1/dict", url = ""),
-            ModelFile("kokoro-int8-multi-lang-v1_1/lexicon-us-en.txt", url = ""),
-            ModelFile("kokoro-int8-multi-lang-v1_1/lexicon-zh.txt", url = ""),
-            ModelFile("kokoro-int8-multi-lang-v1_1/lexicon-gb-en.txt", url = ""),
-            ModelFile("kokoro-int8-multi-lang-v1_1/phone-zh.fst", url = ""),
-            ModelFile("kokoro-int8-multi-lang-v1_1/date-zh.fst", url = ""),
-            ModelFile("kokoro-int8-multi-lang-v1_1/number-zh.fst", url = ""),
-        ),
-    ),
 )
 
-// 内置默认 = Piper 英文声（英文阅读主线；Kokoro 为用户可选升级）
+// 内置默认 = Piper 英文声
 val DEFAULT_MODEL_ID = "vits-piper-en_US-lessac-medium"
 
 /**
- * Kokoro（kokoro-multi-lang-v1_1）的 103 个音色。
- * sid→名称映射来自官方文档；前缀含义：af=美式女声 bf=英式女声
- * zf=中文女声 zm=中文男声。所有音色均可中英混读，只是口音倾向不同。
+ * Kokoro 音色信息（Kokoro 已下线，保留类与空列表让引用点编译过）。
  */
 data class VoiceInfo(val sid: Int, val name: String) {
     val category: String
@@ -141,25 +109,5 @@ data class VoiceInfo(val sid: Int, val name: String) {
     val displayName: String get() = "$name · $category"
 }
 
-private val KOKORO_VOICE_NAMES = listOf(
-    "af_maple", "af_sol", "bf_vale",
-    "zf_001", "zf_002", "zf_003", "zf_004", "zf_005", "zf_006", "zf_007",
-    "zf_008", "zf_017", "zf_018", "zf_019", "zf_021", "zf_022", "zf_023",
-    "zf_024", "zf_026", "zf_027", "zf_028", "zf_032", "zf_036", "zf_038",
-    "zf_039", "zf_040", "zf_042", "zf_043", "zf_044", "zf_046", "zf_047",
-    "zf_048", "zf_049", "zf_051", "zf_059", "zf_060", "zf_067", "zf_070",
-    "zf_071", "zf_072", "zf_073", "zf_074", "zf_075", "zf_076", "zf_077",
-    "zf_078", "zf_079", "zf_083", "zf_084", "zf_085", "zf_086", "zf_087",
-    "zf_088", "zf_090", "zf_092", "zf_093", "zf_094", "zf_099",
-    "zm_009", "zm_010", "zm_011", "zm_012", "zm_013", "zm_014", "zm_015",
-    "zm_016", "zm_020", "zm_025", "zm_029", "zm_030", "zm_031", "zm_033",
-    "zm_034", "zm_035", "zm_037", "zm_041", "zm_045", "zm_050", "zm_052",
-    "zm_053", "zm_054", "zm_055", "zm_056", "zm_057", "zm_058", "zm_061",
-    "zm_062", "zm_063", "zm_064", "zm_065", "zm_066", "zm_068", "zm_069",
-    "zm_080", "zm_081", "zm_082", "zm_089", "zm_091", "zm_095", "zm_096",
-    "zm_097", "zm_098", "zm_100",
-)
-
-/** Kokoro 音色目录（sid 顺序与官方 voices.bin 对齐） */
-val KOKORO_VOICES: List<VoiceInfo> =
-    KOKORO_VOICE_NAMES.mapIndexed { sid, name -> VoiceInfo(sid, name) }
+/** Kokoro 音色目录（Kokoro 已下线，空列表） */
+val KOKORO_VOICES: List<VoiceInfo> = emptyList()

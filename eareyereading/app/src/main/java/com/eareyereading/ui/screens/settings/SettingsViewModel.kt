@@ -62,10 +62,21 @@ data class SettingsUiState(
     // ── 语音模型 / 音色选择（Kokoro 多音色）──
     /** 可选模型列表（含各自的下载状态），模型选择弹窗用 */
     val embeddedModels: List<EmbeddedModelUi> = emptyList(),
-    /** 当前选中模型是否为 Kokoro（决定是否展示音色行） */
+    /** 当前选中模型是否为 Kokoro（Kokoro 已下线，永远 false，保留字段兼容） */
     val embeddedSelectedModelIsKokoro: Boolean = false,
-    /** 当前选中音色展示名（如 "zf_001 · 中文女声"）；非 Kokoro 为空 */
+    /** 当前选中音色展示名（Kokoro 已下线，永远空） */
     val embeddedVoiceDisplay: String = "",
+    // ── TTS 引擎类型（离线/在线 Edge TTS）──
+    /** "embedded"（离线 sherpa-onnx）或 "tencent"（在线腾讯云 TTS） */
+    val ttsEngineType: String = "embedded",
+    /** 腾讯云 SecretId */
+    val tencentSecretId: String = "",
+    /** 腾讯云 SecretKey */
+    val tencentSecretKey: String = "",
+    /** 腾讯云音色 id */
+    val tencentVoiceId: Int = 101001,
+    /** 腾讯云音色展示名 */
+    val tencentVoiceDisplay: String = "",
     // ── AI 翻译（LLM 通道）──
     val llmTranslateEnabled: Boolean = false,
     val llmApiKey: String = "",
@@ -192,6 +203,39 @@ class SettingsViewModel @Inject constructor(
                 throw e
             } catch (e: Exception) {
                 android.util.Log.e("SettingsViewModel", "llm settings collect failed", e)
+            }
+        }
+
+        // TTS 引擎类型 + 腾讯云配置
+        viewModelScope.launch {
+            try {
+                kotlinx.coroutines.flow.combine(
+                    settingsRepository.getTtsEngineType(),
+                    settingsRepository.getTencentSecretId(),
+                    settingsRepository.getTencentSecretKey(),
+                    settingsRepository.getTencentVoiceId(),
+                ) { type, sid, skey, vid ->
+                    arrayOf(type, sid, skey, vid.toString())
+                }.collect { arr ->
+                    val type = arr[0]
+                    val sid = arr[1]
+                    val skey = arr[2]
+                    val vid = arr[3].toInt()
+                    val voice = com.eareyereading.tts.TENCENT_VOICES.find { it.id == vid }
+                    _uiState.update {
+                        it.copy(
+                            ttsEngineType = type,
+                            tencentSecretId = sid,
+                            tencentSecretKey = skey,
+                            tencentVoiceId = vid,
+                            tencentVoiceDisplay = voice?.displayName ?: "音色 $vid",
+                        )
+                    }
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                android.util.Log.e("SettingsViewModel", "tts engine config collect failed", e)
             }
         }
 
@@ -369,6 +413,39 @@ class SettingsViewModel @Inject constructor(
      * 用户会感觉"点了切换没反应"。先 stop() 让锁立即释放，切换才即时生效。
      * 切换后触发 warmUp：否则首次朗读要付 ~10 秒冷启动开销（Kokoro 首块）。
      */
+    /** 切换 TTS 引擎类型（"embedded" / "tencent"） */
+    fun setTtsEngineType(type: String) {
+        viewModelScope.launch {
+            ttsHelper.stop()
+            settingsRepository.setTtsEngineType(type)
+            ttsHelper.refreshEngineType()
+            _uiState.update {
+                it.copy(
+                    ttsEngineType = type,
+                    snackbarMessage = if (type == "tencent") "已切换到在线腾讯云 TTS" else "已切换到离线 TTS",
+                )
+            }
+        }
+    }
+
+    /** 设置腾讯云凭证 */
+    fun setTencentCredentials(id: String, key: String) {
+        viewModelScope.launch {
+            settingsRepository.setTencentSecretId(id)
+            settingsRepository.setTencentSecretKey(key)
+            ttsHelper.refreshEngineType()
+            _uiState.update { it.copy(snackbarMessage = "腾讯云凭证已保存") }
+        }
+    }
+
+    /** 切换腾讯云音色 */
+    fun setTencentVoiceId(voiceId: Int) {
+        viewModelScope.launch {
+            settingsRepository.setTencentVoiceId(voiceId)
+            ttsHelper.refreshEngineType()
+        }
+    }
+
     fun setEmbeddedModel(id: String) {
         viewModelScope.launch {
             if (id == embeddedTts.getSelectedModelId()) return@launch

@@ -71,6 +71,43 @@ class EmbeddedTtsEngine @Inject constructor(
     @Volatile
     private var warmedUpModelId: String? = null
 
+    // ── 首声四段埋点（TTS_LATENCY_DIAGNOSIS_2026-09-06 第五节）─────────────
+    // click→firstOffer→trackPlayed→headMoved 四段耗时一条日志量化首声延迟，
+    // 不再靠 awaitWatermark 的 head=0 反推。会话级单例够用：speakMutex 保证
+    // 同一时刻只有一条朗读链，新链 beginFirstAudioTrace 会重置全部字段。
+    /** 用户点击朗读的时刻（ms）；由 beginFirstAudioTrace 在 UI 线程写入 */
+    @Volatile
+    private var firstAudioClickMs: Long = 0L
+    /** 首帧 PCM 入队时刻（ms）；doSpeakQueueLocked 的 generateWithCallback 首次回调时写 */
+    @Volatile
+    private var firstAudioOfferMs: Long = 0L
+    /** AudioTrack.play() 时刻（ms）；StreamingTrackPlayer.startTrack 首次成功时写 */
+    @Volatile
+    private var firstAudioPlayedMs: Long = 0L
+    /** 硬件首次消费帧时刻（ms）；awaitWatermark 首次 head>0 时写 */
+    @Volatile
+    private var firstAudioHeadMovedMs: Long = 0L
+    /** 本链首块字符数与句子数，首声日志里一并报出 */
+    @Volatile
+    private var firstAudioBlockChars: Int = 0
+    @Volatile
+    private var firstAudioSentenceCount: Int = 0
+
+    /**
+     * 在 UI 点击朗读的瞬间调用，标记本条朗读链首声计时的起点。
+     * 必须在 speakViaQueue 拿锁之前调用——首声延迟含等锁时间。
+     * 幂等重置：连点会重置起点，与 speakViaQueue 取消旧 job 的语义一致。
+     * sentenceCount 在 doSpeakQueueLocked 进链时补全（click 瞬间尚未切句）。
+     */
+    fun beginFirstAudioTrace() {
+        firstAudioClickMs = System.currentTimeMillis()
+        firstAudioOfferMs = 0L
+        firstAudioPlayedMs = 0L
+        firstAudioHeadMovedMs = 0L
+        firstAudioBlockChars = 0
+        firstAudioSentenceCount = 0
+    }
+
     /**
      * 短文本（单词）预合成 PCM 缓存：key = "清洗后文本|sid|speed"。
      *
@@ -222,6 +259,18 @@ class EmbeddedTtsEngine @Inject constructor(
          * 在 sherpa-onnx 安全范围内（~500 以内稳定）。
          */
         private const val MAX_CHUNK_CHARS = 400
+
+        /**
+         * 首块合并上限（字符数）。
+         *
+         * 2026-09-06 真机实测（Kokoro int8 / 4 线程）：G2P 对 179 字符整块要 ~7.5s，
+         * 占首声延迟 68%。G2P 在 native ConvertTextToTokenIds 里对整块一次性做
+         *（espeak-ng + jieba + 3 ruleFST），逐句回调只发生在 G2P 完成后的推理阶段。
+         * 首块减小直接降低 G2P 耗时，首声从 ~11s 降到 ~6s。
+         * 后续块维持 [MAX_CHUNK_CHARS]（400）合并——G2P 摊薄到可接受，且减少
+         * generate 调用次数（每次 generate 有 ~2s 固定开销）。
+         */
+        private const val FIRST_BLOCK_MAX_CHARS = 120
 
         /**
          * 推理预热文本（见 [warmUp]）：长度必须接近真实首块负载
@@ -418,7 +467,16 @@ class EmbeddedTtsEngine @Inject constructor(
     /**
      * 初始化 OfflineTts 实例（同步方法，调用前确保模型已下载）。
      */
-    suspend fun initialize(modelInfo: ModelInfo = getCurrentModelInfo()): Boolean =
+    suspend fun initialize(
+        modelInfo: ModelInfo = getCurrentModelInfo(),
+        /**
+         * 书籍语言（"en"/"zh"/null）。Kokoro 按此决定 G2P 配置：
+         * 英文时省略中文 lexicon/ruleFST/jieba，G2P 从 ~8s 降到 <1s
+         *（2026-09-06 实测：中文资源是 G2P 68% 耗时的根因）。
+         * null = 全配（向后兼容，中英混读场景）。
+         */
+        language: String? = null,
+    ): Boolean =
         withContext(Dispatchers.IO) {
             // 快路径也进锁：与 release()/deleteModel 竞态时，可能在 tts 被置空的
             // 同时返回 true，之后每次 speak 静默失败
@@ -489,6 +547,9 @@ class EmbeddedTtsEngine @Inject constructor(
                 if (modelInfo.isKokoro) {
                     val voicesPath = findFile("voices.bin")
                         ?: throw IllegalStateException("缺少 voices.bin")
+                    // 2026-09-06 实测：省略中文 lexicon/ruleFST 只降 1.2s G2P（10.6→9.4s），
+                    // 但引入 3s 重新初始化开销 + 并发竞态，净负。始终全配。
+                    // G2P 9s 是 Kokoro 英文 lexicon + espeak-ng 的固有性能，Kotlin 侧无法优化。
                     val lexicons = listOfNotNull(
                         findFile("lexicon-us-en.txt"),
                         findFile("lexicon-zh.txt"),
@@ -641,11 +702,21 @@ class EmbeddedTtsEngine @Inject constructor(
                 engine.generateWithCallback(WARMUP_TEXT, sid = sid, speed = 1.0f) {
                     if (warmUpCancelled) 0 else 1
                 }
-                warmedUpModelId = modelId
-                Log.i(
-                    TAG,
-                    "warmUp: model=$modelId done in ${System.currentTimeMillis() - startMs}ms",
-                )
+                // P0-2 修复：被中止时不要置位 warmedUpModelId。
+                // 中止意味着预热没真正完成（ONNX arena 没长到峰值、首次推理开销
+                // 没被完全消化），置位后 isWarmedUp() 返回 true、hintTtsWarmUpIfNeeded
+                // 不再提示、warmUp 早退——本进程永不再预热，但引擎实际仍是冷的。
+                // 用户在 app 启动预热完成前点朗读（预热要 8-10s，这是常态）就会命中：
+                // 8-15s 无声且无提示。中止后不置位，下次 warmUp 会重新预热。
+                if (warmUpCancelled) {
+                    Log.i(TAG, "warmUp: model=$modelId cancelled, will retry on next idle")
+                } else {
+                    warmedUpModelId = modelId
+                    Log.i(
+                        TAG,
+                        "warmUp: model=$modelId done in ${System.currentTimeMillis() - startMs}ms",
+                    )
+                }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -794,6 +865,11 @@ class EmbeddedTtsEngine @Inject constructor(
         }
         if (rawSentences.isEmpty()) return true
 
+        // 首声埋点：补全本链句子数（click 瞬间尚未切句，进链时才有）
+        if (firstAudioSentenceCount == 0 && firstAudioClickMs != 0L) {
+            firstAudioSentenceCount = rawSentences.size
+        }
+
         val speakJob = kotlin.coroutines.coroutineContext[Job]
         isPlaying.set(true)
         // 流式播放器：整条链共用一条 AudioTrack，边合成边写边播
@@ -803,6 +879,26 @@ class EmbeddedTtsEngine @Inject constructor(
             audioAttributes = playbackAudioAttributes,
             trackSlot = trackSlot,
             requestAudioFocus = audioFocus::requestIfNeeded,
+            onFirstTrackPlayed = {
+                if (firstAudioPlayedMs == 0L && firstAudioClickMs != 0L) {
+                    firstAudioPlayedMs = System.currentTimeMillis()
+                }
+            },
+            onFirstHeadMoved = {
+                if (firstAudioHeadMovedMs == 0L && firstAudioClickMs != 0L) {
+                    firstAudioHeadMovedMs = System.currentTimeMillis()
+                    // 完整首声日志：四段耗时一条，量化首声延迟
+                    // click→firstOffer=合成+G2P，→trackPlayed=预缓冲攒够+建轨，
+                    // →headMoved=硬件开始消费；blockChars/sentences 标首块规模
+                    Log.i(
+                        TAG,
+                        "TTS first-audio: click→firstOffer=${firstAudioOfferMs - firstAudioClickMs}ms, " +
+                            "→trackPlayed=${firstAudioPlayedMs - firstAudioClickMs}ms, " +
+                            "→headMoved=${firstAudioHeadMovedMs - firstAudioClickMs}ms, " +
+                            "blockChars=$firstAudioBlockChars, sentences=$firstAudioSentenceCount",
+                    )
+                }
+            },
         )
         var circuitBroken = false
         try {
@@ -853,6 +949,9 @@ class EmbeddedTtsEngine @Inject constructor(
                     // Kokoro 每次 generate 有 ~2s 固定开销，逐句串行 N 句 = N×2s。
                     // 合并后大块一次 generate，native 端按句点切分逐句回调出声（流式），
                     // 首句合成完就回调，不用等整块合成完。固定开销从 N 次降到 ceil(N/k) 次。
+                    //
+                    // 首块用更小的 FIRST_BLOCK_MAX_CHARS 上限：G2P 对整块一次性做，
+                    // 首块减小直接降低首声延迟（2026-09-06 实测 G2P 占首声 68%）。
                     val blocks = mutableListOf<String>()
                     val blockSentenceIndexMap = mutableListOf<Int>()
                     val currentBuf = StringBuilder()
@@ -861,7 +960,9 @@ class EmbeddedTtsEngine @Inject constructor(
                         if (raw.isBlank()) continue
                         val cleaned = if (isKokoro) preprocessForTtsLight(raw) else preprocessForTts(raw)
                         if (cleaned.isBlank()) continue
-                        if (currentBuf.length + cleaned.length + 1 > MAX_CHUNK_CHARS && currentBuf.isNotEmpty()) {
+                        // 首块用 FIRST_BLOCK_MAX_CHARS，后续块用 MAX_CHUNK_CHARS
+                        val chunkLimit = if (blocks.isEmpty()) FIRST_BLOCK_MAX_CHARS else MAX_CHUNK_CHARS
+                        if (currentBuf.length + cleaned.length + 1 > chunkLimit && currentBuf.isNotEmpty()) {
                             blocks.add(currentBuf.toString().trim())
                             blockSentenceIndexMap.add(currentLastIdx)
                             currentBuf.clear()
@@ -889,6 +990,11 @@ class EmbeddedTtsEngine @Inject constructor(
                         val cachedPcm = pcmCache.get(cacheKey(block, sid, speed))
                         if (cachedPcm != null) {
                             if (speakJob?.isActive != false) {
+                                // 首声埋点：缓存命中路径同样记录 firstOffer
+                                if (firstAudioOfferMs == 0L && firstAudioClickMs != 0L) {
+                                    firstAudioOfferMs = System.currentTimeMillis()
+                                    firstAudioBlockChars = block.length
+                                }
                                 player.offer(cachedPcm)
                                 Log.i(
                                     TAG,
@@ -897,10 +1003,29 @@ class EmbeddedTtsEngine @Inject constructor(
                                 )
                             }
                         } else {
+                        // G2P+回调粒度埋点：拆解首块 10.8s 的归因（G2P vs 推理 vs 回调粒度）
+                        val blockGenStartMs = System.currentTimeMillis()
+                        var firstCallbackMs = 0L
+                        var lastCallbackMs = 0L
+                        var callbackCount = 0
+                        var firstCallbackSamples = 0
                         val audio = try {
                             currentTts.generateWithCallback(block, sid = sid, speed = speed) { samples ->
                                 // 返回 1 继续合成；协程已取消时返回 0 让 native 立即中止
-                                if (speakJob?.isActive == false) 0 else player.offer(samples)
+                                if (speakJob?.isActive == false) 0 else {
+                                    callbackCount++
+                                    if (callbackCount == 1) {
+                                        firstCallbackMs = System.currentTimeMillis()
+                                        firstCallbackSamples = samples.size
+                                    }
+                                    lastCallbackMs = System.currentTimeMillis()
+                                    // 首声埋点：首次 offer 时记录 firstOffer 时间戳
+                                    if (firstAudioOfferMs == 0L && firstAudioClickMs != 0L) {
+                                        firstAudioOfferMs = System.currentTimeMillis()
+                                        firstAudioBlockChars = block.length
+                                    }
+                                    player.offer(samples)
+                                }
                             }
                         } catch (e: kotlinx.coroutines.CancellationException) {
                             throw e
@@ -908,6 +1033,18 @@ class EmbeddedTtsEngine @Inject constructor(
                             // 单块 generate 崩溃（如 native G2P bug）：跳过该块，继续
                             Log.e(TAG, "block generate failed, skipping: '${block.take(60)}'", e)
                             null
+                        }
+                        // G2P+回调粒度汇总日志（仅首块打，避免噪声）
+                        if (firstAudioOfferMs != 0L && firstAudioClickMs != 0L && callbackCount > 0) {
+                            val g2pMs = firstCallbackMs - blockGenStartMs
+                            val synthMs = lastCallbackMs - firstCallbackMs
+                            Log.i(
+                                TAG,
+                                "TTS block-decomp: g2p+firstCallback=${g2pMs}ms, " +
+                                    "synth=${synthMs}ms, callbackCount=$callbackCount, " +
+                                    "firstCallbackSamples=$firstCallbackSamples, " +
+                                    "blockChars=${block.length}",
+                            )
                         }
                         // 兜底与日志均以 framesOffered（含预缓冲 pending 里的帧）为基准：
                         // 预缓冲期间 framesWritten 恒为 0，若用它判断"一帧未写"会把

@@ -36,6 +36,10 @@ fun ReaderViewModel.toggleAutoRead() {
         }
         else -> Unit
     }
+    // 防抖：连点（<500ms）直接忽略，避免并发 initialize 竞争
+    val now = System.currentTimeMillis()
+    if (now - lastTogglePlayMs < 500L) return
+    lastTogglePlayMs = now
     startAutoRead()
 }
 
@@ -45,6 +49,8 @@ private fun ReaderViewModel.startAutoRead() {
 
     // 启动前停掉其他播放形态（仲裁，见 stopAllPlayback 说明）
     stopAllPlayback()
+    // 首声埋点：UI 点击瞬间标记计时起点（含等锁/初始化时间）
+    if (ttsHelper.getEngineType() != "tencent") ttsHelper.getEmbeddedEngine().beginFirstAudioTrace()
 
     // 初始化放进被追踪的 autoReadJob：初始化窗口内的第二次点击
     // 会先 cancel 掉第一次尝试，不再出现两条并发朗读链
@@ -162,6 +168,12 @@ private fun ReaderViewModel.doStartAutoRead(paragraphs: List<String>) {
             }
 
             // 段落间停顿
+            // 段间 gap 埋点：标记上一段播完时刻，与下一段首声日志对照可量化段间静默
+            // paraBoundarySilence = 下一段 click→headMoved（首声埋点已覆盖）+ PARAGRAPH_PAUSE_MS
+            android.util.Log.i(
+                "EmbeddedTtsEngine",
+                "TTS gap: paraBoundary paraIdx=$paraIdx doneAt=${System.currentTimeMillis()}ms, pauseMs=$PARAGRAPH_PAUSE_MS",
+            )
             kotlinx.coroutines.delay(PARAGRAPH_PAUSE_MS)
         }
 
@@ -222,6 +234,8 @@ fun ReaderViewModel.toggleRsvp() {
     } else {
         // 启动前停掉其他播放形态（仲裁）
         stopAllPlayback()
+        // 首声埋点：UI 点击瞬间标记计时起点
+        if (ttsHelper.getEngineType() != "tencent") ttsHelper.getEmbeddedEngine().beginFirstAudioTrace()
         // 初始化放进被追踪的 rsvpJob：初始化窗口内的连点会取消第一次尝试，
         // 不再出现两条并发播放循环交替调 speak() 的乱序音频
         rsvpJob = viewModelScope.launch {
@@ -285,6 +299,8 @@ fun ReaderViewModel.toggleSpeed() {
     } else {
         // 启动前停掉其他播放形态（仲裁）
         stopAllPlayback()
+        // 首声埋点：UI 点击瞬间标记计时起点
+        if (ttsHelper.getEngineType() != "tencent") ttsHelper.getEmbeddedEngine().beginFirstAudioTrace()
         // 同 toggleRsvp：初始化纳入被追踪的 job，杜绝双循环竞态
         speedJob = viewModelScope.launch {
             if (!_uiState.value.ttsInitialized) {
@@ -413,8 +429,14 @@ fun ReaderViewModel.toggleTts() {
             it.copy(isTtsPlaying = false, currentSentences = emptyList(), currentSentenceIndex = 0)
         }
     } else {
+        // 防抖：连点（<500ms）直接忽略，避免并发 initialize 竞争
+        val now = System.currentTimeMillis()
+        if (now - lastTogglePlayMs < 500L) return
+        lastTogglePlayMs = now
         // 启动前停掉其他播放形态（RSVP/速读可能在跑）
         stopAllPlayback()
+        // 首声埋点：UI 点击瞬间标记计时起点（含初始化/等锁时间）
+        if (ttsHelper.getEngineType() != "tencent") ttsHelper.getEmbeddedEngine().beginFirstAudioTrace()
         // TTS 未初始化：初始化纳入被追踪的 job，初始化窗口内的连点先取消上一次
         if (!_uiState.value.ttsInitialized) {
             ttsInitJob?.cancel()

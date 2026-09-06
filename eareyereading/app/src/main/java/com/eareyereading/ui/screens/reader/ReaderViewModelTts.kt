@@ -199,6 +199,11 @@ private fun ReaderViewModel.downloadEmbeddedTtsModel() {
  */
 internal suspend fun ReaderViewModel.handleTtsInitFailure(prefix: String) {
     _uiState.update { it.copy(ttsInitialized = false) }
+    // 腾讯云 TTS 在线引擎初始化失败 = 网络不可达/凭证错，不弹下载引导
+    if (ttsHelper.getEngineType() == "tencent") {
+        showToast("$prefix：在线 TTS 连接失败，请检查网络或腾讯云配置")
+        return
+    }
     val embeddedEngine = ttsHelper.getEmbeddedEngine()
     val embeddedNotDownloaded = !embeddedEngine.isModelDownloaded()
     val message = if (embeddedNotDownloaded) {
@@ -224,12 +229,14 @@ internal suspend fun ReaderViewModel.handleTtsInitFailure(prefix: String) {
 internal fun ReaderViewModel.hintEmbeddedVoiceMismatchIfNeeded() {
     if (embeddedVoiceMismatchHintShown) return
     if (ttsHelper.ttsMode != TtsHelper.TtsMode.EMBEDDED) return
+    // 腾讯云 TTS 在线引擎按语言选音色，不会不匹配
+    if (ttsHelper.getEngineType() == "tencent") return
     val model = ttsHelper.getEmbeddedEngine().getCurrentModelInfo()
     embeddedVoiceMismatchHintShown = true
     val bookLanguage = (_uiState.value.book?.language ?: "en").lowercase()
     val supported = model.language.split(",").map { it.trim().lowercase() }
     if (bookLanguage !in supported) {
-        showToast("当前内置音色（${model.displayName}）不支持本书语言，建议在设置中切换语音模型")
+        showToast("当前离线音色（${model.displayName}）不支持本书语言，建议在设置中切换到在线腾讯云 TTS")
     }
 }
 

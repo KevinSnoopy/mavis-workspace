@@ -33,6 +33,10 @@ class SettingsRepositoryImpl @Inject constructor(
         val NOTIFICATION_DOWNLOAD_COMPLETE = booleanPreferencesKey("notification_download_complete")
         val COLLINS_HIGHLIGHT = booleanPreferencesKey("collins_highlight")
         val TTS_SPEED = floatPreferencesKey("tts_speed")
+        val TTS_ENGINE_TYPE = stringPreferencesKey("tts_engine_type") // "embedded" / "tencent"
+        val TENCENT_SECRET_ID = stringPreferencesKey("tencent_secret_id")
+        val TENCENT_SECRET_KEY = stringPreferencesKey("tencent_secret_key")
+        val TENCENT_VOICE_ID = intPreferencesKey("tencent_voice_id")
         // 阅读器正文字体：true=衬线（FontFamily.Serif），false=默认无衬线
         val SERIF_FONT = booleanPreferencesKey("serif_font")
         // 阅读方式：true=左右翻页（仿书页），false=上下滚动（默认）
@@ -109,6 +113,18 @@ class SettingsRepositoryImpl @Inject constructor(
     override fun getTtsSpeed(): Flow<Float> =
         dataStore.data.map { it[TTS_SPEED] ?: 1.0f }
 
+    override fun getTtsEngineType(): Flow<String> =
+        dataStore.data.map { it[TTS_ENGINE_TYPE] ?: "embedded" }
+
+    override fun getTencentSecretId(): Flow<String> =
+        dataStore.data.map { it[TENCENT_SECRET_ID] ?: "" }
+
+    override fun getTencentSecretKey(): Flow<String> =
+        dataStore.data.map { it[TENCENT_SECRET_KEY] ?: "" }
+
+    override fun getTencentVoiceId(): Flow<Int> =
+        dataStore.data.map { it[TENCENT_VOICE_ID] ?: 101001 }
+
     override fun getSerifFont(): Flow<Boolean> =
         dataStore.data.map { it[SERIF_FONT] ?: false }
 
@@ -184,6 +200,22 @@ class SettingsRepositoryImpl @Inject constructor(
     override suspend fun setTtsSpeed(speed: Float) {
         // 限幅：0.5x - 2.0x，避免 TTS 引擎收到极端值导致崩溃或无输出
         dataStore.edit { it[TTS_SPEED] = speed.coerceIn(0.5f, 2.0f) }
+    }
+
+    override suspend fun setTtsEngineType(type: String) {
+        dataStore.edit { it[TTS_ENGINE_TYPE] = type }
+    }
+
+    override suspend fun setTencentSecretId(id: String) {
+        dataStore.edit { it[TENCENT_SECRET_ID] = id }
+    }
+
+    override suspend fun setTencentSecretKey(key: String) {
+        dataStore.edit { it[TENCENT_SECRET_KEY] = key }
+    }
+
+    override suspend fun setTencentVoiceId(voiceId: Int) {
+        dataStore.edit { it[TENCENT_VOICE_ID] = voiceId }
     }
 
     override suspend fun clearAll() {

@@ -360,6 +360,10 @@ class TranslationHelper @Inject constructor(
      * （正式翻译路径仍有 60s 重试窗口兜底）。
      */
     suspend fun warmUp(sourceLang: String = "en", targetLang: String = "zh") {
+        // AI 翻译已配置启用时，不预热 ML Kit 模型——
+        // LLM 是主通道，ML Kit 仅作离线兜底，按需懒加载即可，
+        // 不必进书就下载 ~30MB 模型浪费流量/存储
+        if (llmConfigIfEnabled() != null) return
         if (sourceLang.equals("en", ignoreCase = true) && targetLang.equals("zh", ignoreCase = true)) {
             // 默认方向：只触发懒加载（内部异步下载，不等待完成）
             ensureInitialized()
