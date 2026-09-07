@@ -1,7 +1,6 @@
 package com.eareyereading.tts
 
 import android.media.AudioAttributes
-import android.media.AudioDeviceInfo
 import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioTrack
@@ -10,7 +9,7 @@ import android.util.Log
 
 /**
  * 流式播放器：一条朗读链专用一条 MODE_STREAM AudioTrack，边合成边写边播；
- * 预缓冲攒够才建轨开播，含 MIUI mixer 不消费的自愈重试。轨道槽与音频焦点
+ * 预缓冲攒够才建轨开播，含 MIUI mixer 不消耗的自愈重试。轨道槽与音频焦点
  * 由引擎注入（stop() 需能随时接管释放）。
  */
 /** 日志 tag 与引擎一致，便于 logcat 统一过滤。 */
@@ -44,7 +43,7 @@ private const val PREBUFFER_SECONDS = 0.8f
  * （audio_lowpower_app_list.xml 即该策略配置文件）。统一上采样到
  * 48k 建轨，强制走 primary mixer 原生路径。
  */
-private const val TRACK_SAMPLE_RATE = 48000
+internal const val TRACK_SAMPLE_RATE = 48000
 
 /** 引擎与播放器共享的"当前轨道"槽：stop() 经此接管并释放正在播的流。 */
 internal class AudioTrackSlot {
@@ -203,56 +202,13 @@ internal class StreamingTrackPlayer(
         startTrack(newTrack)
     }
 
-    /**
-     * 播放诊断（2026-09-05 "AudioTrack start 成功但扬声器无声"定位用）：
-     * 一次开播打一条，三个字段各自排除一类根因——
-     *   peak=0        → PCM 数据本身是静音（NaN/全零转换结果），合成/缓存层问题；
-     *   musicVol=0    → 媒体音量为 0（音量键在无媒体播放时调的是铃声音量）；
-     *   以上正常但 awaitWatermark 的 head 不动 → 硬件不消费（焦点/路由/系统策略）。
-     */
     private fun logPlaybackDiagnostics() {
-        var peak = 0
-        for (chunk in pending) {
-            for (s in chunk) {
-                val v = kotlin.math.abs(s.toInt())
-                if (v > peak) peak = v
-            }
-        }
-        val vol = audioManager?.getStreamVolume(AudioManager.STREAM_MUSIC) ?: -1
-        val volMax = audioManager?.getStreamMaxVolume(AudioManager.STREAM_MUSIC) ?: -1
-        // mode（0=NORMAL/1=RINGTONE/2=IN_CALL/3=IN_COMMUNICATION）：后台挂着
-        // 微信语音/电话时媒体流会被系统静音或路由听筒——head=0 无声的
-        // 高频环境根因；outputs 看实际路由（是否真到扬声器）
-        val mode = audioManager?.mode ?: -1
-        val speakerOn = audioManager?.isSpeakerphoneOn
-        val musicActive = audioManager?.isMusicActive
-        val outputDevices = try {
-            audioManager?.getDevices(AudioManager.GET_DEVICES_OUTPUTS)?.toList() ?: emptyList()
-        } catch (_: Exception) {
-            emptyList()
-        }
-        val outputs = outputDevices.joinToString { "${it.type}:${it.productName}" }
-        // A2DP/蓝牙设备路由检测：type 7=A2DP, 8=SCO, 26=HEARING_AID, 27=BLE_SPEAKER
-        // 蓝牙手表（如华为 Watch 3 Pro）连着但无扬声器/休眠时，AudioTrack 写入
-        // 成功、PLAYING，但 mixer 恒不消费（head=0）——2026-09-05 18:02 日志定案
-        val hasBtOutput = outputDevices.any {
-            it.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP ||
-                it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
-                it.type == AudioDeviceInfo.TYPE_HEARING_AID ||
-                it.type == AudioDeviceInfo.TYPE_BLE_SPEAKER
-        }
-        if (hasBtOutput) {
-            Log.w(
-                TAG,
-                "TTS routed to Bluetooth device (likely not consuming): " +
-                    "outputs=[$outputs]. If head stays 0, will try forcing speaker.",
-            )
-        }
-        Log.i(
-            TAG,
-            "TTS playback diag: pcmPeak=$peak, musicVol=$vol/$volMax, mode=$mode, " +
-                "speakerOn=$speakerOn, musicActive=$musicActive, outputs=[$outputs], " +
-                "pendingFrames=$pendingFrames, srcRate=$sampleRate, trackRate=$TRACK_SAMPLE_RATE",
+        StreamingTrackDiagnostics.logPlaybackDiagnostics(
+            pending = pending,
+            pendingFrames = pendingFrames,
+            audioManager = audioManager,
+            sampleRate = sampleRate,
+            trackSampleRate = TRACK_SAMPLE_RATE,
         )
     }
 
@@ -316,42 +272,10 @@ internal class StreamingTrackPlayer(
             } else if (now - stillSinceMs > replayThresholdMs && replayAttempts < maxReplayAttempts) {
                 replayAttempts++
                 Log.w(TAG, "awaitWatermark: head stuck at 0 for ${now - stillSinceMs}ms, replay attempt $replayAttempts/$maxReplayAttempts")
-                // 首次重试：尝试强制切扬声器（绕过蓝牙 A2DP 路由）
-                // 2026-09-05 18:02 日志定案：蓝牙手表 A2DP 连接但无扬声器/休眠时，
-                // mixer 恒不消费。setSpeakerphoneOn(true) 在 MODE_NORMAL 下可能
-                // 无效，但部分 MIUI 版本会响应并切到扬声器。
-                if (replayAttempts == 1) {
-                    try {
-                        audioManager?.let { am ->
-                            if (!am.isSpeakerphoneOn) {
-                                am.isSpeakerphoneOn = true
-                                Log.i(TAG, "forced speakerphone on (A2DP workaround)")
-                            }
-                        }
-                    } catch (e: Exception) {
-                        Log.w(TAG, "setSpeakerphoneOn failed", e)
-                    }
-                } else if (replayAttempts == 2) {
-                    // 第二次重试：MODE_IN_COMMUNICATION + setSpeakerphoneOn 组合。
-                    // MODE_NORMAL 下 setSpeakerphoneOn 无效（19:01 日志已证伪），
-                    // MODE_IN_COMMUNICATION 改变音频路由策略，强制走通信通道+
-                    // 扬声器，绕过 MIUI 媒体流的低功耗策略。播放结束后在
-                    // releaseIfCurrent 恢复 MODE_NORMAL。
-                    try {
-                        audioManager?.let { am ->
-                            if (am.mode != AudioManager.MODE_IN_COMMUNICATION) {
-                                am.mode = AudioManager.MODE_IN_COMMUNICATION
-                                Log.i(TAG, "set mode IN_COMMUNICATION (mixer workaround)")
-                            }
-                            if (!am.isSpeakerphoneOn) {
-                                am.isSpeakerphoneOn = true
-                                Log.i(TAG, "forced speakerphone on (mode=IN_COMMUNICATION)")
-                            }
-                        }
-                    } catch (e: Exception) {
-                        Log.w(TAG, "mode/speaker workaround failed", e)
-                    }
-                }
+                StreamingTrackDiagnostics.applyMixerWorkaround(
+                    replayAttempts = replayAttempts,
+                    audioManager = audioManager,
+                )
                 synchronized(trackSlot.lock) {
                     if (trackSlot.track === t && t.state == AudioTrack.STATE_INITIALIZED) {
                         try {

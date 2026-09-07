@@ -63,21 +63,12 @@ class TranslationHelper @Inject constructor(
     @Volatile
     private var initFailedAt = 0L
 
-    // ── 翻译结果内存 LRU 缓存 ─────────────────────────
-    // 同一段落/句子/单词的重复翻译（翻译开关重开、分栏/回译模式重进、
-    // 同句再次双击等）直接命中内存，不再消耗 ML Kit 推理。
-    // accessOrder LinkedHashMap + 条数上限驱逐，synchronizedMap 保证并发安全；
-    // 失败结果不落缓存（下次仍会重试）。
-    private val memoryCache: MutableMap<String, String> =
-        java.util.Collections.synchronizedMap(
-            object : LinkedHashMap<String, String>(64, 0.75f, true) {
-                override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String>): Boolean =
-                    size > MEMORY_CACHE_MAX_ENTRIES
-            },
-        )
+    // ── 翻译结果内存 LRU 缓存（委托给 TranslationMemoryCache，SRP）──
+    private val memoryCache = TranslationMemoryCache()
+    private val llmCircuit = LlmCircuitBreaker()
 
     private fun cacheKey(text: String, sourceLang: String, targetLang: String): String =
-        "$sourceLang>$targetLang|$text"
+        memoryCache.key(text, sourceLang, targetLang)
 
     // ── AI 翻译（LLM 通道）─────────────────────
 
@@ -106,35 +97,12 @@ class TranslationHelper @Inject constructor(
 
     private suspend fun llmConfigIfEnabled(): LlmTranslator.Config? = readLlmConfig(checkEnabled = true)
 
-    // ── LLM 熔断 ─────────────────────────────────
-    // 连续失败达阈值后进入冷却期，期间不再尝试 LLM（直接走机翻链）：
-    // 离线/端点故障时避免每段翻译都先等满 10s 连接超时才回退
-    @Volatile
-    private var llmConsecutiveFailures = 0
-
-    @Volatile
-    private var llmCooldownUntil = 0L
-
-    private fun llmCircuitOpen(): Boolean = SystemClock.elapsedRealtime() < llmCooldownUntil
-
     /** 带熔断的 LLM 翻译尝试：成功/失败都维护熔断计数，失败返回 null 由调用方回退机翻。 */
     private suspend fun tryLlmTranslate(text: String, sourceLang: String, targetLang: String): String? {
-        if (llmCircuitOpen()) return null
+        if (llmCircuit.isOpen()) return null
         val config = readLlmConfig(checkEnabled = true) ?: return null
         val result = llmTranslator.translate(text, sourceLang, targetLang, config)
-        if (result == null) {
-            llmConsecutiveFailures++
-            if (llmConsecutiveFailures >= LLM_FAILURE_THRESHOLD) {
-                llmCooldownUntil = SystemClock.elapsedRealtime() + LLM_COOLDOWN_MS
-                llmConsecutiveFailures = 0
-                android.util.Log.w(
-                    "TranslationHelper",
-                    "LLM failed $LLM_FAILURE_THRESHOLD times in a row, cooldown ${LLM_COOLDOWN_MS}ms",
-                )
-            }
-        } else {
-            llmConsecutiveFailures = 0
-        }
+        if (result == null) llmCircuit.recordFailure() else llmCircuit.recordSuccess()
         return result
     }
 
@@ -283,9 +251,9 @@ class TranslationHelper @Inject constructor(
         if (text.isBlank()) return null
         if (sourceLang.equals(targetLang, ignoreCase = true)) return text
         val key = cacheKey(text, sourceLang, targetLang)
-        memoryCache[key]?.let { return it }
+        memoryCache.get(key)?.let { return it }
         val result = translateUncached(text, sourceLang, targetLang)
-        if (!result.isNullOrBlank()) memoryCache[key] = result
+        if (!result.isNullOrBlank()) memoryCache.put(key, result)
         return result
     }
 
@@ -327,10 +295,10 @@ class TranslationHelper @Inject constructor(
         if (paragraph.isBlank()) return null
         if (sourceLang.equals(targetLang, ignoreCase = true)) return paragraph
         val key = "¶|" + cacheKey(paragraph, sourceLang, targetLang)
-        memoryCache[key]?.let { return it }
+        memoryCache.get(key)?.let { return it }
         val result = tryLlmTranslate(paragraph, sourceLang, targetLang)
             ?: translateParagraphSentenceBySentence(paragraph, sourceLang, targetLang)
-        if (!result.isNullOrBlank()) memoryCache[key] = result
+        if (!result.isNullOrBlank()) memoryCache.put(key, result)
         return result
     }
 
@@ -600,14 +568,6 @@ class TranslationHelper @Inject constructor(
 
         // 初始化失败后的重试窗口（issue 8.2）
         const val INIT_RETRY_WINDOW_MS = 60_000L
-
-        // LLM 熔断：连续失败阈值与冷却时长（离线快速回退机翻）
-        const val LLM_FAILURE_THRESHOLD = 3
-        const val LLM_COOLDOWN_MS = 60_000L
-
-        // 内存 LRU 缓存上限：段落级译文体量较大，512 条足够覆盖
-        // 整本中小型书籍 + 常用句子/单词，超出按访问顺序驱逐
-        const val MEMORY_CACHE_MAX_ENTRIES = 512
 
         // 整书翻译并发上限：旧实现 200 段一次性 async 同时压 ML Kit
         //（各自还可能等模型就绪），限流后吞吐更高也更稳

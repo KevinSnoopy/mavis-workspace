@@ -3,14 +3,11 @@
 package com.eareyereading.ui.screens.reader
 
 import android.content.Context
-import androidx.compose.ui.graphics.Color
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.eareyereading.data.local.dao.BookmarkDao
 import com.eareyereading.data.local.dao.HighlightDao
 import com.eareyereading.data.local.dao.ReadingStatsDao
-import com.eareyereading.data.local.entity.BookmarkEntity
-import com.eareyereading.data.local.entity.HighlightEntity
 import com.eareyereading.domain.model.*
 import com.eareyereading.domain.repository.*
 import com.eareyereading.tts.EmbeddedTtsEngine
@@ -21,21 +18,10 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.TimeoutCancellationException
-import kotlinx.coroutines.async
-import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.isActive
-import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.suspendCancellableCoroutine
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Semaphore
-import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.sync.withPermit
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.runBlocking
 import javax.inject.Inject
-import kotlin.coroutines.resume
 
 @HiltViewModel
 class ReaderViewModel @Inject constructor(
@@ -83,25 +69,8 @@ class ReaderViewModel @Inject constructor(
     internal var rsvpJob: Job? = null
     internal var speedJob: Job? = null
     internal var autoReadJob: Job? = null
-    private var vocabJob: Job? = null
-    private var bookmarksJob: Job? = null
-    private var highlightsJob: Job? = null
-    private var bookJob: Job? = null
     internal var currentBookId: Long? = null
     internal var readingStartTime: Long = 0L
-
-    companion object {
-        // 挖空练习：挖空比例
-        private const val CLOZE_RATIO = 0.15f
-        // 模糊听读：可见字符比例
-        private const val FUZZY_VISIBLE_RATIO = 0.3f
-        // 翻译透明度下限
-        private const val TRANSLATION_ALPHA_MIN = 0.3f
-        private const val TRANSLATION_ALPHA_MAX = 1f
-
-        private const val SETTINGS_PERSIST_DEBOUNCE_MS = 300L
-
-    }
 
     // 本次阅读会话的统计（用于 saveProgress/cleanup 时写入 DB）
     internal var sessionCharsRead: Long = 0L
@@ -114,32 +83,12 @@ class ReaderViewModel @Inject constructor(
     // saveProgress 防抖/收尾用：拖动进度条不再每像素写一次 DB
     internal var saveJob: kotlinx.coroutines.Job? = null
 
-    // 设置滑杆逐像素写 DataStore 的防抖：UI 状态立即更新保证滑杆跟手，
-    // 持久化合并到拖停后一次（与 saveProgress 同型）。按设置项分 key，
-    // 一个滑杆的拖动不会取消另一项的待写；退出时由 cleanup() 兜底冲刷
-    private val settingsPersistJobs = mutableMapOf<String, kotlinx.coroutines.Job>()
-    private val settingsPendingWrites = mutableMapOf<String, suspend () -> Unit>()
-
-    private fun persistSettingDebounced(key: String, write: suspend () -> Unit) {
-        settingsPersistJobs[key]?.cancel()
-        settingsPendingWrites[key] = write
-        settingsPersistJobs[key] = viewModelScope.launch {
-            delay(SETTINGS_PERSIST_DEBOUNCE_MS)
-            write()
-            // 按身份移除：只清自己这条，不误删并发排队的同名写入
-            if (settingsPendingWrites[key] === write) {
-                settingsPendingWrites.remove(key)
-            }
-        }
-    }
     // 书签切换用互斥锁串行化：真正的互斥而不是 cancel 上一个
     // （cancel 不阻塞、Room 语句中途不响应取消，竞态窗口仍在）
     internal val bookmarkMutex = kotlinx.coroutines.sync.Mutex()
     internal var bookmarkToggleJob: kotlinx.coroutines.Job? = null
     // 内置 TTS 模型下载防重入
     internal var downloadJob: kotlinx.coroutines.Job? = null
-    // 点词查询串行化：后一次点词取消前一次，慢查询不再覆盖新弹窗
-    private var selectWordJob: kotlinx.coroutines.Job? = null
     internal var sentenceTranslateJob: kotlinx.coroutines.Job? = null
     // 全书翻译任务追踪：退出时可取消，防止 ML Kit 在后台空转完整本书
     internal var translationJob: kotlinx.coroutines.Job? = null
@@ -153,6 +102,54 @@ class ReaderViewModel @Inject constructor(
 
     // TTS 引导弹窗防抖：本会话内已经弹过则不再弹（避免用户每次点朗读都看到同一个弹窗）
     internal var ttsPromptShownThisSession = false
+
+    // 双击选句翻译
+    internal val _selectedSentence = MutableStateFlow<String?>(null)
+    val selectedSentence: StateFlow<String?> = _selectedSentence.asStateFlow()
+
+    internal val _sentenceTranslation = MutableStateFlow<String?>(null)
+    val sentenceTranslation: StateFlow<String?> = _sentenceTranslation.asStateFlow()
+
+    // ── 职责委托 ─────────────────────────────
+    internal val settings = ReaderViewModelSettings(
+        vm = this,
+        settingsRepository = settingsRepository,
+    )
+
+    internal val vocabulary = ReaderViewModelVocabulary(
+        vm = this,
+        vocabularyRepository = vocabularyRepository,
+        translationHelper = translationHelper,
+        ttsHelper = ttsHelper,
+        collinsClassifier = collinsClassifier,
+    )
+
+    internal val practice = ReaderViewModelPractice(
+        vm = this,
+        wordAnalyzer = wordAnalyzer,
+        readingRepository = readingRepository,
+    )
+
+    internal val navigation = ReaderViewModelNavigation(
+        vm = this,
+        readingRepository = readingRepository,
+        practice = practice,
+    )
+
+    internal val bookLoader = ReaderViewModelBookLoader(
+        vm = this,
+        context = context,
+        bookRepository = bookRepository,
+        readingRepository = readingRepository,
+        vocabularyRepository = vocabularyRepository,
+        settingsRepository = settingsRepository,
+        epubParser = epubParser,
+        translationHelper = translationHelper,
+        ttsHelper = ttsHelper,
+        bookmarkDao = bookmarkDao,
+        highlightDao = highlightDao,
+        practice = practice,
+    )
 
     init {
         viewModelScope.launch {
@@ -246,602 +243,63 @@ class ReaderViewModel @Inject constructor(
         }
     }
 
-    fun loadBook(bookId: Long) {
-        // 同一 VM 重新加载（换书/重进）：先停掉所有播放，
-        // 旧循环持有的是旧段落快照，继续跑会越界/错读
-        stopAllPlayback()
+    // ── 公共 API 委托 ─────────────────────────────
 
-        // 切换书籍前，把上一本书的会话统计先落库（若有未落库部分）。
-        // 必须快照传参：viewModelScope 是 Main 调度器，launch 体要等本函数
-        // 让出线程后才执行，而下面同步把 sessionCharsRead 归零/前移基准——
-        // 旧实现让 flush 协程读字段，永远读到 0 直接早返回，上一本书的
-        // 阅读时长/字数在每次换书时静默丢失
-        currentBookId?.let { prevId ->
-            val pendingChars = sessionCharsRead
-            if (pendingChars > 0) {
-                val flushBase = lastFlushTime
-                val flushHighWater = (lastRecordedParagraphIndex + 1).coerceAtLeast(1)
-                viewModelScope.launch {
-                    flushSessionStats(
-                        prevId,
-                        chars = pendingChars,
-                        baseTime = flushBase,
-                        paragraphsHighWater = flushHighWater,
-                        clearSession = false,   // 字段已被下方同步重置，不能再清
-                    )
-                }
-            }
-        }
+    fun loadBook(bookId: Long) = bookLoader.loadBook(bookId)
 
-        currentBookId = bookId
-        readingStartTime = System.currentTimeMillis()
-        lastFlushTime = System.currentTimeMillis()
-        sessionCharsRead = 0L
-        lastRecordedParagraphIndex = -1
+    fun setReadingMode(mode: ReadingMode) = navigation.setReadingMode(mode)
 
-        // 取消旧的 Flow collectors，防止泄漏
-        vocabJob?.cancel()
-        bookmarksJob?.cancel()
-        highlightsJob?.cancel()
-        bookJob?.cancel()
-        // 全书翻译 Job 也必须取消：它捕获的是旧书段落，翻译结果是按
-        // 段落下标键控的 Map——不取消的话，慢翻译（首次要下载 ML Kit 模型）
-        // 落地后会把旧书译文写进新书的同名下标，新书段落顶着别人的译文
-        translationJob?.cancel()
-        // 点词/句子翻译的异步结果同样属于旧书：A 书点词后立刻换 B 书，
-        // 慢查询落地会把 A 书的词卡写进 B 书 UI（issue 3.2）
-        selectWordJob?.cancel()
-        sentenceTranslateJob?.cancel()
+    fun generateCloze() = practice.generateCloze()
 
-        _uiState.update { it.copy(isLoading = true, readingStartTime = readingStartTime) }
+    fun generateFuzzy() = practice.generateFuzzy()
 
-        // 加载生词本（用于阅读高亮）
-        vocabJob = viewModelScope.launch {
-            try {
-                vocabularyRepository.getAllVocabulary().collect { vocabList ->
-                    val known = vocabList.filter { it.isLearned }.map { it.word.lowercase(java.util.Locale.ROOT) }.toSet()
-                    val allWords = vocabList.map { it.word.lowercase(java.util.Locale.ROOT) }.toSet()
-                    _uiState.update { it.copy(knownWords = known, learnedWords = allWords) }
-                }
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                android.util.Log.e("ReaderViewModel", "vocab collect failed", e)
-            }
-        }
+    fun nextParagraph() = navigation.nextParagraph()
 
-        bookJob = viewModelScope.launch {
-            try {
-                // 用 first() 而非 collect() — 单次拉取，避免 updateProgress 后 Flow 重发射时
-                // 错误地将 currentParagraphIndex 重置为保存的旧位置（覆盖用户当前阅读进度）
-                val book = bookRepository.getBookById(bookId).first()
-                if (book == null) {
-                    // 书籍不存在（深链失效/已删除）：明确提示，由页面自动返回；
-                    // 同时保持 bookLoaded = false，退出时不写孤儿进度行
-                    android.util.Log.w("ReaderViewModel", "loadBook: book $bookId not found")
-                    _uiState.update { it.copy(isLoading = false) }
-                    showToast("书籍不存在或已被删除")
-                    return@launch
-                }
-                val paragraphs = if (book.content.isNotBlank()) {
-                    // split 是 O(全书) 的字符串切分 + 一次性分配全部段子串，
-                    // 10M 字符的书在主线程执行可感知卡顿——与 EPUB 重解析
-                    // 同样下沉后台调度器
-                    withContext(Dispatchers.Default) {
-                        book.content.split("\n\n").filter { it.isNotBlank() }
-                    }
-                } else {
-                    // parseBook 是阻塞式 zip IO + 正则解析，viewModelScope 跑在
-                    // Main 上——大书打开时直接 ANR（R9 修过 addBook 同款调用点，
-                    // 阅读加载路径这条漏网）
-                    // issue 9.9：统一读取代理，本地文件失效时回退用持久化的 content:// URI 读取
-                    withContext(Dispatchers.IO) {
-                        epubParser.parseBook(book.filePath, book.sourceUri, context.contentResolver).paragraphs
-                    }
-                }
-                val state = readingRepository.getState(bookId)
-                // 与 saveState 持久化的 totalCharacters 口径一致（都按段落分隔符拼接）
-                val totalChars = paragraphs.joinToString("\n\n").length.toLong()
-                // 内容可能比重导入/重切分，持久化的位置必须按新内容收敛，
-                // 否则 Slider/进度/朗读索引全部越界
-                val maxIdx = (paragraphs.size - 1).coerceAtLeast(0)
-                // issue 8.5：优先从 Room 读本书语言对的翻译缓存。回译/分栏模式
-                // 重开书直接展示已缓存的译文，不再重跑整本翻译；翻译结果首次落地后
-                // 由 translateAllParagraphs 写入缓存表
-                val bookLang = book.language.takeIf { it.isNotBlank() } ?: "en"
-                // 缓存键分层（LLM/机翻分开缓存）：见 TranslationHelper.effectiveCacheLangPair
-                val cachedTranslations = readingRepository.getTranslations(
-                    bookId,
-                    translationHelper.effectiveCacheLangPair("$bookLang>zh"),
-                )
+    fun prevParagraph() = navigation.prevParagraph()
 
-                _uiState.update {
-                    it.copy(
-                        // content 剥离：paragraphs 已是全文的段落形态，再在 uiState
-                        // 持有 content 即整书双份常驻内存（10M 字符书 ≈ 40MB+）。
-                        // 后续需要重解析时（content 为空分支）由本地 book 变量兜底
-                        book = book.copy(content = ""),
-                        paragraphs = paragraphs,
-                        currentParagraphIndex = (state?.currentParagraph ?: 0).coerceIn(0, maxIdx),
-                        currentWordIndex = (state?.currentPosition ?: 0).coerceAtLeast(0),
-                        readingMode = state?.readingMode ?: ReadingMode.NORMAL,
-                        rsvpSpeed = state?.rsvpSpeed ?: it.rsvpSpeed,
-                        // 每本书持久化的字号/主题随书恢复（此前只写不读，往返不对称）
-                        fontSize = state?.fontSize ?: it.fontSize,
-                        theme = state?.theme ?: it.theme,
-                        totalReadChars = totalChars,
-                        // 换书必须清掉上一本书的派生状态，否则旧书内容在新书里诈尸：
-                        // 译文 Map 按下标键控会直接张冠李戴；词卡/答案弹窗引用旧书内容
-                        // issue 8.5：不再硬清 paragraphTranslations，改为读新书的 Room 缓存
-                        paragraphTranslations = cachedTranslations,
-                        showTranslation = false,
-                        isTranslating = false,
-                        selectedVocab = null,
-                        showWordDialog = false,
-                        wordDefinition = null,
-                        hiddenWordAnswer = null,
-                        // 书签/高亮 collect 到新书首帧前是旧书数据：
-                        // 短暂残留即"幽灵书签"（issue 3.1）
-                        bookmarkedParagraphs = emptySet(),
-                        highlights = emptyMap(),
-                        isLoading = false,
-                    )
-                }
-                // 句子翻译弹窗同样属于上一本书的内容，一并清掉
-                _selectedSentence.value = null
-                _sentenceTranslation.value = null
-                bookLoaded = true
-                // 字符统计的高水位从"恢复后的位置"起算，而不是 -1：
-                // 否则退出时 doSaveProgress 会把 0..恢复位置 的整段前缀当成本次新读，
-                // 累计写库后每次重开同一本书今日字数都会虚增一截
-                lastRecordedParagraphIndex = (state?.currentParagraph ?: 0).coerceIn(0, maxIdx)
+    fun goToParagraph(index: Int) = navigation.goToParagraph(index)
 
-                // 恢复的阅读模式若依赖派生数据（挖空/模糊/全书译文），必须立即
-                // 生成/拉取，否则重开书是空白页或"正在获取译文..."假加载态
-                // （此前只有 setReadingMode 会生成）
-                when (_uiState.value.readingMode) {
-                    ReadingMode.CLOZE -> generateCloze()
-                    ReadingMode.FUZZY -> generateFuzzy()
-                    // 全文翻译改为"总是补缺"：loadBook 已把 Room 缓存灌进
-                    // paragraphTranslations，若只在 isEmpty 时才触发，部分缓存
-                    // （上次中途取消/失败）的书永远缺着尾巴不补
-                    ReadingMode.BACK_TRANSLATION, ReadingMode.SPLIT ->
-                        translateAllParagraphs()
-                    else -> Unit
-                }
+    fun onVisibleParagraphChanged(index: Int) = navigation.onVisibleParagraphChanged(index)
 
-                // TTS 是单例、跨书复用：无论是否已初始化都要同步语言，
-                // 否则读完英文书再开中文书会用旧 locale 一直读下去
-                ttsHelper.setLanguage(book.language)
+    fun setFontSize(size: Int) = settings.setFontSize(size)
 
-                // 预翻译预热：进书即后台拉起 ML Kit 翻译模型下载/就绪，
-                // 首次开启全文翻译不再阻塞等待模型（最多 30s）
-                viewModelScope.launch {
-                    try {
-                        translationHelper.warmUp(bookLang)
-                    } catch (e: kotlinx.coroutines.CancellationException) {
-                        throw e
-                    } catch (_: Exception) {
-                        // 预热失败静默：正式翻译路径仍有重试窗口兜底
-                    }
-                }
+    fun adjustFontSize(delta: Int) = settings.adjustFontSize(delta)
 
-                // 初始化 TTS
-                if (!_uiState.value.ttsInitialized) {
-                    val ok = try {
-                        ttsHelper.initialize(book.language)
-                    } catch (e: TimeoutCancellationException) {
-                        android.util.Log.w("ReaderViewModel", "TTS init timed out", e)
-                        false
-                    } catch (e: kotlinx.coroutines.CancellationException) {
-                        throw e
-                    } catch (e: Exception) {
-                        android.util.Log.e("ReaderViewModel", "TTS init failed", e)
-                        false
-                    }
-                    _uiState.update { it.copy(ttsInitialized = ok) }
-                    // 加载书籍时静默失败，不弹引导（等用户点击朗读时再弹）
-                    if (!ok) {
-                        android.util.Log.i(
-                            "ReaderViewModel",
-                            "TTS init failed silently on load: ${ttsHelper.lastFailureReason}",
-                        )
-                    }
-                }
+    fun cycleReadingTheme() = settings.cycleReadingTheme()
 
-                // 加载书签
-                bookmarksJob?.cancel()
-                bookmarksJob = viewModelScope.launch {
-                    try {
-                        bookmarkDao.getBookmarksForBook(bookId).collect { bookmarks ->
-                            _uiState.update {
-                                it.copy(bookmarkedParagraphs = bookmarks.map { b -> b.paragraphIndex }.toSet())
-                            }
-                        }
-                    } catch (e: kotlinx.coroutines.CancellationException) {
-                        throw e
-                    } catch (e: Exception) {
-                        android.util.Log.e("ReaderViewModel", "bookmarks collect failed", e)
-                    }
-                }
+    fun toggleSerifFont() = settings.toggleSerifFont()
 
-                // 加载高亮
-                highlightsJob?.cancel()
-                highlightsJob = viewModelScope.launch {
-                    try {
-                        highlightDao.getHighlightsForBook(bookId).collect { highlights ->
-                            val grouped = highlights.groupBy { it.paragraphIndex }.mapValues { (_, list) ->
-                                list.map { h ->
-                                    HighlightData(
-                                        id = h.id,
-                                        startOffset = h.startOffset,
-                                        endOffset = h.endOffset,
-                                        text = h.text,
-                                        color = parseHighlightColor(h.color),
-                                    )
-                                }
-                            }
-                            _uiState.update { it.copy(highlights = grouped) }
-                        }
-                    } catch (e: kotlinx.coroutines.CancellationException) {
-                        throw e
-                    } catch (e: Exception) {
-                        android.util.Log.e("ReaderViewModel", "highlights collect failed", e)
-                    }
-                }
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                // 损坏/缺失的 EPUB、DB 异常等不再经由未捕获处理器崩 App
-                android.util.Log.e("ReaderViewModel", "loadBook failed", e)
-                _uiState.update { it.copy(isLoading = false) }
-                showToast("书籍加载失败")
-            }
-        }
-    }
+    fun togglePageMode() = settings.togglePageMode()
 
-    fun setReadingMode(mode: ReadingMode) {
-        // 切模式必须停掉所有形态的播放（含单段朗读），
-        // 否则音频会跨模式继续播
-        stopAllPlayback()
+    fun setRsvpSpeed(speed: Int) = settings.setRsvpSpeed(speed)
 
-        if (mode == ReadingMode.CLOZE) {
-            generateCloze()
-        } else if (mode == ReadingMode.FUZZY) {
-            generateFuzzy()
-        }
+    fun setRsvpStrength(strength: Int) = settings.setRsvpStrength(strength)
 
-        // 回译/分栏模式依赖全书译文，但旧实现里全书翻译只有
-        // toggleTranslation() 一个入口——从没开过翻译开关就进回译模式，
-        // 页面永远停在"正在获取译文..."的假加载态（没有任何任务在跑）。
-        // 总是补缺：部分缓存的书也继续翻完剩余段落
-        if (mode == ReadingMode.BACK_TRANSLATION || mode == ReadingMode.SPLIT) {
-            translateAllParagraphs()
-        }
+    fun selectWord(word: String) = vocabulary.selectWord(word)
 
-        viewModelScope.launch {
-            _uiState.update { it.copy(readingMode = mode, showModeSelector = false) }
-            currentBookId?.let { readingRepository.updateMode(it, mode) }
-        }
-    }
+    fun addToVocabulary(word: String, context: String?) = vocabulary.addToVocabulary(word, context)
 
-    fun generateCloze() {
-        val paragraphs = _uiState.value.paragraphs
-        val currentIdx = _uiState.value.currentParagraphIndex
-        if (currentIdx < paragraphs.size) {
-            // 插图标记剔除后再生成（标记不是可挖空的文本）
-            val text = BookImages.stripImageMarkers(paragraphs[currentIdx])
-            val clozeWords = wordAnalyzer.generateClozeText(text, ratio = CLOZE_RATIO)
-            _uiState.update { it.copy(clozeWords = clozeWords, hiddenWordAnswer = null) }
-        }
-    }
+    fun hideWord() = practice.hideWord()
 
-    fun generateFuzzy() {
-        val paragraphs = _uiState.value.paragraphs
-        val currentIdx = _uiState.value.currentParagraphIndex
-        if (currentIdx < paragraphs.size) {
-            // 插图标记剔除后再生成（标记不是可模糊的文本）
-            val text = BookImages.stripImageMarkers(paragraphs[currentIdx])
-            val fuzzyWords = wordAnalyzer.generateFuzzyText(text, visibleRatio = FUZZY_VISIBLE_RATIO)
-            _uiState.update { it.copy(fuzzyWords = fuzzyWords) }
-        }
-    }
+    fun checkDictationAnswer(input: String): Boolean = practice.checkDictationAnswer(input)
 
-    fun nextParagraph() {
-        val paragraphs = _uiState.value.paragraphs
-        if (paragraphs.isEmpty()) return
-        // 手动跳转必须停掉进行中的播放：否则朗读循环下一步会把
-        // currentParagraphIndex 又写回它自己的进度，视口被拽回
-        stopAllPlayback()
-        val nextIdx = (_uiState.value.currentParagraphIndex + 1).coerceAtMost(paragraphs.size - 1)
-        _uiState.update { it.copy(currentParagraphIndex = nextIdx, currentWordIndex = 0) }
-        recordParagraphVisit(nextIdx)  // issue 3.6：原子累计，不等防抖保存
-        saveProgress()
-        if (_uiState.value.readingMode == ReadingMode.CLOZE) generateCloze()
-        if (_uiState.value.readingMode == ReadingMode.FUZZY) generateFuzzy()
-    }
+    fun setTranslationAlpha(alpha: Float) = settings.setTranslationAlpha(alpha)
 
-    fun prevParagraph() {
-        val paragraphs = _uiState.value.paragraphs
-        if (paragraphs.isEmpty()) return
-        stopAllPlayback()
-        val prevIdx = (_uiState.value.currentParagraphIndex - 1).coerceAtLeast(0)
-        _uiState.update { it.copy(currentParagraphIndex = prevIdx, currentWordIndex = 0) }
-        saveProgress()
-        if (_uiState.value.readingMode == ReadingMode.CLOZE) generateCloze()
-        if (_uiState.value.readingMode == ReadingMode.FUZZY) generateFuzzy()
-    }
+    fun dismissModeSelector() = settings.dismissModeSelector()
 
-    fun goToParagraph(index: Int) {
-        val paragraphs = _uiState.value.paragraphs
-        if (paragraphs.isEmpty()) return
-        stopAllPlayback()
-        val idx = index.coerceIn(0, paragraphs.size - 1)
-        _uiState.update { it.copy(currentParagraphIndex = idx, currentWordIndex = 0) }
-        recordParagraphVisit(idx)  // issue 3.6
-        saveProgress()
-        if (_uiState.value.readingMode == ReadingMode.CLOZE) generateCloze()
-        if (_uiState.value.readingMode == ReadingMode.FUZZY) generateFuzzy()
-    }
+    fun showModeSelector() = settings.showModeSelector()
 
-    /**
-     * 视口滚动同步（NORMAL 模式 LazyColumn 上报可见段落）。
-     * 滑动阅读时让底栏/进度/统计跟上视口；播放进行中由播放循环主导索引，忽略上报
-     */
-    fun onVisibleParagraphChanged(index: Int) {
-        val s = _uiState.value
-        if (s.isAutoReading || s.isPlaying || s.isTtsPlaying) return
-        if (index < 0 || index >= s.paragraphs.size) return
-        if (index == s.currentParagraphIndex) return
-        _uiState.update { it.copy(currentParagraphIndex = index, currentWordIndex = 0) }
-        recordParagraphVisit(index)  // issue 3.6：视口滚动前进按段累计
-        saveProgress()
-        if (s.readingMode == ReadingMode.CLOZE) generateCloze()
-        if (s.readingMode == ReadingMode.FUZZY) generateFuzzy()
-    }
+    fun toggleSettings() = settings.toggleSettings()
 
-    fun setFontSize(size: Int) {
-        // 持久化收敛后的值：原实现 UI 显示收敛值、存储原始值，
-        // 下次启动设置流回填时越界值会重新进入 UI。
-        // 写库走防抖：滑杆拖动逐像素回调不再逐像素写 DataStore
-        val coerced = size.coerceIn(12, 32)
-        _uiState.update { it.copy(fontSize = coerced) }
-        persistSettingDebounced("fontSize") { settingsRepository.setFontSize(coerced) }
-    }
+    fun dismissWordDialog() = vocabulary.dismissWordDialog()
 
-    /** 底部栏快捷字号调节（A- / A+ 按钮）：±1sp 步进，复用 setFontSize 的收敛与防抖。 */
-    fun adjustFontSize(delta: Int) {
-        setFontSize(_uiState.value.fontSize + delta)
-    }
+    fun toggleWordLevelColors() = settings.toggleWordLevelColors()
 
-    /**
-     * 阅读主题循环切换（明亮 → 护眼 → 暗黑 → 明亮），供底部栏快捷胶囊使用。
-     * 主题本身是全局设置：写 DataStore 后设置流会回填 uiState.theme。
-     */
-    fun cycleReadingTheme() {
-        val next = when (_uiState.value.theme) {
-            ReadingTheme.LIGHT -> ReadingTheme.SEPIA
-            ReadingTheme.SEPIA -> ReadingTheme.DARK
-            ReadingTheme.DARK -> ReadingTheme.LIGHT
-        }
-        _uiState.update { it.copy(theme = next) }
-        viewModelScope.launch {
-            try {
-                settingsRepository.setTheme(next)
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                android.util.Log.e("ReaderViewModel", "setTheme failed", e)
-            }
-        }
-    }
+    fun toggleKnownWordsHighlight() = settings.toggleKnownWordsHighlight()
 
-    /** 衬线字体切换（阅读器正文字体，全局设置持久化）。 */
-    fun toggleSerifFont() {
-        val next = !_uiState.value.serifFont
-        _uiState.update { it.copy(serifFont = next) }
-        viewModelScope.launch {
-            try {
-                settingsRepository.setSerifFont(next)
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                android.util.Log.e("ReaderViewModel", "setSerifFont failed", e)
-            }
-        }
-    }
+    fun toggleChapterNav() = settings.toggleChapterNav()
 
-    /** 阅读方式切换：上下滚动 ⇄ 左右翻页（仿书页，全局设置持久化）。 */
-    fun togglePageMode() {
-        val next = !_uiState.value.pageMode
-        _uiState.update { it.copy(pageMode = next) }
-        viewModelScope.launch {
-            try {
-                settingsRepository.setReadingPageMode(next)
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                android.util.Log.e("ReaderViewModel", "setReadingPageMode failed", e)
-            }
-        }
-    }
-
-    fun setRsvpSpeed(speed: Int) {
-        val coerced = speed.coerceIn(100, 800)
-        _uiState.update { it.copy(rsvpSpeed = coerced) }
-        val bookId = currentBookId
-        persistSettingDebounced("rsvpSpeed") {
-            settingsRepository.setRsvpSpeed(coerced)
-            bookId?.let { readingRepository.updateRsvpSpeed(it, coerced) }
-        }
-    }
-
-    fun setRsvpStrength(strength: Int) {
-        val coerced = strength.coerceIn(1, 5)
-        _uiState.update { it.copy(rsvpStrength = coerced) }
-        persistSettingDebounced("rsvpStrength") { settingsRepository.setRsvpStrength(coerced) }
-    }
-
-    fun selectWord(word: String) {
-        val clean = word.trim().replace(Regex("[^a-zA-Z]"), "")
-        if (clean.isBlank()) return
-
-        val level = collinsClassifier.classify(clean)
-        // 点词串行化：快速点两个词时取消上一个查询，
-        // 否则慢查询会在用户已切到新词后覆盖弹窗内容
-        selectWordJob?.cancel()
-        selectWordJob = viewModelScope.launch {
-            // Room 查询 + ML Kit/网络翻译都可能抛运行时异常：
-            // 不拦会直冲 viewModelScope 默认处理器 → 点词崩整个 app
-            try {
-                // 检查是否已收录
-                val existing = vocabularyRepository.getWord(clean)
-                // issue 8.1：源语言随书取（不再写死 en→zh），书是法/日/中文时
-                // ML Kit 也用对应语言模型做源，避免中文串被当英文翻译致空/乱码
-                val sourceLang = _uiState.value.book?.language?.takeIf { it.isNotBlank() } ?: "en"
-                // 如果没有释义，用 ML Kit 翻译
-                val definition = existing?.definition
-                    ?: translationHelper.translateWord(clean, sourceLang)
-                    ?: "未找到释义"
-                _uiState.update {
-                    it.copy(
-                        selectedVocab = existing ?: Vocabulary(
-                            word = clean,
-                            level = level.level,
-                            dateAdded = System.currentTimeMillis(),
-                        ),
-                        wordDefinition = definition,
-                        selectedWordLevel = level,
-                        showWordDialog = true,
-                    )
-                }
-                // 弹窗打开即后台预合成单词 PCM：Kokoro 每次 generate 有 ~2s 固定开销
-                // （与文本长度无关），用户看释义的几秒内完成合成，点喇叭时命中缓存
-                // 立即出声（2026-09-05 "读一个单词都卡"修复）。tryLock 语义：
-                // 正文朗读持锁时自动放弃，绝不阻塞正文播放
-                viewModelScope.launch {
-                    try {
-                        // 腾讯云 TTS 在线无固定开销，无需预合成
-                        if (ttsHelper.getEngineType() != "tencent") {
-                            ttsHelper.getEmbeddedEngine()
-                                .prewarmSynthesis(clean, speed = ttsHelper.getSpeed())
-                        }
-                    } catch (e: kotlinx.coroutines.CancellationException) {
-                        throw e
-                    } catch (_: Exception) {
-                        // 预合成失败静默：点喇叭时走正常合成路径兜底
-                    }
-                }
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                android.util.Log.e("ReaderViewModel", "selectWord failed", e)
-                showToast("查询失败，请重试")
-            }
-        }
-    }
-
-    fun addToVocabulary(word: String, context: String?) {
-        // 书身份快照：launch 体执行时用户可能已换书（点词弹窗开着按返回再进 B 书），
-        // 此时 currentBookId 已是 B 书——不对照快照，A 书生词会记到 B 书的 bookId/title 下
-        val myBookId = currentBookId
-        viewModelScope.launch {
-            val currentVocab = _uiState.value.selectedVocab ?: return@launch
-            // issue: 生词入库时把查好的释义一起持久化，否则"词汇本"里每词无翻译
-            val wordDef = _uiState.value.wordDefinition
-                ?.takeIf { it.isNotBlank() && it != "未找到释义" }
-            val vocabToSave = currentVocab.copy(
-                bookId = myBookId,
-                bookTitle = _uiState.value.book?.takeIf { it.id == myBookId }?.title,
-                context = context,
-                definition = wordDef ?: currentVocab.definition,
-            )
-
-            // 去重查询也纳入 try：它是 Room 调用，原实现留在 try 外，
-            // 数据库异常会在"加入生词本"时直接崩 app
-            try {
-                // 去重与保存用同一个词：此前去重查 word 参数、保存却用 selectedVocab，
-                // 点词竞态下两者不一致会反复插入失败且无提示
-                val dedupeWord = vocabToSave.word.ifBlank { word }
-                val existing = vocabularyRepository.getWord(dedupeWord)
-                if (existing != null) {
-                    // 此前重复词静默关闭弹窗，与成功路径无差别——用户不知道
-                    // 到底加没加进去；补一条明确提示
-                    _uiState.update { it.copy(showWordDialog = false, selectedVocab = null) }
-                    showToast("「$dedupeWord」已在生词本中")
-                    return@launch
-                }
-
-                // 捕获 DB 生成的 id，替换 selectedVocab 使「加入复习」拿到正确 vocabularyId
-                val id = vocabularyRepository.addWord(vocabToSave)
-
-                // 写库期间换书：丢弃这次写入的 UI 更新，不把 A 书的弹窗状态安到 B 书
-                if (currentBookId != myBookId) return@launch
-
-                // 阅读页加入的生词此前从不进复习队列：due count 永远 0，
-                // "点词 → 加生词本 → 等复习"主流程断链（issue 11.3）
-                vocabularyRepository.addWordToReview(id, vocabToSave.word)
-
-                _uiState.update {
-                    it.copy(
-                        showWordDialog = false,
-                        selectedVocab = vocabToSave.copy(id = id),
-                    )
-                }
-                showToast("已加入生词本")
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                android.util.Log.e("ReaderViewModel", "Failed to add word to vocabulary", e)
-                showToast("添加生词失败，请重试")
-            }
-        }
-    }
-
-    /**
-     * 显示答案（挖空练习）：逐个揭示隐藏词。
-     * 原实现每次只 find 第一个 isHidden 且永不清除标记，
-     * 多点几次永远只能看到同一个词的答案；现在每按一次
-     * 揭示一个隐藏词（清掉该位置的 isHidden），全部揭示后按钮失效
-     */
-    fun hideWord() {
-        val words = _uiState.value.clozeWords
-        val idx = words.indexOfFirst { it.isHidden }
-        if (idx < 0) return
-        val revealed = words[idx]
-        _uiState.update {
-            it.copy(
-                hiddenWordAnswer = revealed.text,
-                clozeWords = words.toMutableList().apply {
-                    this[idx] = revealed.copy(isHidden = false)
-                },
-            )
-        }
-    }
-
-    /**
-     * 听写模式核对答案：输入与下一个隐藏词匹配才揭示。
-     * @return 是否匹配成功（视图侧据此清空输入框）
-     */
-    fun checkDictationAnswer(input: String): Boolean {
-        val words = _uiState.value.clozeWords
-        val idx = words.indexOfFirst { it.isHidden }
-        if (idx < 0) return false
-        val target = words[idx].text
-        if (!input.trim().equals(target, ignoreCase = true)) {
-            showToast("不对，再试试（提示：${target.length} 个字母）")
-            return false
-        }
-        _uiState.update {
-            it.copy(
-                hiddenWordAnswer = target,
-                clozeWords = words.toMutableList().apply {
-                    this[idx] = words[idx].copy(isHidden = false)
-                },
-            )
-        }
-        return true
-    }
+    fun startDictation(paragraphIndex: Int) = practice.startDictation(paragraphIndex)
 
     /**
      * 取消所有运行中的作业并停止 TTS，完成最后一次保存。
@@ -861,23 +319,18 @@ class ReaderViewModel @Inject constructor(
         ttsInitJob?.cancel()
         downloadJob?.cancel()
         saveJob?.cancel()
-        selectWordJob?.cancel()
+        vocabulary.cancel()
         sentenceTranslateJob?.cancel()
         translationJob?.cancel()
         bookmarkToggleJob?.cancel()
-        vocabJob?.cancel()
-        bookmarksJob?.cancel()
-        highlightsJob?.cancel()
-        bookJob?.cancel()
+        bookLoader.cancel()
         ttsHelper.stop()
         // issue 8.2：close() 此前全项目无人调用，ML Kit Translator
         // native handle 永不释放，模型被系统回收后翻译静默失效
         translationHelper.close()
         // 防抖窗口内未落盘的设置写入：取消计时、同步冲刷，
         // 用户拖完滑杆立刻退页也不会丢设置
-        settingsPersistJobs.values.forEach { it.cancel() }
-        val pendingSettings = settingsPendingWrites.values.toList()
-        settingsPendingWrites.clear()
+        val pendingSettings = settings.flushPendingWrites()
         val finalSave: suspend () -> Unit = {
             pendingSettings.forEach { write ->
                 try {
@@ -895,82 +348,6 @@ class ReaderViewModel @Inject constructor(
             // onDispose 路径：scope 仍存活，异步写不卡主线程；
             // 若随后 VM 销毁触发 onCleared，其同步保存兜底（且取消本异步任务也无碍）
             viewModelScope.launch(Dispatchers.IO) { finalSave() }
-        }
-    }
-
-    fun setTranslationAlpha(alpha: Float) {
-        val coerced = alpha.coerceIn(TRANSLATION_ALPHA_MIN, TRANSLATION_ALPHA_MAX)
-        _uiState.update { it.copy(translationAlpha = coerced) }
-        persistSettingDebounced("translationAlpha") { settingsRepository.setTranslationAlpha(coerced) }
-    }
-
-    fun dismissModeSelector() {
-        _uiState.update { it.copy(showModeSelector = false) }
-    }
-
-    fun showModeSelector() {
-        _uiState.update { it.copy(showModeSelector = true) }
-    }
-
-    fun toggleSettings() {
-        _uiState.update { it.copy(showSettings = !it.showSettings) }
-    }
-
-    fun dismissWordDialog() {
-        _uiState.update { it.copy(showWordDialog = false, selectedVocab = null) }
-    }
-
-    fun toggleWordLevelColors() {
-        // 持久化到 DataStore（复用 COLLINS_HIGHLIGHT），再次进入阅读详情页时由 init 的
-        // settings combine 恢复，不再每次默认退回关闭
-        val newValue = !_uiState.value.showWordLevelColors
-        _uiState.update { it.copy(showWordLevelColors = newValue) }
-        viewModelScope.launch { settingsRepository.setCollinsHighlight(newValue) }
-    }
-
-    fun toggleKnownWordsHighlight() {
-        _uiState.update { it.copy(showKnownWordsHighlight = !it.showKnownWordsHighlight) }
-    }
-
-    fun toggleChapterNav() {
-        _uiState.update { it.copy(showChapterNav = !it.showChapterNav) }
-    }
-
-    // 双击选句翻译
-    internal val _selectedSentence = MutableStateFlow<String?>(null)
-    val selectedSentence: StateFlow<String?> = _selectedSentence.asStateFlow()
-
-    internal val _sentenceTranslation = MutableStateFlow<String?>(null)
-    val sentenceTranslation: StateFlow<String?> = _sentenceTranslation.asStateFlow()
-
-    // ── 听写练习 ─────────────────────────────
-    fun startDictation(paragraphIndex: Int) {
-        val para = _uiState.value.paragraphs.getOrNull(paragraphIndex) ?: return
-        // 插图标记不是可听写文本，剔除后再取词
-        val allWords = wordAnalyzer.extractWords(BookImages.stripImageMarkers(para))
-        if (allWords.isEmpty()) return
-        // 采样要听写的词（去重）后，复用 generateClozeText 生成**带分隔符**的
-        // token 流：旧实现只放纯单词 token，渲染出来所有词连成一串没法读。
-        // 答案核对走 checkDictationAnswer（输入匹配才揭示）
-        val hideSet = allWords.map { it.lowercase(java.util.Locale.ROOT) }
-            .filter { it.length > 2 }
-            .distinct()
-            .shuffled()
-            .take(maxOf(1, allWords.size / 3))
-            .toSet()
-        val cloze = wordAnalyzer.generateClozeText(para, wordsToHide = hideSet)
-        stopAllPlayback()
-        _uiState.update {
-            it.copy(
-                readingMode = ReadingMode.DICTATION,
-                clozeWords = cloze,
-                hiddenWordAnswer = null,
-                currentParagraphIndex = paragraphIndex,
-            )
-        }
-        // 与 setReadingMode 对齐：持久化模式，重开书能恢复
-        currentBookId?.let { id ->
-            viewModelScope.launch { readingRepository.updateMode(id, ReadingMode.DICTATION) }
         }
     }
 
