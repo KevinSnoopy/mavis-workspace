@@ -46,7 +46,10 @@ internal val LocalReaderAccent = staticCompositionLocalOf { Primary }
  * 保证普通/分栏/回译/成分分析等渲染视图的字形一致切换。
  */
 @androidx.compose.runtime.Composable
-internal fun readerParagraphStyle(fontSize: Int, lineMultiplier: Float = 1.8f): TextStyle = TextStyle(
+internal fun readerParagraphStyle(
+    fontSize: Int,
+    lineMultiplier: Float = ReaderLayout.BODY_LINE_MULTIPLIER,
+): TextStyle = TextStyle(
     fontSize = fontSize.sp,
     lineHeight = (fontSize * lineMultiplier).sp,
     fontFamily = LocalReaderFontFamily.current,

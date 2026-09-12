@@ -33,9 +33,13 @@ import com.eareyereading.ui.theme.Secondary
  */
 
 /**
- * 段落内容容器修饰符：朗读中的当前段落铺强调色底并内缩，其余段落不加修饰。
+ * 段落内容容器修饰符：朗读中的当前段落铺强调色底，其余段落不加修饰。
  * 直接作用于内容容器——原实现额外包了一个 Text("") 的 Surface 承载背景，
  * 该 Surface 零高度，背景永远不可见，已废弃。
+ *
+ * 刻意不加内边距：本容器一旦内缩，当前段落的可用宽度就比 [paginateBook]
+ * 测量的宽度窄，换行结果随之变多（并且高亮段落的文字会相对邻段左右跳动）。
+ * 分页是"先算后画"，渲染侧任何几何变化都会变成页内溢出。
  */
 @Composable
 internal fun readerParagraphContainerModifier(isCurrent: Boolean, isAutoReading: Boolean): Modifier =
@@ -43,21 +47,25 @@ internal fun readerParagraphContainerModifier(isCurrent: Boolean, isAutoReading:
         .fillMaxWidth()
         .then(
             if (isCurrent && isAutoReading) {
-                Modifier
-                    .background(LocalReaderAccent.current.copy(alpha = 0.06f), RoundedCornerShape(8.dp))
-                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                Modifier.background(
+                    LocalReaderAccent.current.copy(alpha = 0.06f),
+                    RoundedCornerShape(8.dp),
+                )
             } else {
                 Modifier
-            }
+            },
         )
 
-/** 书签段落标记行：书签图标 + 延伸分隔线。 */
+/**
+ * 书签段落标记行：书签图标 + 延伸分隔线。
+ * 高度由 [ReaderLayout.BookmarkRowHeight] 定死（分页侧按同一常量记账）。
+ */
 @Composable
 internal fun ReaderBookmarkMark() {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 4.dp),
+            .height(ReaderLayout.BookmarkRowHeight),
         horizontalArrangement = Arrangement.Start,
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -80,6 +88,9 @@ internal fun ReaderBookmarkMark() {
  * 段落译文块：上间距 + 强调色译文 + 下间距。
  * 间距只在实际有译文时产生——原实现把下间距放在判空之外，
  * 未翻译段落会多出一截空白，段落节奏不齐。
+ *
+ * 三段间距之和恒等于 [ReaderLayout.TransBlockHeight]，分页侧按同一常量
+ * 给段尾切片记账；改这里就必须改那里，否则一页内容会反超一屏。
  */
 @Composable
 internal fun ReaderTranslationBlock(
@@ -88,15 +99,18 @@ internal fun ReaderTranslationBlock(
     alpha: Float,
     translationAlpha: Float,
 ) {
-    Spacer(modifier = Modifier.height(4.dp))
+    Spacer(modifier = Modifier.height(ReaderLayout.TransTopSpacing))
     Text(
         text = translation,
         modifier = Modifier
-            .padding(vertical = 2.dp)
+            .padding(vertical = ReaderLayout.TransInnerPadding)
             .alpha(alpha),
-        style = readerParagraphStyle(fontSize - 2, 1.5f).copy(
+        style = readerParagraphStyle(
+            fontSize - ReaderLayout.TRANS_FONT_DELTA,
+            ReaderLayout.TRANS_LINE_MULTIPLIER,
+        ).copy(
             color = LocalReaderAccent.current.copy(alpha = translationAlpha),
         ),
     )
-    Spacer(modifier = Modifier.height(12.dp))
+    Spacer(modifier = Modifier.height(ReaderLayout.TransBottomSpacing))
 }

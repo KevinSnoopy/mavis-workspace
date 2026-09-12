@@ -36,7 +36,11 @@ import com.eareyereading.util.BookImages
  * 版式（issue：真实阅读源图片加载时文字错位）：
  *  - 加载中先占位（浅底 + minHeight），段落高度不再从 0 突变到图片高度，
  *    后文不会先"上移占位"再被图片顶下去；
- *  - 失败显示紧凑占位条（图片加载失败），保留段落节奏，后文不塌陷。
+ *  - 失败显示紧凑占位条（图片加载失败），保留段落节奏，后文不塌陷；
+ *  - 图片高度封顶在 [ReaderLayout.ImageBlockHeight] 内（含本条目的 8dp 留白）。
+ *    分页器是按这个固定高度给插图段记账的，图片原始比例再高也不能让它
+ *    反超预算——否则又变成"这一页得滚动才能看完"。超出部分交给
+ *    ContentScale.Fit 居中留白。
  */
 @androidx.compose.runtime.Composable
 internal fun ReaderImageBlock(
@@ -62,7 +66,7 @@ internal fun ReaderImageBlock(
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .padding(vertical = 8.dp),
+            .padding(vertical = ReaderLayout.ImageBlockVerticalPadding),
         contentAlignment = Alignment.Center,
     ) {
         // 加载中/失败占位：Success 前 minHeight 先占住版式高度，后文不被
@@ -116,6 +120,11 @@ internal fun ReaderImageBlock(
             },
             modifier = Modifier
                 .fillMaxWidth()
+                // 高度封顶 = 分页记账值 - 本条目上下留白
+                .heightIn(
+                    max = ReaderLayout.ImageBlockHeight -
+                        ReaderLayout.ImageBlockVerticalPadding * 2,
+                )
                 .clip(RoundedCornerShape(8.dp)),
         )
     }

@@ -79,20 +79,19 @@ fun PagedReadingView(
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val density = LocalDensity.current
         val contentWidthPx = with(density) { maxWidth.roundToPx() }
-        // 页高预算：视口高 - 上下 8dp 留白 - 仿电子书页眉页脚预留
-        // （书名 running header ~18sp + 页码 footer ~16sp + 上下间距）
-        val pageBudgetPx = with(density) { (maxHeight - 16.dp).roundToPx() } -
-            with(density) { 52.dp.roundToPx() }
+        // 页高预算：视口高 - [ReaderLayout.PageBudgetReserve]（正文区上下留白 +
+        // 页眉页脚 + 半行安全余量）。这里与渲染侧共享同一常量，
+        // 让"一页正好一屏"这个不变量只在一处定义
+        val pageBudgetPx = with(density) { (maxHeight - ReaderLayout.PageBudgetReserve).roundToPx() }
         val serif = LocalReaderFontFamily.current != FontFamily.Default
-        // 各项 px 尺寸（密度/字号变化时 produceState 的 key 一起变）
+        // 各项 px 尺寸（密度/字号变化时 produceState 的 key 一起变）。
+        // 全部取自 ReaderLayout——分页记账与渲染逐项对应，不能各写一份
         val fontSizePx = with(density) { fontSize.sp.toPx() }
-        val transFontSizePx = with(density) { (fontSize - 2).sp.toPx() }
-        val paragraphPadPx = with(density) { 6.dp.toPx() }      // 段首/段尾切片的纵向 padding
-        val bookmarkRowPx = with(density) { 25.dp.toPx() }      // 书签标记行
-        val transBlockPadPx = with(density) { 20.dp.toPx() }    // 译文 4 + 2*2 + 12
-        // 插图段固定估高：720px 解码宽 × 常见屏宽 → 约 200dp 显示高 + 边距，
-        // 独占一页过浪费，给中等预算让图文同页
-        val imageBlockPx = with(density) { 220.dp.toPx() }
+        val transFontSizePx = with(density) { (fontSize - ReaderLayout.TRANS_FONT_DELTA).sp.toPx() }
+        val paragraphPadPx = with(density) { ReaderLayout.ParagraphPadding.toPx() }
+        val bookmarkRowPx = with(density) { ReaderLayout.BookmarkRowHeight.toPx() }
+        val transBlockPadPx = with(density) { ReaderLayout.TransBlockHeight.toPx() }
+        val imageBlockPx = with(density) { ReaderLayout.ImageBlockHeight.toPx() }
 
         // 分页排版：整书 StaticLayout 按行测量 + 贪心装箱（行粒度）。
         // 放 Default 调度器：大书几百段的测量同步做在组合期会顶掉帧
@@ -223,7 +222,7 @@ fun PagedReadingView(
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(vertical = 8.dp),
+                        .padding(vertical = ReaderLayout.PageVerticalPadding),
                 ) {
                     // 仿电子书页眉：书名 running header（纸书式页顶书名）
                     if (bookTitle.isNotBlank()) {
@@ -239,8 +238,10 @@ fun PagedReadingView(
                                 .padding(bottom = 2.dp),
                         )
                     }
-                    // verticalScroll 兜底：行高估算与 Compose 实际渲染的
-                    // 极小偏差导致的内容溢出仍可滚动查看
+                    // verticalScroll 兜底：正常情况下 [paginateBook] 已把每页
+                    // 高度卡在预算内，这一层永远滚不动。保留它只为"单段 +
+                    // 其译文本身超过一页"这种内容物理上装不进一屏的极端段落。
+                    // 一旦发现日常阅读能滚，就是分页记账与渲染几何又对不上了。
                     Column(
                         modifier = Modifier
                             .weight(1f)

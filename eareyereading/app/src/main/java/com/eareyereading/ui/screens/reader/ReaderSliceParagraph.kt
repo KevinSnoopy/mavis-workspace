@@ -65,17 +65,15 @@ internal fun ReaderSliceParagraphBlock(
         if (showBookmarkMark) ReaderBookmarkMark()
 
         // 朗读句级同步：句子范围与切片求交，逐句分档透明度渲染
-        val sentenceRanges = remember(para, currentSentences) {
-            var from = 0
-            val ranges = mutableListOf<IntArray>()
-            for (s in currentSentences) {
-                val i = para.indexOf(s, from)
-                if (i < 0) return@remember null
-                ranges.add(intArrayOf(i, i + s.length))
-                from = i + s.length
-            }
-            ranges
-        }
+        val sentenceRanges = remember(para, currentSentences) { sentenceRangesOf(para, currentSentences) }
+
+        // 段首/段尾内边距：两个分支都必须加上——旧实现的朗读分支漏了它，
+        // 于是"正在朗读的段落"比相邻段落矮 12dp，与 paginateBook 的记账
+        // 也对不上（翻页模式下表现为页内剩余空间抖动）
+        val padModifier = Modifier.padding(
+            top = if (isFirst) ReaderLayout.ParagraphPadding else 0.dp,
+            bottom = if (isLast) ReaderLayout.ParagraphPadding else 0.dp,
+        )
 
         if (isCurrent && isAutoReading && !sentenceRanges.isNullOrEmpty()) {
             val accent = LocalReaderAccent.current
@@ -102,7 +100,7 @@ internal fun ReaderSliceParagraphBlock(
                 onSentenceDoubleTap = onSentenceDoubleTap,
                 // 句子可能跨页：双击时用全局 offset 在完整段落里找整句
                 sentenceLookup = { local -> findSentenceAtGlobalOffset(para, start + local) },
-                modifier = Modifier.alpha(1f),
+                modifier = padModifier.alpha(alpha),
                 style = readerParagraphStyle(fontSize),
             )
         } else {
@@ -127,12 +125,7 @@ internal fun ReaderSliceParagraphBlock(
                 onWordClick = onWordClick,
                 onSentenceDoubleTap = onSentenceDoubleTap,
                 sentenceLookup = { local -> findSentenceAtGlobalOffset(para, start + local) },
-                modifier = Modifier
-                    .padding(
-                        top = if (isFirst) 6.dp else 0.dp,
-                        bottom = if (isLast) 6.dp else 0.dp,
-                    )
-                    .alpha(alpha),
+                modifier = padModifier.alpha(alpha),
                 style = readerParagraphStyle(fontSize),
             )
         }
@@ -150,12 +143,37 @@ internal fun ReaderSliceParagraphBlock(
 }
 
 /**
- * 朗读中的切片文本：句子范围 ∩ 切片范围的分段 AnnotatedString。
- * 每段按句子档位（已读 0.45 / 当前 1f / 未读 0.6）上色，当前句带
- * 强调色底；词频着色开启时在句子档位之上再叠词色（与
- * [AutoReadingSentenceText] 同一套规则）。
+ * 逐句在段落文本里定位句子区间（朗读句级同步用）。
+ * 任一句子在段落中找不到就整体返回 null——宁可退回无高亮的正常渲染，
+ * 也不能拿错位的区间去上色。
+ *
+ * 单段渲染（[ReaderParagraphBlock]）与跨页切片渲染
+ * （[ReaderSliceParagraphBlock]）共用，保证同一段落在两种分页形态下
+ * 的句子划分完全一致。
  */
-private fun buildAutoReadingSliceAnnotated(
+internal fun sentenceRangesOf(para: String, sentences: List<String>): List<IntArray>? {
+    if (sentences.isEmpty()) return null
+    var from = 0
+    val ranges = mutableListOf<IntArray>()
+    for (s in sentences) {
+        val i = para.indexOf(s, from)
+        if (i < 0) return null
+        ranges.add(intArrayOf(i, i + s.length))
+        from = i + s.length
+    }
+    return ranges
+}
+
+/**
+ * 朗读中的段落文本：句子范围 ∩ 切片范围的分段 AnnotatedString。
+ * 每段按句子档位（已读 0.45 / 当前 1f / 未读 0.6）上色，当前句带
+ * 强调色底；词频着色开启时在句子档位之上再叠词色。
+ *
+ * 整段朗读同步必须收敛到**一个** Text：一句一个 Text/Surface 会额外引入
+ * 逐句内边距与更窄的换行宽度，整段高度不再是 [paginateBook] 算出来的那个值。
+ * 传整段（sliceStart = 0、sliceEnd = para.length）即整段渲染。
+ */
+internal fun buildAutoReadingSliceAnnotated(
     para: String,
     sliceStart: Int,
     sliceEnd: Int,
