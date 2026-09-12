@@ -59,6 +59,12 @@ data class ReadingState(
     val rsvpSpeed: Int = 300,
     val fontSize: Int = 18,
     val theme: ReadingTheme = ReadingTheme.LIGHT,
+    /**
+     * 全文翻译开关（每本书独立）。译文参与整书分页，开关状态必须随书恢复：
+     * 重进书时若从"开"回落到"关"，排版会整体重排，页边界与上次退出时不一致，
+     * 恢复的阅读位置会因此漂移（表现为"进度回滚"）。
+     */
+    val showTranslation: Boolean = false,
 )
 
 enum class ReadingMode(val value: String, val displayName: String) {

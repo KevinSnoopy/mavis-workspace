@@ -48,6 +48,8 @@ interface ReadingRepository {
     suspend fun updatePosition(bookId: Long, paragraph: Int, position: Int)
     suspend fun updateMode(bookId: Long, mode: ReadingMode)
     suspend fun updateRsvpSpeed(bookId: Long, speed: Int)
+    /** 全文翻译开关随书持久化（开关本身即排版输入，重进必须恢复原值）。 */
+    suspend fun updateShowTranslation(bookId: Long, show: Boolean)
 
     // ── issue 8.5：段落翻译缓存 ─────────────────────────
     /** 读取整本书某语言对的译文缓存（Map: paragraphIndex → translatedText）。 */
@@ -72,6 +74,8 @@ interface SettingsRepository {
     /** 通知偏好：TTS 下载完成提醒开关 */
     fun getNotificationDownloadComplete(): Flow<Boolean>
     fun getCollinsHighlight(): Flow<Boolean>
+    /** 阅读器正文生词高亮开关（进书恢复；此前只存在内存里，重进即回默认） */
+    fun getKnownWordsHighlight(): Flow<Boolean>
     /** TTS 语速倍率（0.5 - 2.0），用于内置/系统 TTS 的 speak 调用 */
     fun getTtsSpeed(): Flow<Float>
     /** TTS 引擎类型："embedded"（离线 sherpa-onnx）或 "tencent"（在线腾讯云 TTS） */
@@ -108,6 +112,7 @@ interface SettingsRepository {
     suspend fun setNotificationDownloadProgress(enabled: Boolean)
     suspend fun setNotificationDownloadComplete(enabled: Boolean)
     suspend fun setCollinsHighlight(enabled: Boolean)
+    suspend fun setKnownWordsHighlight(enabled: Boolean)
     suspend fun setTtsSpeed(speed: Float)
     suspend fun setTtsEngineType(type: String)
     suspend fun setTencentSecretId(id: String)

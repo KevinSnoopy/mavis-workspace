@@ -66,8 +66,30 @@ internal fun ReaderViewModel.commitReaderTranslations(snapshot: Map<Int, String>
     }
 }
 
+/**
+ * 全文翻译开关随书落库（reading_state.showTranslation）。
+ *
+ * 失败路径也会调用它把值改回 false：否则用户下次进书会按"上次开着翻译"
+ * 自动重跑整本翻译，失败的源会一直被自动重试（LLM 通道还会持续消耗额度）。
+ */
+internal fun ReaderViewModel.persistShowTranslation(show: Boolean) {
+    val bookId = currentBookId ?: return
+    viewModelScope.launch {
+        try {
+            readingRepository.updateShowTranslation(bookId, show)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            android.util.Log.e("ReaderViewModel", "persist showTranslation failed", e)
+        }
+    }
+}
+
 fun ReaderViewModel.toggleTranslation() {
     val show = !_uiState.value.showTranslation
+    // 开关状态随书持久化（开关即排版输入：译文参与整书分页，重进书若回落
+    // 到"关"，页边界全变、阅读位置漂移）
+    persistShowTranslation(show)
     // 关闭翻译：取消正在进行的全书翻译 Job 并清空译文，避免偷跑流量后台继续
     // 翻译全部段落（issue 8.10）
     if (!show) {
@@ -265,6 +287,8 @@ internal fun ReaderViewModel.translateAllParagraphs() {
                             readerTranslations = emptyMap(),
                         )
                     }
+                    // 开关同步落回 false：否则下次进书会自动重试这本翻不动的书
+                    persistShowTranslation(false)
                     showToast("翻译失败：翻译模型不可用，请检查网络后重试")
                 }
                 return@launch
@@ -301,6 +325,7 @@ internal fun ReaderViewModel.translateAllParagraphs() {
                         readerTranslations = emptyMap(),
                     )
                 }
+                persistShowTranslation(false)
                 showToast("翻译失败：模型下载或翻译出错，请稍后重试")
             }
         } catch (e: java.lang.RuntimeException) {
@@ -314,6 +339,7 @@ internal fun ReaderViewModel.translateAllParagraphs() {
                         readerTranslations = emptyMap(),
                     )
                 }
+                persistShowTranslation(false)
                 showToast("翻译失败，请稍后重试")
             }
         }

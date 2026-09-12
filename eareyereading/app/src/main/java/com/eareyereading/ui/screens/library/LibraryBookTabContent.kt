@@ -92,39 +92,37 @@ internal fun LibraryBookTabContent(
             }
         } else if (effectiveCategory != null) {
             // ── 单分类视图 ──
-            item(key = "single_category") {
-                LibrarySingleCategoryList(
-                    category = effectiveCategory,
-                    books = uiState.books,
-                    categories = uiState.categories,
-                    bookCountByName = bookCountByName,
-                    categoryMeta = uiState.categoryMeta,
-                    onBookClick = onBookClick,
-                    onDelete = viewModel::deleteBook,
-                    onArchive = viewModel::archiveBook,
-                    onUnarchive = viewModel::unarchiveBook,
-                    onCategorize = viewModel::updateBookCategory,
-                    snackbarHostState = snackbarHostState,
-                    scope = scope,
-                )
-            }
+            // 内容直接发射进本 LazyColumn（不嵌套内层 LazyColumn：
+            // 垂直可滚动组件在外层 item 中会以无限最大高度测量 → 必崩）
+            librarySingleCategoryItems(
+                category = effectiveCategory,
+                books = uiState.books,
+                categories = uiState.categories,
+                bookCountByName = bookCountByName,
+                categoryMeta = uiState.categoryMeta,
+                onBookClick = onBookClick,
+                onDelete = viewModel::deleteBook,
+                onArchive = viewModel::archiveBook,
+                onUnarchive = viewModel::unarchiveBook,
+                onCategorize = viewModel::updateBookCategory,
+                snackbarHostState = snackbarHostState,
+                scope = scope,
+            )
         } else {
             // ── 全部分类：分组展示（书架式）──
-            item(key = "grouped_categories") {
-                LibraryGroupedCategoryList(
-                    books = uiState.books,
-                    categories = uiState.categories,
-                    bookCountByName = bookCountByName,
-                    categoryMeta = uiState.categoryMeta,
-                    onBookClick = onBookClick,
-                    onDelete = viewModel::deleteBook,
-                    onArchive = viewModel::archiveBook,
-                    onUnarchive = viewModel::unarchiveBook,
-                    onCategorize = viewModel::updateBookCategory,
-                    snackbarHostState = snackbarHostState,
-                    scope = scope,
-                )
-            }
+            libraryGroupedCategoryItems(
+                books = uiState.books,
+                categories = uiState.categories,
+                bookCountByName = bookCountByName,
+                categoryMeta = uiState.categoryMeta,
+                onBookClick = onBookClick,
+                onDelete = viewModel::deleteBook,
+                onArchive = viewModel::archiveBook,
+                onUnarchive = viewModel::unarchiveBook,
+                onCategorize = viewModel::updateBookCategory,
+                snackbarHostState = snackbarHostState,
+                scope = scope,
+            )
         }
 
         // ── 英文经典名著：横滑卡片（一屏内收起，不再整列铺开）──

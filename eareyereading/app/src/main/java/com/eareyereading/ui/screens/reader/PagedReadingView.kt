@@ -133,6 +133,15 @@ fun PagedReadingView(
         // 只盯页码就会读到一半被换成别的内容
         var anchorParaIndex by remember { mutableIntStateOf(-1) }
 
+        // 程序化定位的目标页：锚点对齐发起的翻页**不回报**可见段落。
+        //
+        // 分页的输入（译文上屏 / 字号 / 模式）一变，同一个页码就指向别的内容。
+        // 若把对齐后的"页首段"写回 VM，已保存的阅读位置每次都会被改写成更早
+        // 的段落——页首段必然 ≤ 锚点段，于是每次重进/每次重排都往回退一页，
+        // 这就是"再次进入阅读进度回滚"的直接来源。用户手势翻页不设此标记，
+        // 照常回报。
+        var alignedPage by remember { mutableIntStateOf(-1) }
+
         // 翻页回报：页 settle 后把该页首切片段落回报 VM（底栏滑杆/进度/
         // 阅读统计跟上视口，播放中由播放循环主导，VM 侧会忽略）并刷新锚点；
         // 同时上报本页覆盖的段落区间，供翻译上屏决策（见 commitReaderTranslations）
@@ -140,11 +149,19 @@ fun PagedReadingView(
             snapshotFlow { pagerState.currentPage }
                 .distinctUntilChanged()
                 .collect { page ->
-                    latestPages.getOrNull(page)?.takeIf { it.isNotEmpty() }?.let { slices ->
-                        anchorParaIndex = slices.first().paraIndex
-                        onVisibleParagraphChanged(slices.first().paraIndex)
-                        onVisibleRangeChanged(slices.first().paraIndex, slices.last().paraIndex)
+                    val slices = latestPages.getOrNull(page)?.takeIf { it.isNotEmpty() }
+                        ?: return@collect
+                    // 区间上报与阅读位置无关：它描述"这一屏有哪些段落"，
+                    // 翻译上屏据此决定攒/放，程序化对齐时同样必须上报
+                    onVisibleRangeChanged(slices.first().paraIndex, slices.last().paraIndex)
+                    if (alignedPage == page) {
+                        // 本次换页是锚点对齐发起的：视口刚回到"当前阅读位置"，
+                        // 不是用户翻到了新位置，既不回报也不移动锚点
+                        alignedPage = -1
+                        return@collect
                     }
+                    anchorParaIndex = slices.first().paraIndex
+                    onVisibleParagraphChanged(slices.first().paraIndex)
                 }
         }
         // 程序推进：currentIndex 被推走时锚点跟随（用户翻页触发的
@@ -157,10 +174,14 @@ fun PagedReadingView(
         // 按"目标页 ≠ 当前页"就翻，导致任何一次重新分页（译文上屏、
         // 字号调整、书签增删）都会把用户正在读的页面强行翻走
         LaunchedEffect(pages, anchorParaIndex) {
+            // 每次重新评估先作废上一次的待消费标记：对齐中途被打断时
+            // 标记不该留给后续的用户翻页去消费
+            alignedPage = -1
             if (pages.isEmpty() || anchorParaIndex < 0) return@LaunchedEffect
             if (pagerState.isScrollInProgress) return@LaunchedEffect
             val target = pages.indexOfFirst { page -> page.any { it.paraIndex == anchorParaIndex } }
             if (target < 0 || target == pagerState.currentPage) return@LaunchedEffect
+            alignedPage = target
             // 远距离（重排后位置漂移）瞬时定位，相邻页动画翻页
             if (kotlin.math.abs(target - pagerState.currentPage) > 1) {
                 pagerState.scrollToPage(target)

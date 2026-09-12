@@ -172,6 +172,7 @@ class ReaderViewModel @Inject constructor(
                     settingsRepository.getCollinsHighlight(),
                     settingsRepository.getSerifFont(),
                     settingsRepository.getReadingPageMode(),
+                    settingsRepository.getKnownWordsHighlight(),
                 ) { values ->
                     // P1 修复: 用 as? 安全转换 + 默认值,避免 DataStore 旧版本数据 schema
                     // 不匹配时 ClassCastException 直接死掉 init block(整个 Reader 屏开不起来)。
@@ -192,18 +193,30 @@ class ReaderViewModel @Inject constructor(
                     val serifFont = values[6] as? Boolean ?: false
                     @Suppress("UNCHECKED_CAST")
                     val pageMode = values[7] as? Boolean ?: false
-                    ReadingSettings(speed, fontSize, theme, alpha, strength, collinsHighlight, serifFont, pageMode)
+                    @Suppress("UNCHECKED_CAST")
+                    val knownWordsHighlight = values[8] as? Boolean ?: true
+                    ReadingSettings(
+                        speed, fontSize, theme, alpha, strength,
+                        collinsHighlight, serifFont, pageMode, knownWordsHighlight,
+                    )
                 }.collect { s ->
                     _uiState.update {
                         it.copy(
-                            // 已打开书籍时，书籍自带的 rsvpSpeed 优先（loadBook 写入），
-                            // 全局设置的（重）发射不再覆盖它，消除双写竞态
+                            // 已打开书籍时，书籍自带的值优先（loadBook 写入）：
+                            // 全局设置的（重）发射不得覆盖它。此前只保护了
+                            // rsvpSpeed，fontSize / theme 同样被随书持久化，
+                            // 却会被任意一次设置变更（如改译文透明度）打回全局值
+                            // ——表现为"书内调过的字号/主题莫名重置"。
+                            // 判据用 bookLoaded 而非 currentBookId：loadBook 一进来
+                            // 就置 currentBookId，用它会把"首次打开的书本应继承全局
+                            // 字号"也一起挡掉
                             rsvpSpeed = if (currentBookId != null) it.rsvpSpeed else s.speed,
                             rsvpStrength = s.strength,
-                            fontSize = s.fontSize,
-                            theme = s.theme,
+                            fontSize = if (bookLoaded) it.fontSize else s.fontSize,
+                            theme = if (bookLoaded) it.theme else s.theme,
                             translationAlpha = s.alpha,
                             showWordLevelColors = s.collinsHighlight,
+                            showKnownWordsHighlight = s.knownWordsHighlight,
                             serifFont = s.serifFont,
                             pageMode = s.pageMode,
                         )

@@ -146,4 +146,5 @@ internal data class ReadingSettings(
     val collinsHighlight: Boolean = false,
     val serifFont: Boolean = false,
     val pageMode: Boolean = false,
+    val knownWordsHighlight: Boolean = true,
 )

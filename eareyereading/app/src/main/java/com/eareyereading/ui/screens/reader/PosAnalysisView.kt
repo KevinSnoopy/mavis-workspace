@@ -48,19 +48,16 @@ fun PosAnalysisView(
     // LazyColumn 化：整书 eager Column 每次重组都重排版全文；
     // 词性标注串按 (段落, 透明度, 主题色) 缓存，可见窗口外不参与布局
     val listState = rememberLazyListState()
-    LaunchedEffect(currentIndex) {
-        if (currentIndex in paragraphs.indices &&
-            listState.layoutInfo.visibleItemsInfo.none { it.index == currentIndex }
-        ) {
-            listState.animateScrollToItem(currentIndex)
-        }
-    }
     // 反向同步（与 NORMAL/SPLIT 同款）：本视图无表头项，段落索引即 item 索引。
-    // 缺失时用户在成分分析模式里滑多远，退出后进度/统计都停在旧位置
-    LaunchedEffect(listState) {
-        snapshotFlow { listState.firstVisibleItemIndex }
-            .collect { idx -> onVisibleParagraphChanged(idx) }
-    }
+    // 缺失时用户在成分分析模式里滑多远，退出后进度/统计都停在旧位置。
+    // 含对齐闸门（首帧可见区间不得覆盖已恢复进度），见 ReaderViewportSync
+    ReaderViewportSync(
+        listState = listState,
+        currentIndex = currentIndex,
+        paragraphCount = paragraphs.size,
+        paragraphOffset = 0,
+        onVisibleParagraphChanged = onVisibleParagraphChanged,
+    )
     LazyColumn(
         state = listState,
         modifier = Modifier.fillMaxSize(),

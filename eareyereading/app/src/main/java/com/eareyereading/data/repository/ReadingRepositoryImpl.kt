@@ -54,6 +54,10 @@ class ReadingRepositoryImpl @Inject constructor(
         readingStateDao.updateRsvpSpeed(bookId, speed)
     }
 
+    override suspend fun updateShowTranslation(bookId: Long, show: Boolean) {
+        readingStateDao.updateShowTranslation(bookId, show)
+    }
+
     // ── issue 8.5：段落翻译缓存 ─────────────────────────
     override suspend fun getTranslations(bookId: Long, langPair: String): Map<Int, String> =
         paragraphTranslationDao.getForBook(bookId, langPair)
@@ -94,6 +98,7 @@ class ReadingRepositoryImpl @Inject constructor(
         rsvpSpeed = rsvpSpeed,
         fontSize = fontSize,
         theme = readingThemeById[theme] ?: ReadingTheme.LIGHT,
+        showTranslation = showTranslation,
     )
 
     private fun ReadingState.toEntity() = ReadingStateEntity(
@@ -106,6 +111,7 @@ class ReadingRepositoryImpl @Inject constructor(
         rsvpSpeed = rsvpSpeed,
         fontSize = fontSize,
         theme = theme.value,
+        showTranslation = showTranslation,
         lastUpdated = System.currentTimeMillis(),
     )
 }

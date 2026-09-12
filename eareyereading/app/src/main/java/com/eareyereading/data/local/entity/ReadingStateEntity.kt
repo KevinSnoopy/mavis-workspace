@@ -18,5 +18,8 @@ data class ReadingStateEntity(
     val rsvpSpeed: Int = 300,            // 字/分钟
     val fontSize: Int = 18,
     val theme: String = "light",          // light | dark | sepia
+    // 全文翻译开关（每本书独立）：重进书时恢复，避免排版从"带译文"回落到
+    // "无译文"造成整书重新分页、阅读位置漂移
+    val showTranslation: Boolean = false,
     val lastUpdated: Long = System.currentTimeMillis(),
 )

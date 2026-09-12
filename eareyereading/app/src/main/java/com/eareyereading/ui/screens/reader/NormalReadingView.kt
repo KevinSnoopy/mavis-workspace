@@ -15,7 +15,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.eareyereading.ui.theme.*
 import com.eareyereading.util.CollinsClassifier
-import kotlinx.coroutines.flow.distinctUntilChanged
 
 /**
  * 普通上下滚动阅读视图（NORMAL 模式）。
@@ -58,31 +57,16 @@ fun NormalReadingView(
     // LaunchedEffect 让视口跟随当前段落：滑杆/章节/上下段跳转与自动朗读推进
     // 都会滚动到目标段（此前跳转只改索引，视口从不移动）
     val listState = rememberLazyListState()
-    LaunchedEffect(currentIndex) {
-        // 目标段已在可见窗口内就不发起程序化滚动：反向同步把用户滑动
-        // 经过的段落写回 currentIndex 后，这里若再 animateScrollToItem
-        // 会在甩动（fling）途中反复打断惯性、把视口拽回段首
-        if (currentIndex in paragraphs.indices &&
-            listState.layoutInfo.visibleItemsInfo.none { it.index == currentIndex }
-        ) {
-            listState.animateScrollToItem(currentIndex)
-        }
-    }
-    // 反向同步：用户滑动阅读时把可见区间回报给 VM，
-    // 让底栏/滑杆/进度/统计跟上视口（播放中由播放循环主导，VM 侧会忽略），
-    // 同时供翻译上屏判断"哪些段落正在被看"（见 commitReaderTranslations）
-    LaunchedEffect(listState) {
-        snapshotFlow {
-            val info = listState.layoutInfo.visibleItemsInfo
-            if (info.isEmpty()) IntRange.EMPTY else info.first().index..info.last().index
-        }
-            .distinctUntilChanged()
-            .collect { range ->
-                if (range.isEmpty()) return@collect
-                onVisibleRangeChanged(range.first, range.last)
-                onVisibleParagraphChanged(range.first)
-            }
-    }
+    // 视口双向同步（含"首帧可见区间不得覆盖已恢复进度"的对齐闸门），
+    // 详见 ReaderViewportSync 的文件头说明
+    ReaderViewportSync(
+        listState = listState,
+        currentIndex = currentIndex,
+        paragraphCount = paragraphs.size,
+        paragraphOffset = 0,
+        onVisibleParagraphChanged = onVisibleParagraphChanged,
+        onVisibleRangeChanged = onVisibleRangeChanged,
+    )
 
     LazyColumn(
         state = listState,

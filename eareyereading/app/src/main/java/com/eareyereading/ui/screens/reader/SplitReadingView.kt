@@ -43,19 +43,15 @@ fun SplitReadingView(
     // LazyColumn 化：整书 eager Column 只布局可见段（与 NORMAL 同型修复）；
     // 视口跟随当前段，滑动阅读反向回报 VM
     val listState = rememberLazyListState()
-    LaunchedEffect(currentIndex) {
-        // item 0 是表头，段落索引 +1；目标已可见则不打断用户滚动
-        val target = currentIndex + 1
-        if (currentIndex in paragraphs.indices &&
-            listState.layoutInfo.visibleItemsInfo.none { it.index == target }
-        ) {
-            listState.animateScrollToItem(target)
-        }
-    }
-    LaunchedEffect(listState) {
-        snapshotFlow { listState.firstVisibleItemIndex }
-            .collect { idx -> onVisibleParagraphChanged((idx - 1).coerceAtLeast(0)) }
-    }
+    // 视口双向同步：item 0 是表头，段落索引 = item 索引 - 1（offset = 1）。
+    // 含"首帧可见区间不得覆盖已恢复进度"的对齐闸门，见 ReaderViewportSync
+    ReaderViewportSync(
+        listState = listState,
+        currentIndex = currentIndex,
+        paragraphCount = paragraphs.size,
+        paragraphOffset = 1,
+        onVisibleParagraphChanged = onVisibleParagraphChanged,
+    )
     LazyColumn(
         state = listState,
         modifier = Modifier.fillMaxSize(),

@@ -61,6 +61,8 @@ internal suspend fun ReaderViewModel.doSaveProgress() {
             rsvpSpeed = state.rsvpSpeed,
             fontSize = state.fontSize,
             theme = state.theme,
+            // 全文翻译开关一并落库：退出兜底路径保证它不会因进程被杀而丢
+            showTranslation = state.showTranslation,
         )
     )
 

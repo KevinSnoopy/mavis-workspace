@@ -56,20 +56,16 @@ fun BackTranslationView(
     // 同型缺陷），且未揭示时全书每段都挂 blur 渲染层。改单列后段落严格对齐、
     // 只布局可见段、视口跟随当前段
     val listState = rememberLazyListState()
-    LaunchedEffect(currentIndex) {
-        val target = currentIndex + 1
-        if (currentIndex in paragraphs.indices &&
-            listState.layoutInfo.visibleItemsInfo.none { it.index == target }
-        ) {
-            listState.animateScrollToItem(target)
-        }
-    }
     // 反向同步（与 SPLIT 同款）：item 0 是表头，段落索引 = item 索引 - 1。
-    // 缺失时用户在回译模式里滑多远，退出后进度/统计都停在旧位置
-    LaunchedEffect(listState) {
-        snapshotFlow { listState.firstVisibleItemIndex }
-            .collect { idx -> onVisibleParagraphChanged((idx - 1).coerceAtLeast(0)) }
-    }
+    // 缺失时用户在回译模式里滑多远，退出后进度/统计都停在旧位置。
+    // 含对齐闸门（首帧可见区间不得覆盖已恢复进度），见 ReaderViewportSync
+    ReaderViewportSync(
+        listState = listState,
+        currentIndex = currentIndex,
+        paragraphCount = paragraphs.size,
+        paragraphOffset = 1,
+        onVisibleParagraphChanged = onVisibleParagraphChanged,
+    )
 
     Column(
         modifier = Modifier

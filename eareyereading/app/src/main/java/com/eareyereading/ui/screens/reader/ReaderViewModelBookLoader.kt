@@ -237,7 +237,10 @@ internal class ReaderViewModelBookLoader(
                 // 上屏快照同步换成本书的缓存：否则换书后正文视图还挂着
                 // 上一本书的译文（按下标键控 → 张冠李戴）
                 readerTranslations = loaded.cachedTranslations,
-                showTranslation = false,
+                // 全文翻译开关随书恢复：译文参与整书分页，若重进时从"开"回落
+                // 到"关"，排版会整体重排（页数/页边界全变），按段落恢复的阅读
+                // 位置随之漂移 —— 用户看到的"再次进入进度回滚"就出在这里
+                showTranslation = state?.showTranslation ?: false,
                 isTranslating = false,
                 selectedVocab = null,
                 showWordDialog = false,
@@ -276,6 +279,10 @@ internal class ReaderViewModelBookLoader(
             // （上次中途取消/失败）的书永远缺着尾巴不补
             ReadingMode.BACK_TRANSLATION, ReadingMode.SPLIT ->
                 vm.translateAllParagraphs()
+            // NORMAL 模式也可能开着全文翻译（开关随书恢复）：缓存只铺了
+            // 已译部分，缺的段落必须续翻，否则开关亮着却永远只有一半译文
+            ReadingMode.NORMAL ->
+                if (vm._uiState.value.showTranslation) vm.translateAllParagraphs()
             else -> Unit
         }
     }

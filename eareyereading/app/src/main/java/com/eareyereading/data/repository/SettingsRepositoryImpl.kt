@@ -32,6 +32,8 @@ class SettingsRepositoryImpl @Inject constructor(
         val NOTIFICATION_DOWNLOAD_PROGRESS = booleanPreferencesKey("notification_download_progress")
         val NOTIFICATION_DOWNLOAD_COMPLETE = booleanPreferencesKey("notification_download_complete")
         val COLLINS_HIGHLIGHT = booleanPreferencesKey("collins_highlight")
+        // 阅读器正文生词高亮开关（默认开；独立键，重进阅读页需恢复）
+        val KNOWN_WORDS_HIGHLIGHT = booleanPreferencesKey("known_words_highlight")
         val TTS_SPEED = floatPreferencesKey("tts_speed")
         val TTS_ENGINE_TYPE = stringPreferencesKey("tts_engine_type") // "embedded" / "tencent"
         val TENCENT_SECRET_ID = stringPreferencesKey("tencent_secret_id")
@@ -109,6 +111,9 @@ class SettingsRepositoryImpl @Inject constructor(
 
     override fun getCollinsHighlight(): Flow<Boolean> =
         dataStore.data.map { it[COLLINS_HIGHLIGHT] ?: true }
+
+    override fun getKnownWordsHighlight(): Flow<Boolean> =
+        dataStore.data.map { it[KNOWN_WORDS_HIGHLIGHT] ?: true }
 
     override fun getTtsSpeed(): Flow<Float> =
         dataStore.data.map { it[TTS_SPEED] ?: 1.0f }
@@ -195,6 +200,10 @@ class SettingsRepositoryImpl @Inject constructor(
 
     override suspend fun setCollinsHighlight(enabled: Boolean) {
         dataStore.edit { it[COLLINS_HIGHLIGHT] = enabled }
+    }
+
+    override suspend fun setKnownWordsHighlight(enabled: Boolean) {
+        dataStore.edit { it[KNOWN_WORDS_HIGHLIGHT] = enabled }
     }
 
     override suspend fun setTtsSpeed(speed: Float) {

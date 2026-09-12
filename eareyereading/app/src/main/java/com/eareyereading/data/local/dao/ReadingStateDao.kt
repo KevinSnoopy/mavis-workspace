@@ -26,4 +26,7 @@ interface ReadingStateDao {
 
     @Query("UPDATE reading_state SET rsvpSpeed = :speed WHERE bookId = :bookId")
     suspend fun updateRsvpSpeed(bookId: Long, speed: Int)
+
+    @Query("UPDATE reading_state SET showTranslation = :show WHERE bookId = :bookId")
+    suspend fun updateShowTranslation(bookId: Long, show: Boolean)
 }

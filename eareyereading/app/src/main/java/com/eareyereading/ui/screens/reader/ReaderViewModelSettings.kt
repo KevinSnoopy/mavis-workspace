@@ -143,7 +143,19 @@ internal class ReaderViewModelSettings(
     }
 
     fun toggleKnownWordsHighlight() {
-        vm._uiState.update { it.copy(showKnownWordsHighlight = !it.showKnownWordsHighlight) }
+        // 与 Collins 词频色同理：持久化到 DataStore，重进阅读页由 init 的
+        // settings combine 恢复；此前只改内存 uiState，退出即回默认开
+        val newValue = !vm._uiState.value.showKnownWordsHighlight
+        vm._uiState.update { it.copy(showKnownWordsHighlight = newValue) }
+        vm.viewModelScope.launch {
+            try {
+                settingsRepository.setKnownWordsHighlight(newValue)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                android.util.Log.e("ReaderViewModel", "setKnownWordsHighlight failed", e)
+            }
+        }
     }
 
     fun toggleChapterNav() {

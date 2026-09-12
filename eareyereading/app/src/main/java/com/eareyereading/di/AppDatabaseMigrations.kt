@@ -4,7 +4,7 @@ import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
 /**
- * Room 数据库迁移链（v1 → v14）。
+ * Room 数据库迁移链（v1 → v15）。
  *
  * 从 [DatabaseModule] 抽出的单一职责文件（SRP / CCP：迁移逻辑共同闭包）。
  * DatabaseModule 只保留 DI 装配，迁移 SQL 集中在本文件便于审查与维护。
@@ -336,6 +336,18 @@ internal object AppDatabaseMigrations {
             )
         }
     }
+    private val MIGRATION_14_15 = object : Migration(14, 15) {
+        // 阅读设置随书恢复：reading_state 新增 showTranslation 列。
+        // 全文翻译开关是整书分页的输入，重进书必须恢复原值，否则排版从
+        // "带译文"回落到"无译文"会整体重排，已保存的阅读位置随之漂移。
+        // NOT NULL + DEFAULT 0：存量书保持"未开启翻译"的原行为。
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL(
+                "ALTER TABLE reading_state ADD COLUMN `showTranslation` INTEGER NOT NULL DEFAULT 0"
+            )
+        }
+    }
+
     /** 全部迁移，按版本顺序传入 Room.databaseBuilder().addMigrations()。 */
     val ALL: Array<Migration> = arrayOf(
         MIGRATION_1_2,
@@ -351,6 +363,7 @@ internal object AppDatabaseMigrations {
         MIGRATION_11_12,
         MIGRATION_12_13,
         MIGRATION_13_14,
+        MIGRATION_14_15,
     )
 
 }
