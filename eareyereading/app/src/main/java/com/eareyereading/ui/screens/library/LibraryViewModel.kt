@@ -15,15 +15,12 @@ import com.eareyereading.domain.model.Book
 import com.eareyereading.domain.model.ClassicBook
 import com.eareyereading.domain.model.ClassicBooks
 import com.eareyereading.domain.repository.BookRepository
-import com.eareyereading.util.EpubParseException
 import com.eareyereading.domain.repository.VocabularyRepository
 import com.eareyereading.util.ArticleParser
-import com.eareyereading.util.ArticleResult
 import com.eareyereading.util.RssParser
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.*
-import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 data class ReadingStatsSummary(

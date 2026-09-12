@@ -66,6 +66,7 @@ internal fun LibraryCategoryEditSheetWrapper(
  * @param pendingBook 待完善信息的书
  * @param onComplete 完善完成回调（分类名、封面 ID）
  * @param onDismiss 跳过回调
+ * @param onCreateCategory 流程内新建分类回调（分类名、图标名、颜色 ARGB long）
  */
 @Composable
 internal fun LibraryBookRefineSheetWrapper(
@@ -73,6 +74,7 @@ internal fun LibraryBookRefineSheetWrapper(
     pendingBook: Book,
     onComplete: (categoryName: String?, coverId: Int) -> Unit,
     onDismiss: () -> Unit,
+    onCreateCategory: (name: String, icon: String, color: Long) -> Unit = { _, _, _ -> },
 ) {
     AddBookFlowSheet(
         categories = categories,
@@ -82,5 +84,9 @@ internal fun LibraryBookRefineSheetWrapper(
             onComplete(categoryName, coverId)
         },
         onDismiss = onDismiss,
+        onCreateCategory = { cat ->
+            // 与 LibraryCategoryEditSheetWrapper 保持同一套持久化参数形态
+            onCreateCategory(cat.name, cat.icon.name, cat.color.toArgb().toLong())
+        },
     )
 }

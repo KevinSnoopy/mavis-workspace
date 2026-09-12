@@ -226,14 +226,15 @@ fun AppNavigation(
                 }
 
                 composable(Screen.Library.route) {
+                    // 词汇 / 复习入口由底部导航栏提供：书库页此前还额外接收了两个
+                    // 指向它们的 lambda，但页面内从未调用（编译器 unused parameter
+                    // 警告），属于从导航图批量复制参数时带进来的死参数。
                     LibraryScreen(
                         onBookClick = { bookId ->
                             navController.navigate(Screen.Reader.createRoute(bookId)) {
                                 launchSingleTop = true
                             }
                         },
-                        onNavigateToVocabulary = { navController.navigateToTopLevel(Screen.Vocabulary.route) },
-                        onNavigateToReview = { navController.navigateToTopLevel(Screen.Review.route) },
                         onNavigateToSettings = { navController.navigateToTopLevel(Screen.Settings.route) },
                     )
                 }

@@ -27,8 +27,6 @@ import com.eareyereading.ui.components.category.CategoryStrip
 @Composable
 fun LibraryScreen(
     onBookClick: (Long) -> Unit,
-    onNavigateToVocabulary: () -> Unit,
-    onNavigateToReview: () -> Unit,
     onNavigateToSettings: () -> Unit,
     viewModel: LibraryViewModel = hiltViewModel(),
 ) {
@@ -205,6 +203,9 @@ fun LibraryScreen(
                 )
             },
             onDismiss = { viewModel.skipBookRefine() },
+            onCreateCategory = { name, icon, color ->
+                viewModel.saveCategoryMeta(name, icon, color)
+            },
         )
     }
 }

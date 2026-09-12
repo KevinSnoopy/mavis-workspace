@@ -9,7 +9,6 @@ import com.eareyereading.domain.model.Book
 import com.eareyereading.domain.model.ClassicBook
 import com.eareyereading.domain.repository.BookRepository
 import com.eareyereading.util.ArticleParser
-import com.eareyereading.util.ArticleResult
 import com.eareyereading.util.EpubParseException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers

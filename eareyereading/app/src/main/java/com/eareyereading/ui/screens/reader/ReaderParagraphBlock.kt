@@ -1,41 +1,18 @@
 package com.eareyereading.ui.screens.reader
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Bookmark
-import androidx.compose.material3.Divider
-import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
 import androidx.compose.runtime.remember
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
-import com.eareyereading.ui.theme.Secondary
-import com.eareyereading.ui.theme.WordLevelAdv
-import com.eareyereading.ui.theme.WordLevelCore
-import com.eareyereading.ui.theme.WordLevelIntmd
-import com.eareyereading.ui.theme.WordLevelRare
-import com.eareyereading.ui.theme.WordLevelUpper
 import com.eareyereading.util.BookImages
 import com.eareyereading.util.CollinsClassifier
-import com.eareyereading.util.CollinsClassifier.WordLevel
 
 /**
  * 单个段落的完整渲染块：书签标记行 + 正文（朗读句子级同步 / Collins 词色 /
@@ -77,42 +54,9 @@ internal fun ReaderParagraphBlock(
     }
     // 朗读中的当前段落：背景直接加在内容容器上。
     // 原实现额外放了一个包 Text("") 的 Surface —— 零高度，背景永远不可见
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .then(
-                if (isCurrent && isAutoReading) {
-                    Modifier
-                        .background(LocalReaderAccent.current.copy(alpha = 0.06f), RoundedCornerShape(8.dp))
-                        .padding(horizontal = 6.dp, vertical = 2.dp)
-                } else {
-                    Modifier
-                }
-            ),
-    ) {
+    Column(modifier = readerParagraphContainerModifier(isCurrent, isAutoReading)) {
         // 书签段落标记行
-        if (isBookmarked) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 4.dp),
-                horizontalArrangement = Arrangement.Start,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Icon(
-                    Icons.Default.Bookmark,
-                    "已书签",
-                    modifier = Modifier.size(16.dp),
-                    tint = Secondary,
-                )
-                Spacer(modifier = Modifier.width(4.dp))
-                Divider(
-                    modifier = Modifier.weight(1f),
-                    thickness = 1.dp,
-                    color = Secondary.copy(alpha = 0.3f),
-                )
-            }
-        }
+        if (isBookmarked) ReaderBookmarkMark()
 
         // 句子级声文同步高亮（朗读中）
         if (isCurrent && isAutoReading && currentSentences.isNotEmpty()) {
@@ -181,19 +125,12 @@ internal fun ReaderParagraphBlock(
 
         // 翻译（透明度可调）
         if (showTranslation && !translation.isNullOrBlank()) {
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-                text = translation,
-                modifier = Modifier
-                    .padding(vertical = 2.dp)
-                    .alpha(alpha),
-                style = readerParagraphStyle(fontSize - 2, 1.5f).copy(
-                    color = LocalReaderAccent.current.copy(alpha = translationAlpha),
-                ),
+            ReaderTranslationBlock(
+                translation = translation,
+                fontSize = fontSize,
+                alpha = alpha,
+                translationAlpha = translationAlpha,
             )
-            // 只有实际有译文才留间距：原实现把 Spacer 放在判空之外，
-            // 未翻译段落也多出一截空白，节奏不齐
-            Spacer(modifier = Modifier.height(12.dp))
         }
     }
 }
@@ -214,34 +151,9 @@ private fun AutoReadingSentenceText(
     onWordClick: (String) -> Unit,
     onSentenceDoubleTap: (String) -> Unit,
 ) {
-    val sentenceText = if (showWordLevelColors) {
-        remember(sentence, sAlpha, textColor, classifier) {
-            buildAnnotatedString {
-                val words = WordSplitRegex.findAll(sentence)
-                words.forEach { match ->
-                    val word = match.value
-                    if (PureWordRegex.matches(word)) {
-                        val level = classifier.classify(word)
-                        val color = when (level) {
-                            WordLevel.CORE -> WordLevelCore
-                            WordLevel.INTERMEDIATE -> WordLevelIntmd
-                            WordLevel.UPPER_INTERMEDIATE -> WordLevelUpper
-                            WordLevel.ADVANCED -> WordLevelAdv
-                            WordLevel.RARE -> WordLevelRare
-                            WordLevel.UNKNOWN -> textColor.copy(alpha = 0.5f)
-                        }
-                        withStyle(SpanStyle(color = color.copy(alpha = sAlpha))) { append(word) }
-                    } else {
-                        withStyle(SpanStyle(color = textColor.copy(alpha = sAlpha * 0.6f))) { append(word) }
-                    }
-                }
-            }
-        }
-    } else {
-        remember(sentence, sAlpha, textColor) {
-            buildAnnotatedString {
-                withStyle(SpanStyle(color = textColor.copy(alpha = sAlpha))) { append(sentence) }
-            }
+    val sentenceText = remember(sentence, sAlpha, textColor, showWordLevelColors, classifier) {
+        buildAnnotatedString {
+            appendWordLevelColored(sentence, sAlpha, textColor, showWordLevelColors, classifier)
         }
     }
     TappableParagraphText(

@@ -1,71 +1,43 @@
-@file:Suppress("TooGenericExceptionCaught", "UNCHECKED_CAST")
-
 package com.eareyereading.util
 
-import android.os.SystemClock
-import com.google.mlkit.common.model.DownloadConditions
-import com.google.mlkit.nl.translate.TranslateLanguage
-import com.google.mlkit.nl.translate.Translation
-import com.google.mlkit.nl.translate.TranslatorOptions
-import kotlinx.coroutines.CompletableDeferred
+import java.util.Locale
+import javax.inject.Inject
+import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
-import kotlinx.coroutines.withTimeout
-import kotlinx.coroutines.withTimeoutOrNull
-import java.util.LinkedHashMap
-import java.util.Locale
-import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.AtomicBoolean
-import javax.inject.Inject
-import javax.inject.Singleton
-import kotlin.coroutines.resume
 
 /**
- * 翻译助手
- * 优先级：AI 翻译（LLM，配置后）> 系统翻译(Android 14+) > ML Kit > 在线 HTTP > 本地词典
- * 懒加载，首次翻译时初始化
+ * 翻译门面：按优先级编排「AI 翻译（LLM）> ML Kit 机翻 > 在线 HTTP > 本地词典」
+ * 的回退链，并对外提供段落级、书级与单词级的翻译入口。
+ *
+ * 优先级：AI 翻译（LLM，配置后）> ML Kit（GMS 可用时）> 在线 HTTP > 本地词典
+ *
+ * ── 重构说明（13 条软件设计原则）──
+ * 本类原本 586 行，混合了"ML Kit Translator 生命周期管理"、"LLM 配置与熔断"、
+ * "语言代码映射表"、"翻译策略编排"四类职责，违反 SRP。现已下沉为独立模块：
+ *   - [MlKitTranslatorPool]：ML Kit Translator 的懒加载、就绪等待、
+ *     按语言对单飞下载与资源释放
+ *   - [LlmTranslationGate]：AI 通道的配置读取、启用开关与失败熔断
+ *   - [mlKitLanguageTag]：语言代码 → ML Kit 常量的纯数据映射
+ *   - [TranslationMemoryCache]：翻译结果内存 LRU
+ *   - [LlmCircuitBreaker]：熔断状态机
+ *
+ * 本类现在只做**策略编排**：决定用哪条通道、失败后回退到哪条、结果如何缓存。
+ * 所有对外 API 的签名与业务行为完全不变。
  */
 @Singleton
 class TranslationHelper @Inject constructor(
     private val dictionaryManager: DictionaryManager,
     private val onlineTranslator: OnlineTranslator,
-    private val llmTranslator: LlmTranslator,
-    private val settingsRepository: com.eareyereading.domain.repository.SettingsRepository,
+    private val mlkitPool: MlKitTranslatorPool,
+    private val llmGate: LlmTranslationGate,
 ) {
-    @Volatile
-    private var mlkitTranslator: com.google.mlkit.nl.translate.Translator? = null
-    @Volatile
-    private var mlkitReady = false
-
-    /** CAS 保证并发首次翻译时只初始化一次，避免重复创建 Translator 泄漏。 */
-    private val initAttempted = AtomicBoolean(false)
-    @Volatile
-    private var mlkitReadyDeferred: CompletableDeferred<Boolean>? = null
-
-    // ── issue 8.1：非默认语言对（非 EN→ZH）的按需 Translator ──────────
-    // 默认方向仍走上面的单 Translator + 事件式就绪等待；其余语言对按
-    // "src>tgt" 懒创建、单飞下载，之后按需翻译，不再写死 EN→ZH。
-    private val pairTranslators = ConcurrentHashMap<String, com.google.mlkit.nl.translate.Translator>()
-    private val pairDeferreds = ConcurrentHashMap<String, CompletableDeferred<Boolean>>()
-
-    /**
-     * 初始化失败的时间戳（elapsedRealtime 毫秒）。
-     * issue 8.2：initAttempted 一旦置位即使失败也永不重置（close() 无人调用），
-     * ML Kit 模型被系统回收后翻译永久静默失败——失败后开 60s 重试窗口。
-     */
-    @Volatile
-    private var initFailedAt = 0L
-
     // ── 翻译结果内存 LRU 缓存（委托给 TranslationMemoryCache，SRP）──
     private val memoryCache = TranslationMemoryCache()
-    private val llmCircuit = LlmCircuitBreaker()
 
     private fun cacheKey(text: String, sourceLang: String, targetLang: String): String =
         memoryCache.key(text, sourceLang, targetLang)
@@ -73,49 +45,11 @@ class TranslationHelper @Inject constructor(
     // ── AI 翻译（LLM 通道）─────────────────────
 
     /**
-     * 读取 LLM 翻译配置；[checkEnabled]=false 时只看 Key（设置页
-     * "测试翻译"在开关打开前就要能校验 Key 是否可用）。
-     * DataStore 首次加载后常驻内存，first() 每次调用开销可忽略。
-     */
-    private suspend fun readLlmConfig(checkEnabled: Boolean): LlmTranslator.Config? {
-        return try {
-            if (checkEnabled && !settingsRepository.getLlmTranslateEnabled().first()) return null
-            val apiKey = settingsRepository.getLlmApiKey().first()
-            if (apiKey.isBlank()) return null
-            LlmTranslator.Config(
-                baseUrl = settingsRepository.getLlmBaseUrl().first(),
-                apiKey = apiKey,
-                model = settingsRepository.getLlmModel().first(),
-            )
-        } catch (e: kotlinx.coroutines.CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            android.util.Log.d("TranslationHelper", "read llm config failed: ${e.message}")
-            null
-        }
-    }
-
-    private suspend fun llmConfigIfEnabled(): LlmTranslator.Config? = readLlmConfig(checkEnabled = true)
-
-    /** 带熔断的 LLM 翻译尝试：成功/失败都维护熔断计数，失败返回 null 由调用方回退机翻。 */
-    private suspend fun tryLlmTranslate(text: String, sourceLang: String, targetLang: String): String? {
-        if (llmCircuit.isOpen()) return null
-        val config = readLlmConfig(checkEnabled = true) ?: return null
-        val result = llmTranslator.translate(text, sourceLang, targetLang, config)
-        if (result == null) llmCircuit.recordFailure() else llmCircuit.recordSuccess()
-        return result
-    }
-
-    /**
      * 设置页"测试翻译"：无视开关，直接以当前 Key/端点/模型送翻一句样例，
      * 用于配置期校验（非 null 即 Key 可用）。不走任何缓存与回退链。
      */
-    suspend fun testLlmTranslation(
-        sample: String = "The old man sat by the harbor, watching the boats drift home as the sun melted into the sea.",
-    ): String? {
-        val config = readLlmConfig(checkEnabled = false) ?: return null
-        return llmTranslator.translate(sample, "en", "zh", config)
-    }
+    suspend fun testLlmTranslation(sample: String = DEFAULT_TEST_SAMPLE): String? =
+        llmGate.testTranslate(sample)
 
     /**
      * 译文 Room 缓存键分层：LLM 译文与机翻译文分开缓存。
@@ -123,115 +57,7 @@ class TranslationHelper @Inject constructor(
      * 不会一直展示启用前缓存的机械译文；关闭 AI 翻译则回到原键的机翻缓存。
      */
     suspend fun effectiveCacheLangPair(langPair: String): String =
-        if (llmConfigIfEnabled() != null) "$langPair#llm" else langPair
-
-    // ── 懒加载初始化（线程安全）─────────────────────
-    private suspend fun ensureInitialized() {
-        // 失败重试窗口：初始化失败满 60s 后放行重试（issue 8.2）
-        if (initAttempted.get()) {
-            if (mlkitReady || initFailedAt == 0L) return
-            if (SystemClock.elapsedRealtime() - initFailedAt < INIT_RETRY_WINDOW_MS) return
-            // 复位失败标记，走下方 CAS 重新初始化
-            if (!initAttempted.compareAndSet(true, false)) return
-            initFailedAt = 0L
-        }
-        // compareAndSet：并发首次翻译只允许一个线程进入初始化
-        if (!initAttempted.compareAndSet(false, true)) return
-
-        // 使用 ML Kit（后台预加载模型）
-        initMlKitAsync()
-    }
-
-    // ── ML Kit（Google，依赖 GMS）────────────────
-    // 后台异步初始化，不阻塞首次翻译
-    private fun initMlKitAsync() {
-        val deferred = CompletableDeferred<Boolean>()
-        mlkitReadyDeferred = deferred
-        try {
-            val options = TranslatorOptions.Builder()
-                .setSourceLanguage(TranslateLanguage.ENGLISH)
-                .setTargetLanguage(TranslateLanguage.CHINESE)
-                .build()
-            mlkitTranslator = Translation.getClient(options)
-            mlkitTranslator?.downloadModelIfNeeded(
-                DownloadConditions.Builder().build()
-            )?.addOnSuccessListener {
-                mlkitReady = true
-                initFailedAt = 0L
-                deferred.complete(true)
-                android.util.Log.d("TranslationHelper", "ML Kit model downloaded, ready")
-            }?.addOnFailureListener { e ->
-                android.util.Log.w("TranslationHelper", "ML Kit download failed: ${e.message}")
-                mlkitReady = false
-                initFailedAt = SystemClock.elapsedRealtime()
-                deferred.complete(false)
-            }
-        } catch (e: com.google.mlkit.common.MlKitException) {
-            android.util.Log.w("TranslationHelper", "ML Kit init failed: ${e.message}")
-            mlkitReady = false
-            initFailedAt = SystemClock.elapsedRealtime()
-            deferred.complete(false)
-        } catch (e: java.lang.RuntimeException) {
-            android.util.Log.w("TranslationHelper", "Runtime error initializing ML Kit: ${e.message}")
-            mlkitReady = false
-            initFailedAt = SystemClock.elapsedRealtime()
-            deferred.complete(false)
-        }
-    }
-
-    /**
-     * 等待 ML Kit 模型就绪（最多等 timeoutMs 毫秒）。
-     * 首次点击翻译时，模型可能还在下载中；这里阻塞等待，避免每次都走本地词典
-     * 兜底导致 UI 显示 "[翻译失败]"。
-     */
-    private suspend fun waitForMlKit(timeoutMs: Long = 30_000): Boolean {
-        if (mlkitReady) return true
-        val deferred = mlkitReadyDeferred ?: return false
-        return try {
-            withTimeout(timeoutMs) { deferred.await() }
-        } catch (e: TimeoutCancellationException) {
-            android.util.Log.w("TranslationHelper", "ML Kit init timed out after ${timeoutMs}ms", e)
-            false
-        }
-    }
-
-    private suspend fun translateViaMlKit(text: String): String? {
-        // 等待 ML Kit 模型就绪；等待失败先走在线翻译（无 GMS ROM 上
-        // downloadModelIfNeeded 必失败，全文翻译此前只有本地词典单词兜底，
-        // 段落级翻译全军覆没——issue：全文翻译不可用的根因）
-        if (!waitForMlKit()) {
-            android.util.Log.d("TranslationHelper", "ML Kit not ready, trying online fallback")
-            onlineTranslator.translate(text, "en", "zh")?.let { return it }
-            return lookupLocalDict(text)
-        }
-        // ML Kit 翻译；失败/超时/并发 close 时先走在线翻译，再回退本地词典。
-        // 外层 20s 超时：GMS Task 挂死时不再无限挂起调用方。
-        val mlkitResult = withTimeoutOrNull(20_000) {
-            suspendCancellableCoroutine { cont ->
-                val translator = mlkitTranslator
-                if (translator == null) {
-                    cont.resume(null)
-                    return@suspendCancellableCoroutine
-                }
-                try {
-                    translator.translate(text)
-                        .addOnSuccessListener { translated -> cont.resume(translated) }
-                        .addOnFailureListener {
-                            android.util.Log.w("TranslationHelper", "ML Kit translate failed: ${it.message}")
-                            cont.resume(null)
-                        }
-                } catch (e: java.lang.RuntimeException) {
-                    // close() 与 translate() 并发时 ML Kit 可能抛 IllegalStateException 等
-                    android.util.Log.w("TranslationHelper", "ML Kit translate threw: ${e.message}")
-                    cont.resume(null)
-                }
-            }
-        }
-        if (mlkitResult != null) return mlkitResult
-        // ML Kit 失败（模型被回收/推理异常）：在线兜底
-        onlineTranslator.translate(text, "en", "zh")?.let { return it }
-        return lookupLocalDict(text)
-    }
+        if (llmGate.isEnabled()) "$langPair#llm" else langPair
 
     // ── 主入口 ───────────────────────────────────
 
@@ -262,21 +88,22 @@ class TranslationHelper @Inject constructor(
         sourceLang: String,
         targetLang: String,
     ): String? {
+        val isDefaultPair = sourceLang.equals("en", ignoreCase = true) &&
+            targetLang.equals("zh", ignoreCase = true)
         // 默认方向（EN→ZH）：单词级输入先查本地词典——词典释义比任何机器
         // 翻译都更适合查词场景，且零成本零延迟
-        if (sourceLang.equals("en", ignoreCase = true) && targetLang.equals("zh", ignoreCase = true) &&
-            text.length <= 20 && !text.contains(' ')
-        ) {
+        if (isDefaultPair && text.length <= WORD_LOOKUP_MAX_CHARS && !text.contains(' ')) {
             lookupLocalDict(text)?.let { return it }
         }
         // AI 翻译（LLM）优先：已配置时整句/整段带上下文成文，译文质量
         // 显著优于下方机翻链；失败（网络/配额/Key 无效）回退机翻，不静默丢
-        tryLlmTranslate(text, sourceLang, targetLang)?.let { return it }
-        if (sourceLang.equals("en", ignoreCase = true) && targetLang.equals("zh", ignoreCase = true)) {
-            ensureInitialized()  // 首次触发懒加载
-            return translateViaMlKit(text)
+        llmGate.tryTranslate(text, sourceLang, targetLang)?.let { return it }
+        return if (isDefaultPair) {
+            mlkitPool.ensureDefaultInitialized()  // 首次触发懒加载
+            translateViaMlKit(text)
+        } else {
+            translateViaPair(text, sourceLang, targetLang)
         }
-        return translateViaPair(text, sourceLang, targetLang)
     }
 
     /**
@@ -296,7 +123,7 @@ class TranslationHelper @Inject constructor(
         if (sourceLang.equals(targetLang, ignoreCase = true)) return paragraph
         val key = "¶|" + cacheKey(paragraph, sourceLang, targetLang)
         memoryCache.get(key)?.let { return it }
-        val result = tryLlmTranslate(paragraph, sourceLang, targetLang)
+        val result = llmGate.tryTranslate(paragraph, sourceLang, targetLang)
             ?: translateParagraphSentenceBySentence(paragraph, sourceLang, targetLang)
         if (!result.isNullOrBlank()) memoryCache.put(key, result)
         return result
@@ -331,88 +158,39 @@ class TranslationHelper @Inject constructor(
         // AI 翻译已配置启用时，不预热 ML Kit 模型——
         // LLM 是主通道，ML Kit 仅作离线兜底，按需懒加载即可，
         // 不必进书就下载 ~30MB 模型浪费流量/存储
-        if (llmConfigIfEnabled() != null) return
+        if (llmGate.isEnabled()) return
         if (sourceLang.equals("en", ignoreCase = true) && targetLang.equals("zh", ignoreCase = true)) {
             // 默认方向：只触发懒加载（内部异步下载，不等待完成）
-            ensureInitialized()
-        } else if (languageTag(sourceLang) != null && languageTag(targetLang) != null) {
+            mlkitPool.ensureDefaultInitialized()
+        } else if (mlKitLanguageTag(sourceLang) != null && mlKitLanguageTag(targetLang) != null) {
             // 其他语言对：单飞启动对应模型下载
-            startPairTranslator(sourceLang, targetLang)
+            mlkitPool.startPairDownload(sourceLang, targetLang)
         }
     }
 
     suspend fun translateEnToZh(text: String): String? = translate(text, "en", "zh")
 
     /**
-     * 非默认语言对的按需翻译：单飞创建 + 下载对应语言模型，之后翻译。
-     * ML Kit 不可用/失败时走在线翻译兜底（与默认方向同语义）。
+     * 默认方向（EN→ZH）的机翻链：ML Kit → 在线 HTTP → 本地词典。
+     * ML Kit 未就绪与其翻译失败走完全相同的兜底路径，故合并为一条链路（DRY）。
      */
-    private suspend fun translateViaPair(text: String, sourceLang: String, targetLang: String): String? {
-        // 并发首次访问只需下载一次；下载失败也以 CompletableDeferred(false) 落地，
-        // 后续不再反复重试（模型缺失是持久态）→ 转在线兜底
-        val ready = startPairTranslator(sourceLang, targetLang)
-        val mlkitResult = if (ready == null) {
-            null
-        } else if (withTimeoutOrNull(30_000) { ready.await() } != true) {
-            android.util.Log.d("TranslationHelper", "pair $sourceLang>$targetLang model not ready")
-            null
-        } else {
-            val key = "$sourceLang>$targetLang"
-            val translator = pairTranslators[key]
-            if (translator == null) {
-                null
-            } else {
-                withTimeoutOrNull(20_000) {
-                    suspendCancellableCoroutine<String?> { cont ->
-                        try {
-                            translator.translate(text)
-                                .addOnSuccessListener { cont.resume(it) }
-                                .addOnFailureListener { cont.resume(null) }
-                        } catch (e: java.lang.RuntimeException) {
-                            android.util.Log.w("TranslationHelper", "pair translate threw: ${e.message}", e)
-                            cont.resume(null)
-                        }
-                    }
-                }
-            }
-        }
-        if (!mlkitResult.isNullOrEmpty()) return mlkitResult
-        return onlineTranslator.translate(text, sourceLang, targetLang)
+    private suspend fun translateViaMlKit(text: String): String? {
+        mlkitPool.translateDefault(text)?.let { return it }
+        onlineTranslator.translate(text, "en", "zh")?.let { return it }
+        return lookupLocalDict(text)
     }
 
     /**
-     * 单飞创建并启动某语言对的 Translator 模型下载（幂等）。
-     * warmUp 预热与 translateViaPair 共用：并发首次访问只下载一次。
+     * 非默认语言对的机翻链：ML Kit → 在线 HTTP（与默认方向同语义）。
      */
-    private fun startPairTranslator(
+    private suspend fun translateViaPair(
+        text: String,
         sourceLang: String,
         targetLang: String,
-    ): CompletableDeferred<Boolean>? {
-        val src = languageTag(sourceLang) ?: return null
-        val tgt = languageTag(targetLang) ?: return null
-        val key = "$sourceLang>$targetLang"
-        return pairDeferreds.computeIfAbsent(key) { k ->
-            CompletableDeferred<Boolean>().also { d ->
-                try {
-                    val translator = com.google.mlkit.nl.translate.Translation.getClient(
-                        TranslatorOptions.Builder()
-                            .setSourceLanguage(src)
-                            .setTargetLanguage(tgt)
-                            .build(),
-                    )
-                    pairTranslators[k] = translator
-                    translator.downloadModelIfNeeded(DownloadConditions.Builder().build())
-                        .addOnSuccessListener { d.complete(true) }
-                        .addOnFailureListener {
-                            android.util.Log.w("TranslationHelper", "download $key failed: ${it.message}")
-                            d.complete(false)
-                        }
-                } catch (e: Exception) {
-                    android.util.Log.w("TranslationHelper", "init pair $key failed: ${e.message}")
-                    d.complete(false)
-                }
-            }
-        }
+    ): String? {
+        val mlkitResult = mlkitPool.translatePair(text, sourceLang, targetLang)
+        if (!mlkitResult.isNullOrEmpty()) return mlkitResult
+        return onlineTranslator.translate(text, sourceLang, targetLang)
     }
 
     suspend fun translateParagraphs(
@@ -452,72 +230,6 @@ class TranslationHelper @Inject constructor(
     suspend fun translateSentence(sentence: String, sourceLang: String = "en"): String? =
         translate(sentence, sourceLang, "zh")
 
-    /**
-     * issue 8.1：把语言代码（如 "zh" / "fr"）映射成 ML Kit 的 TranslateLanguage 常量。
-     * ML Kit 没有提供按代码查常量的静态方法，这里显式维护一份常用映射；
-     * 未支持的语言返回 null（调用方按"无法翻译"判定）。
-     */
-    private fun languageTag(code: String): String? = when (code.trim().lowercase(Locale.ROOT)) {
-        "af" -> TranslateLanguage.AFRIKAANS
-        "ar" -> TranslateLanguage.ARABIC
-        "be" -> TranslateLanguage.BELARUSIAN
-        "bg" -> TranslateLanguage.BULGARIAN
-        "bn" -> TranslateLanguage.BENGALI
-        "ca" -> TranslateLanguage.CATALAN
-        "cs" -> TranslateLanguage.CZECH
-        "cy" -> TranslateLanguage.WELSH
-        "da" -> TranslateLanguage.DANISH
-        "de" -> TranslateLanguage.GERMAN
-        "el" -> TranslateLanguage.GREEK
-        "en" -> TranslateLanguage.ENGLISH
-        "eo" -> TranslateLanguage.ESPERANTO
-        "es" -> TranslateLanguage.SPANISH
-        "et" -> TranslateLanguage.ESTONIAN
-        "fa" -> TranslateLanguage.PERSIAN
-        "fi" -> TranslateLanguage.FINNISH
-        "fr" -> TranslateLanguage.FRENCH
-        "ga" -> TranslateLanguage.IRISH
-        "gl" -> TranslateLanguage.GALICIAN
-        "gu" -> TranslateLanguage.GUJARATI
-        "he" -> TranslateLanguage.HEBREW
-        "hi" -> TranslateLanguage.HINDI
-        "hr" -> TranslateLanguage.CROATIAN
-        "ht" -> TranslateLanguage.HAITIAN_CREOLE
-        "hu" -> TranslateLanguage.HUNGARIAN
-        "id" -> TranslateLanguage.INDONESIAN
-        "is" -> TranslateLanguage.ICELANDIC
-        "it" -> TranslateLanguage.ITALIAN
-        "ja" -> TranslateLanguage.JAPANESE
-        "ko" -> TranslateLanguage.KOREAN
-        "lt" -> TranslateLanguage.LITHUANIAN
-        "lv" -> TranslateLanguage.LATVIAN
-        "mk" -> TranslateLanguage.MACEDONIAN
-        "mr" -> TranslateLanguage.MARATHI
-        "ms" -> TranslateLanguage.MALAY
-        "mt" -> TranslateLanguage.MALTESE
-        "nl" -> TranslateLanguage.DUTCH
-        "no" -> TranslateLanguage.NORWEGIAN
-        "pl" -> TranslateLanguage.POLISH
-        "pt" -> TranslateLanguage.PORTUGUESE
-        "ro" -> TranslateLanguage.ROMANIAN
-        "ru" -> TranslateLanguage.RUSSIAN
-        "sk" -> TranslateLanguage.SLOVAK
-        "sl" -> TranslateLanguage.SLOVENIAN
-        "sq" -> TranslateLanguage.ALBANIAN
-        "sv" -> TranslateLanguage.SWEDISH
-        "sw" -> TranslateLanguage.SWAHILI
-        "ta" -> TranslateLanguage.TAMIL
-        "te" -> TranslateLanguage.TELUGU
-        "th" -> TranslateLanguage.THAI
-        "tl" -> TranslateLanguage.TAGALOG
-        "tr" -> TranslateLanguage.TURKISH
-        "uk" -> TranslateLanguage.UKRAINIAN
-        "ur" -> TranslateLanguage.URDU
-        "vi" -> TranslateLanguage.VIETNAMESE
-        "zh" -> TranslateLanguage.CHINESE
-        else -> null
-    }
-
     // ── 本地词典（用户下载的分级词典）────────────────
     private suspend fun lookupLocalDict(text: String): String? {
         // issue 8.9：词典只收单词；句子/多词输入查词典只会返回
@@ -537,41 +249,23 @@ class TranslationHelper @Inject constructor(
      * MainActivity.onDestroy 都会调用；关闭时同步放行挂起的等待者。
      */
     fun close() {
-        try {
-            mlkitTranslator?.close()
-        } catch (e: java.lang.RuntimeException) {
-            android.util.Log.w("TranslationHelper", "close translator threw: ${e.message}")
-        }
-        mlkitTranslator = null
-        mlkitReady = false
-        initFailedAt = 0L
-        // close 与 translate 并发时挂起的等待者必须被放行，否则 30s 超时前一直空转
-        mlkitReadyDeferred?.complete(false)
-        mlkitReadyDeferred = null
-        initAttempted.set(false)  // 允许重新初始化
-        // issue 8.1：一并释放按需语言对 Translator 及其中标记，下一入口可重建
-        pairTranslators.forEach { (_, t) ->
-            try {
-                t.close()
-            } catch (e: java.lang.RuntimeException) {
-                android.util.Log.w("TranslationHelper", "close pair translator threw: ${e.message}")
-            }
-        }
-        pairTranslators.clear()
-        pairDeferreds.forEach { (_, d) -> d.complete(false) }
-        pairDeferreds.clear()
+        mlkitPool.close()
     }
 
     private companion object {
         // 单段翻译字符上限（避免超出 ML Kit 请求限制）
         const val TRANSLATION_CHAR_LIMIT = 4000
 
-        // 初始化失败后的重试窗口（issue 8.2）
-        const val INIT_RETRY_WINDOW_MS = 60_000L
-
         // 整书翻译并发上限：旧实现 200 段一次性 async 同时压 ML Kit
         //（各自还可能等模型就绪），限流后吞吐更高也更稳
         const val PARAGRAPH_CONCURRENCY = 6
+
+        // 单词级输入先查本地词典的长度阈值（超过则视为句子，直接走机翻）
+        const val WORD_LOOKUP_MAX_CHARS = 20
+
+        // 设置页"测试翻译"的默认样例句
+        const val DEFAULT_TEST_SAMPLE =
+            "The old man sat by the harbor, watching the boats drift home as the sun melted into the sea."
 
         // 句子边界（ASCII）：句末标点 + 空白 + 大写字母/引号/左括号
         //（与 ReaderViewModel.splitSentencesCompat 同规则）

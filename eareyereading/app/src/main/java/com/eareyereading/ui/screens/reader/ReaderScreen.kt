@@ -9,7 +9,6 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.pointerInput
@@ -197,6 +196,19 @@ fun ReaderScreen(
                     accentColor = accentColor,
                     viewModel = viewModel,
                     onToggleChrome = chromeController::toggle,
+                )
+            }
+            // 翻译进度浮标：叠加在正文之上（不参与正文测量，不引起重排）。
+            // 译文改为"整本译完才上屏"后，这个进度是用户判断"后台在干活"
+            // 的唯一常驻线索——顶栏 spinner 会随 chrome 自动收起而消失
+            if (uiState.isTranslating) {
+                TranslationProgressPill(
+                    done = uiState.translationDone,
+                    total = uiState.translationTotal,
+                    textColor = textColor,
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(top = statusBarPad + 8.dp),
                 )
             }
             // 顶部工具栏叠加层：AnimatedVisibility 滑动+淡入，不占用布局尺寸

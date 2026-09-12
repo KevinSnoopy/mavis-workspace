@@ -5,7 +5,6 @@ package com.eareyereading.ui.screens.reader
 import androidx.lifecycle.viewModelScope
 import com.eareyereading.domain.model.*
 import com.eareyereading.util.*
-import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -32,23 +31,9 @@ internal fun ReaderViewModel.startAutoRead() {
     // 初始化放进被追踪的 autoReadJob：初始化窗口内的第二次点击
     // 会先 cancel 掉第一次尝试，不再出现两条并发朗读链
     autoReadJob = viewModelScope.launch {
-        if (!_uiState.value.ttsInitialized) {
-            val ok = try {
-                ttsHelper.initialize(_uiState.value.book?.language ?: "en")
-            } catch (e: TimeoutCancellationException) {
-                android.util.Log.w("ReaderViewModel", "TTS init timed out", e)
-                false
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                android.util.Log.e("ReaderViewModel", "TTS init failed", e)
-                false
-            }
-            _uiState.update { it.copy(ttsInitialized = ok) }
-            if (!ok) {
-                handleTtsInitFailure("自动朗读不可用")
-                return@launch
-            }
+        if (!_uiState.value.ttsInitialized && !initTtsEngine()) {
+            handleTtsInitFailure("自动朗读不可用")
+            return@launch
         }
         // 内置模型与本书语言不匹配时先切换（英文书→纯英文模型），
         // 已匹配/无对应模型时为 no-op

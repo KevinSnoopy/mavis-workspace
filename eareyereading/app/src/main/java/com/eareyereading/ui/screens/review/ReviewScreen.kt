@@ -1,16 +1,14 @@
 package com.eareyereading.ui.screens.review
 
 import androidx.compose.foundation.layout.*
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.eareyereading.ui.components.AppTopBar
 import com.eareyereading.ui.theme.*
 import com.eareyereading.util.notificationPermissionGranted
 import com.eareyereading.util.rememberNotificationPermissionRequester
@@ -36,33 +34,16 @@ fun ReviewScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        "复习",
-                        style = MaterialTheme.typography.headlineLarge,
-                        fontWeight = FontWeight.Bold,
-                    )
-                },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.Default.ArrowBack, "返回")
+            AppTopBar(title = "复习", onBack = onBack) {
+                if (dueCount > 0) {
+                    Badge(
+                        containerColor = Warning,
+                        modifier = Modifier.padding(end = 8.dp),
+                    ) {
+                        Text("$dueCount")
                     }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.background,
-                ),
-                actions = {
-                    if (dueCount > 0) {
-                        Badge(
-                            containerColor = Warning,
-                            modifier = Modifier.padding(end = 8.dp),
-                        ) {
-                            Text("$dueCount")
-                        }
-                    }
-                },
-            )
+                }
+            }
         },
     ) { padding ->
         Box(

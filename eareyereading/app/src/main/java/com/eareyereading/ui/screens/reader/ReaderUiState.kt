@@ -3,7 +3,6 @@ package com.eareyereading.ui.screens.reader
 import androidx.compose.ui.graphics.Color
 import com.eareyereading.domain.model.*
 import com.eareyereading.util.CollinsClassifier.WordLevel
-import com.eareyereading.util.TtsHelper
 import com.eareyereading.util.*
 
 /**
@@ -15,51 +14,41 @@ import com.eareyereading.util.*
  */
 /**
  * TTS 引导提示（自 2026-08-30 系统 TTS 下线后已大幅简化）：
- * 只剩"提醒用户去下载嵌入式模型"一种场景。系统引擎选择/Google TTS 安装/
- * 第三方 TTS app 安装等场景全部删掉（TtsEngineHelper 已被删除）。
+ * 只剩"提醒用户下载 / 启用内置模型"一种场景。
  *
- * 保留字段签名以避免 UI 侧广泛改动。
+ * ── 重构说明（YAGNI）──
+ * 此前这里保留了 10 个系统 TTS 时代的字段（失败原因、引擎列表、回退包名、
+ * 幻影默认态、Google Play 可用性、第三方 TTS app 列表、安装引导步骤、
+ * 场景枚举），并逐个挂上 @Suppress("UNUSED_PARAMETER")。它们既不参与任何
+ * UI 渲染也不再被读取，纯粹是"下线系统 TTS 时顺手留下的兼容层"。
+ * 兼容层没有外部消费者，只会误导后续维护者以为还有系统引擎分支要处理。
  */
 data class TtsInstallPrompt(
-    @Suppress("UNUSED_PARAMETER") val reason: TtsHelper.InitFailureReason = TtsHelper.InitFailureReason.NO_ENGINE,
-    @Suppress("UNUSED_PARAMETER") val availableEngines: List<Any> = emptyList(),
-    @Suppress("UNUSED_PARAMETER") val fallbackEnginePackage: String? = null,
-    @Suppress("UNUSED_PARAMETER") val discoveredEngines: List<Any> = emptyList(),
-    @Suppress("UNUSED_PARAMETER") val systemDefaultEnginePackage: String? = null,
-    @Suppress("UNUSED_PARAMETER") val isPhantomDefaultState: Boolean = false,
-    @Suppress("UNUSED_PARAMETER") val hasGooglePlay: Boolean = false,
-    @Suppress("UNUSED_PARAMETER") val uninstalledThirdPartyTtsApps: List<Any> = emptyList(),
-    @Suppress("UNUSED_PARAMETER") val installGuideSteps: List<String> = emptyList(),
-    @Suppress("UNUSED_PARAMETER") val scenario: DialogScenario = DialogScenario.NO_ENGINE,
-    /** 内置 TTS 模型是否已下载（剩余唯一影响 UI 的字段） */
+    /** 内置 TTS 模型是否已下载：决定弹窗走"下载"还是"启用" */
     val embeddedModelDownloaded: Boolean = false,
     /** 内置 TTS 模型显示名 */
     val embeddedModelDisplayName: String = "",
     /** 内置 TTS 模型大小（人类可读） */
     val embeddedModelSizeText: String = "",
-) {
-    @Suppress("unused")
-    enum class DialogScenario {
-        HAS_DISCOVERED_ENGINES,
-        SYSTEM_DEFAULT_INSTALLED_BUT_UNREACHABLE,
-        NO_ENGINE,
-    }
-}
+)
 
 /**
- * 用户对 TTS 引导弹窗的回应动作（仅剩"下载内置模型"和"关闭"两类）。
+ * 用户对 TTS 引导弹窗的回应动作。
+ *
+ * ── 重构说明 ──
+ * 原 sealed class 含 5 个系统 TTS 时代的子类，其中 4 个（打开引擎设置 /
+ * 安装 Google TTS / 打开未知来源设置 / 安装第三方 TTS app）从未被任何 UI
+ * 构造；唯一被构造的 `RetryWithEngine("__EMBEDDED__")` 在处理器里落在 no-op
+ * 分支——于是引导弹窗上"✅ 启用内置 TTS"按钮点了完全没反应，模型已下载的
+ * 用户反而无法启用引擎。现收敛为 3 个语义明确、且都有真实实现的动作。
  */
 sealed class TtsInstallAction {
     /** 下载内置 TTS 模型 */
     data object DownloadEmbeddedTts : TtsInstallAction()
+    /** 启用已下载的内置 TTS 模型（初始化引擎） */
+    data object EnableEmbeddedTts : TtsInstallAction()
     /** 关闭弹窗 */
     data object Dismiss : TtsInstallAction()
-    // 占位旧枚举（兼容现有 UI 调用方，运行时不再创建）
-    @Suppress("unused") data class OpenEngineSettings(val enginePackage: String?) : TtsInstallAction()
-    @Suppress("unused") data object InstallGoogleTts : TtsInstallAction()
-    @Suppress("unused") data object OpenUnknownSourcesSettings : TtsInstallAction()
-    @Suppress("unused") data class RetryWithEngine(val enginePackage: String) : TtsInstallAction()
-    @Suppress("unused") data class InstallThirdPartyTtsApp(val app: Any) : TtsInstallAction()
 }
 
 data class ReaderUiState(
@@ -100,8 +89,19 @@ data class ReaderUiState(
     val selectedVocab: Vocabulary? = null,
     // 全文翻译
     val showTranslation: Boolean = false,
+    // 数据层译文（渐进更新）：全量结果 + 分批落库来源，同时也是分栏（SPLIT）、
+    // 回译（BACK_TRANSLATION）、挖空等模式的渲染源——那些模式的语义就是
+    // "译文逐段浮现"，需要实时值
     val paragraphTranslations: Map<Int, String> = emptyMap(),
+    // 上屏层译文：滚动/翻页两种正文阅读视图的唯一渲染源，同时是翻页分页的
+    // 唯一译文输入。它比数据层"慢一拍"——视口内的段落要等这一屏翻完才一起
+    // 上屏，视口外的随时放行。详见 commitReaderTranslations 的注释
+    val readerTranslations: Map<Int, String> = emptyMap(),
     val isTranslating: Boolean = false,
+    // 整本翻译进度（本次需要补翻的段落数）：译文改为"整本译完才上屏"后，
+    // 必须让用户看到后台确实在推进，否则静默等待会被当成卡死
+    val translationDone: Int = 0,
+    val translationTotal: Int = 0,
     val translationAlpha: Float = 0.85f,
     // Collins 词频色彩
     val showWordLevelColors: Boolean = false,

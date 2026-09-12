@@ -9,7 +9,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
@@ -22,6 +21,7 @@ import androidx.compose.ui.unit.sp
 import com.eareyereading.util.BookImages
 import com.eareyereading.util.CollinsClassifier
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -38,7 +38,11 @@ import kotlinx.coroutines.withContext
  * 同步语义（与滚动视图对齐）：
  *  - 翻页 settle 后把该页首切片的段落回报 VM（底栏滑杆/进度/统计跟上）；
  *  - 程序推进（朗读/滑杆/章节跳转）时翻到目标段首个切片所在页；
- *  - 相邻页动画翻页，跨页跳转（如续读恢复）瞬时定位。
+ *  - 相邻页动画翻页，跨页跳转（如续读恢复）瞬时定位；
+ *  - 重新分页后按"阅读锚点段落"重新对齐视口：分页输入来自
+ *    [com.eareyereading.ui.screens.reader.ReaderUiState.readerTranslations]
+ *    这份上屏层译文，视口内（当前页）的段落要等这一页翻完才一起上屏，
+ *    所以正在读的这一页不会逐段抽搐；用户翻页时新页直接显示最新译文。
  */
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
@@ -60,6 +64,8 @@ fun PagedReadingView(
     onWordClick: (String) -> Unit,
     onSentenceDoubleTap: (String) -> Unit,
     onVisibleParagraphChanged: (Int) -> Unit = {},
+    // 当前页覆盖的段落区间上报：翻译上屏据此把这一页整体延后刷新
+    onVisibleRangeChanged: (Int, Int) -> Unit = { _, _ -> },
     bookmarkedParagraphs: Set<Int> = emptySet(),
     highlights: Map<Int, List<HighlightData>> = emptyMap(),
     // 仿电子书装饰：页眉书名 + 页脚页码；中键点击回调（左右边缘被翻页区占用）
@@ -117,26 +123,49 @@ fun PagedReadingView(
         }
 
         val pagerState = rememberPagerState(pageCount = { pages.size })
+        // 分页结果快照：下面的 effect 要读 pages，但不能把它当启动 key 的
+        // 全部含义——分页一变就重启会让"用户翻页"与"分页重算"混为一谈
+        val latestPages by rememberUpdatedState(pages)
 
-        // 翻页回报：页 settle 后把该页首切片的段落回报 VM
-        // （底栏滑杆/进度/阅读统计跟上视口，播放中由播放循环主导，VM 侧会忽略）
-        LaunchedEffect(pagerState, pages) {
+        // 阅读锚点：视口应对齐到的段落。用户翻页时实时更新；程序推进
+        // （朗读/滑杆/章节跳转）跟随 currentIndex。它把"视口位置"从
+        // "页码"改成"内容"，重新分页后同一段落会漂到别的页，
+        // 只盯页码就会读到一半被换成别的内容
+        var anchorParaIndex by remember { mutableIntStateOf(-1) }
+
+        // 翻页回报：页 settle 后把该页首切片段落回报 VM（底栏滑杆/进度/
+        // 阅读统计跟上视口，播放中由播放循环主导，VM 侧会忽略）并刷新锚点；
+        // 同时上报本页覆盖的段落区间，供翻译上屏决策（见 commitReaderTranslations）
+        LaunchedEffect(pagerState) {
             snapshotFlow { pagerState.currentPage }
+                .distinctUntilChanged()
                 .collect { page ->
-                    pages.getOrNull(page)?.firstOrNull()?.let { onVisibleParagraphChanged(it.paraIndex) }
+                    latestPages.getOrNull(page)?.takeIf { it.isNotEmpty() }?.let { slices ->
+                        anchorParaIndex = slices.first().paraIndex
+                        onVisibleParagraphChanged(slices.first().paraIndex)
+                        onVisibleRangeChanged(slices.first().paraIndex, slices.last().paraIndex)
+                    }
                 }
         }
-        // 程序推进跟随：朗读/滑杆/章节跳转把 currentIndex 推走时翻到
-        // 目标段首个切片所在页。远距离（续读恢复/跳章）瞬时定位，相邻页动画翻页
-        LaunchedEffect(currentIndex, pages) {
-            if (pages.isEmpty()) return@LaunchedEffect
-            val target = pages.indexOfFirst { page -> page.any { it.paraIndex == currentIndex } }
-            if (target >= 0 && target != pagerState.currentPage && !pagerState.isScrollInProgress) {
-                if (kotlin.math.abs(target - pagerState.currentPage) > 1) {
-                    pagerState.scrollToPage(target)
-                } else {
-                    pagerState.animateScrollToPage(target)
-                }
+        // 程序推进：currentIndex 被推走时锚点跟随（用户翻页触发的
+        // onVisibleParagraphChanged 回写不会带来额外位移，目标页不变）
+        LaunchedEffect(currentIndex) {
+            if (currentIndex in paragraphs.indices) anchorParaIndex = currentIndex
+        }
+        // 锚点定位：锚点或分页结果变化时把视口对齐到锚点所在页。
+        // 这是唯一的自动翻页入口——旧实现把 pages 当触发条件、
+        // 按"目标页 ≠ 当前页"就翻，导致任何一次重新分页（译文上屏、
+        // 字号调整、书签增删）都会把用户正在读的页面强行翻走
+        LaunchedEffect(pages, anchorParaIndex) {
+            if (pages.isEmpty() || anchorParaIndex < 0) return@LaunchedEffect
+            if (pagerState.isScrollInProgress) return@LaunchedEffect
+            val target = pages.indexOfFirst { page -> page.any { it.paraIndex == anchorParaIndex } }
+            if (target < 0 || target == pagerState.currentPage) return@LaunchedEffect
+            // 远距离（重排后位置漂移）瞬时定位，相邻页动画翻页
+            if (kotlin.math.abs(target - pagerState.currentPage) > 1) {
+                pagerState.scrollToPage(target)
+            } else {
+                pagerState.animateScrollToPage(target)
             }
         }
 

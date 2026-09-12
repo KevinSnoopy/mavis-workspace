@@ -5,7 +5,6 @@ package com.eareyereading.ui.screens.reader
 import androidx.lifecycle.viewModelScope
 import com.eareyereading.domain.model.*
 import com.eareyereading.util.*
-import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch

@@ -1,6 +1,5 @@
 package com.eareyereading.tts
 
-import java.net.URL
 
 /**
  * 内置 TTS 模型目录：Piper 英文模型清单与文件镜像配置。

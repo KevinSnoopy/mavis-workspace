@@ -2,14 +2,7 @@ package com.eareyereading.ui.screens.reader
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Bookmark
-import androidx.compose.material3.Icon
-import androidx.compose.material3.Divider
-import androidx.compose.material3.Text
 import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
@@ -20,7 +13,6 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import com.eareyereading.ui.theme.*
 import com.eareyereading.util.CollinsClassifier
-import com.eareyereading.util.CollinsClassifier.WordLevel
 
 /**
  * 跨页段落切片渲染：渲染 [para] 的 [charStart, charEnd) 行片段。
@@ -69,41 +61,8 @@ internal fun ReaderSliceParagraphBlock(
         }
     }
 
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .then(
-                if (isCurrent && isAutoReading) {
-                    Modifier
-                        .background(LocalReaderAccent.current.copy(alpha = 0.06f), RoundedCornerShape(8.dp))
-                        .padding(horizontal = 6.dp, vertical = 2.dp)
-                } else {
-                    Modifier
-                }
-            ),
-    ) {
-        if (showBookmarkMark) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 4.dp),
-                horizontalArrangement = Arrangement.Start,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Icon(
-                    Icons.Default.Bookmark,
-                    "已书签",
-                    modifier = Modifier.size(16.dp),
-                    tint = Secondary,
-                )
-                Spacer(modifier = Modifier.width(4.dp))
-                Divider(
-                    modifier = Modifier.weight(1f),
-                    thickness = 1.dp,
-                    color = Secondary.copy(alpha = 0.3f),
-                )
-            }
-        }
+    Column(modifier = readerParagraphContainerModifier(isCurrent, isAutoReading)) {
+        if (showBookmarkMark) ReaderBookmarkMark()
 
         // 朗读句级同步：句子范围与切片求交，逐句分档透明度渲染
         val sentenceRanges = remember(para, currentSentences) {
@@ -180,17 +139,12 @@ internal fun ReaderSliceParagraphBlock(
 
         // 译文跟随段尾切片（与整段渲染一致）
         if (isLast && showTranslation && !translation.isNullOrBlank()) {
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-                text = translation,
-                modifier = Modifier
-                    .padding(vertical = 2.dp)
-                    .alpha(alpha),
-                style = readerParagraphStyle(fontSize - 2, 1.5f).copy(
-                    color = LocalReaderAccent.current.copy(alpha = translationAlpha),
-                ),
+            ReaderTranslationBlock(
+                translation = translation,
+                fontSize = fontSize,
+                alpha = alpha,
+                translationAlpha = translationAlpha,
             )
-            Spacer(modifier = Modifier.height(12.dp))
         }
     }
 }
@@ -236,27 +190,7 @@ private fun buildAutoReadingSliceAnnotated(
             }
             val fragment = para.substring(fragStart, fragEnd)
             val fragOffset = length
-            if (showWordLevelColors) {
-                WordSplitRegex.findAll(fragment).forEach { match ->
-                    val word = match.value
-                    if (PureWordRegex.matches(word)) {
-                        val level = classifier.classify(word)
-                        val color = when (level) {
-                            WordLevel.CORE -> WordLevelCore
-                            WordLevel.INTERMEDIATE -> WordLevelIntmd
-                            WordLevel.UPPER_INTERMEDIATE -> WordLevelUpper
-                            WordLevel.ADVANCED -> WordLevelAdv
-                            WordLevel.RARE -> WordLevelRare
-                            WordLevel.UNKNOWN -> textColor.copy(alpha = 0.5f)
-                        }
-                        withStyle(SpanStyle(color = color.copy(alpha = sAlpha))) { append(word) }
-                    } else {
-                        withStyle(SpanStyle(color = textColor.copy(alpha = sAlpha * 0.6f))) { append(word) }
-                    }
-                }
-            } else {
-                withStyle(SpanStyle(color = textColor.copy(alpha = sAlpha))) { append(fragment) }
-            }
+            appendWordLevelColored(fragment, sAlpha, textColor, showWordLevelColors, classifier)
             if (sIdx == currentSentenceIndex) {
                 addStyle(
                     SpanStyle(background = accent.copy(alpha = 0.10f)),

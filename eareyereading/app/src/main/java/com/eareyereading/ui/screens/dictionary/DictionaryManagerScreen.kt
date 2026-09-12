@@ -1,7 +1,6 @@
 package com.eareyereading.ui.screens.dictionary
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -17,6 +16,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.eareyereading.ui.components.AppTopBar
 import com.eareyereading.ui.theme.*
 import com.eareyereading.util.DictionaryManager
 import com.eareyereading.util.DictionaryStatus
@@ -153,37 +153,20 @@ fun DictionaryManagerScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        "词典管理",
-                        style = MaterialTheme.typography.headlineLarge,
-                        fontWeight = FontWeight.Bold,
+            AppTopBar(title = "词典管理", onBack = onBack) {
+                // 刷新中给可见反馈：旧实现点刷新无任何状态变化，
+                // 用户无法感知刷新是否发生
+                if (uiState.loading) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(24.dp),
+                        strokeWidth = 2.dp,
                     )
-                },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.Default.ArrowBack, "返回")
+                } else {
+                    IconButton(onClick = { viewModel.refresh() }) {
+                        Icon(Icons.Default.Refresh, "刷新")
                     }
-                },
-                actions = {
-                    // 刷新中给可见反馈：旧实现点刷新无任何状态变化，
-                    // 用户无法感知刷新是否发生
-                    if (uiState.loading) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(24.dp),
-                            strokeWidth = 2.dp,
-                        )
-                    } else {
-                        IconButton(onClick = { viewModel.refresh() }) {
-                            Icon(Icons.Default.Refresh, "刷新")
-                        }
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.background,
-                ),
-            )
+                }
+            }
         },
         snackbarHost = { SnackbarHost(snackbarHostState) },
     ) { padding ->

@@ -15,6 +15,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.eareyereading.ui.theme.*
 import com.eareyereading.util.CollinsClassifier
+import kotlinx.coroutines.flow.distinctUntilChanged
 
 /**
  * 普通上下滚动阅读视图（NORMAL 模式）。
@@ -40,6 +41,8 @@ fun NormalReadingView(
     onWordClick: (String) -> Unit,
     onSentenceDoubleTap: (String) -> Unit,
     onVisibleParagraphChanged: (Int) -> Unit = {},
+    // 可见区间上报（first..last）：翻译上屏据此把"正在看的这一屏"整体延后
+    onVisibleRangeChanged: (Int, Int) -> Unit = { _, _ -> },
     bookmarkedParagraphs: Set<Int> = emptySet(),
     highlights: Map<Int, List<HighlightData>> = emptyMap(),
     onAddHighlight: (Int, Int, Int, String) -> Unit = { _, _, _, _ -> },
@@ -65,11 +68,20 @@ fun NormalReadingView(
             listState.animateScrollToItem(currentIndex)
         }
     }
-    // 反向同步：用户滑动阅读时把可见段落回报给 VM，
-    // 让底栏/滑杆/进度/统计跟上视口（播放中由播放循环主导，VM 侧会忽略）
+    // 反向同步：用户滑动阅读时把可见区间回报给 VM，
+    // 让底栏/滑杆/进度/统计跟上视口（播放中由播放循环主导，VM 侧会忽略），
+    // 同时供翻译上屏判断"哪些段落正在被看"（见 commitReaderTranslations）
     LaunchedEffect(listState) {
-        snapshotFlow { listState.firstVisibleItemIndex }
-            .collect { idx -> onVisibleParagraphChanged(idx) }
+        snapshotFlow {
+            val info = listState.layoutInfo.visibleItemsInfo
+            if (info.isEmpty()) IntRange.EMPTY else info.first().index..info.last().index
+        }
+            .distinctUntilChanged()
+            .collect { range ->
+                if (range.isEmpty()) return@collect
+                onVisibleRangeChanged(range.first, range.last)
+                onVisibleParagraphChanged(range.first)
+            }
     }
 
     LazyColumn(

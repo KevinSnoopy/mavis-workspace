@@ -1,0 +1,102 @@
+package com.eareyereading.ui.screens.reader
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material3.Divider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.unit.dp
+import com.eareyereading.ui.theme.Secondary
+
+/**
+ * 段落渲染共享零件。
+ *
+ * ── 重构说明（DRY / 单一真实来源）──
+ * 整段渲染 [ReaderParagraphBlock] 与跨页切片渲染 [ReaderSliceParagraphBlock]
+ * 必须保证段落视觉逐像素一致，但"朗读段落底 / 书签标记行 / 译文块"这三段
+ * 此前在两个文件里各写一份、逐行相同。任何一处样式调整漏改另一处，
+ * 就会让滚动阅读与翻页阅读出现肉眼可见的差异。现收敛到此文件。
+ */
+
+/**
+ * 段落内容容器修饰符：朗读中的当前段落铺强调色底并内缩，其余段落不加修饰。
+ * 直接作用于内容容器——原实现额外包了一个 Text("") 的 Surface 承载背景，
+ * 该 Surface 零高度，背景永远不可见，已废弃。
+ */
+@Composable
+internal fun readerParagraphContainerModifier(isCurrent: Boolean, isAutoReading: Boolean): Modifier =
+    Modifier
+        .fillMaxWidth()
+        .then(
+            if (isCurrent && isAutoReading) {
+                Modifier
+                    .background(LocalReaderAccent.current.copy(alpha = 0.06f), RoundedCornerShape(8.dp))
+                    .padding(horizontal = 6.dp, vertical = 2.dp)
+            } else {
+                Modifier
+            }
+        )
+
+/** 书签段落标记行：书签图标 + 延伸分隔线。 */
+@Composable
+internal fun ReaderBookmarkMark() {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        horizontalArrangement = Arrangement.Start,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            Icons.Default.Bookmark,
+            "已书签",
+            modifier = Modifier.size(16.dp),
+            tint = Secondary,
+        )
+        Spacer(modifier = Modifier.width(4.dp))
+        Divider(
+            modifier = Modifier.weight(1f),
+            thickness = 1.dp,
+            color = Secondary.copy(alpha = 0.3f),
+        )
+    }
+}
+
+/**
+ * 段落译文块：上间距 + 强调色译文 + 下间距。
+ * 间距只在实际有译文时产生——原实现把下间距放在判空之外，
+ * 未翻译段落会多出一截空白，段落节奏不齐。
+ */
+@Composable
+internal fun ReaderTranslationBlock(
+    translation: String,
+    fontSize: Int,
+    alpha: Float,
+    translationAlpha: Float,
+) {
+    Spacer(modifier = Modifier.height(4.dp))
+    Text(
+        text = translation,
+        modifier = Modifier
+            .padding(vertical = 2.dp)
+            .alpha(alpha),
+        style = readerParagraphStyle(fontSize - 2, 1.5f).copy(
+            color = LocalReaderAccent.current.copy(alpha = translationAlpha),
+        ),
+    )
+    Spacer(modifier = Modifier.height(12.dp))
+}

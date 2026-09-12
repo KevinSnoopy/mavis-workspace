@@ -2,23 +2,16 @@ package com.eareyereading.ui.components.category
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -70,6 +63,7 @@ fun AddBookFlowSheet(
     initialAuthor: String = "",
     onComplete: (title: String, author: String, isbn: String, categoryName: String?, coverId: Int) -> Unit,
     onDismiss: () -> Unit,
+    onCreateCategory: (Category) -> Unit = {},
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var step by remember { mutableIntStateOf(0) }  // 0..2
@@ -78,6 +72,13 @@ fun AddBookFlowSheet(
     var isbn by remember { mutableStateOf("") }
     var selectedCategoryIdx by remember { mutableIntStateOf(-1) }
     var selectedCoverId by remember { mutableIntStateOf(0) }
+
+    // 流程内新建的分类：网格立即可见并自动选中，无需退出流程去分类管理里建
+    var createdCategories by remember { mutableStateOf<List<Category>>(emptyList()) }
+    var showCategoryEdit by remember { mutableStateOf(false) }
+    val allCategories = remember(categories, createdCategories) {
+        categories + createdCategories
+    }
 
     val stepLabels = listOf("基础信息", "分类", "封面")
 
@@ -120,9 +121,10 @@ fun AddBookFlowSheet(
                 )
 
                 1 -> StepSelectCategory(
-                    categories = categories,
+                    categories = allCategories,
                     selectedIdx = selectedCategoryIdx,
                     onSelect = { selectedCategoryIdx = it },
+                    onAddClick = { showCategoryEdit = true },
                 )
 
                 2 -> StepSelectCover(
@@ -156,7 +158,7 @@ fun AddBookFlowSheet(
                                 // 完成：分类索引映射为分类名传给调用方
                                 val categoryName = selectedCategoryIdx
                                     .takeIf { it >= 0 }
-                                    ?.let { categories.getOrNull(it)?.name }
+                                    ?.let { allCategories.getOrNull(it)?.name }
                                 onComplete(title, author, isbn, categoryName, selectedCoverId)
                             }
 
@@ -178,6 +180,23 @@ fun AddBookFlowSheet(
                 }
             }
         }
+    }
+
+    // 流程内「新建分类」：复用分类编辑弹窗（独立 window，叠加在本 sheet 之上）。
+    // 保存后把新分类插到本地列表末尾并自动选中，用户不必退出导入流程
+    // 去分类管理里建好再回来。
+    if (showCategoryEdit) {
+        CategoryEditSheet(
+            initial = null,
+            onSave = { cat ->
+                // 新分类追加在合并列表末尾，其索引 = 原有分类数 + 已新建数
+                selectedCategoryIdx = categories.size + createdCategories.size
+                createdCategories = createdCategories + cat
+                onCreateCategory(cat)
+                showCategoryEdit = false
+            },
+            onDismiss = { showCategoryEdit = false },
+        )
     }
 }
 
@@ -329,6 +348,7 @@ private fun StepSelectCategory(
     categories: List<Category>,
     selectedIdx: Int,
     onSelect: (Int) -> Unit,
+    onAddClick: () -> Unit,
 ) {
     CategorySelectGrid(
         categories = categories,
@@ -338,11 +358,11 @@ private fun StepSelectCategory(
             .fillMaxWidth()
             .height(280.dp),
         showAddTile = true,
-        onAddClick = { /* v2 占位：可打开 CategoryEditSheet 新建后回填 */ },
+        onAddClick = onAddClick,
     )
 }
 
-// ── 步骤 3：选择封面 ──
+// ── 步骤 3：选择封面（复用公共 CoverPickerContent：全部 15 个背景 + 分段切换）──
 @Composable
 private fun StepSelectCover(
     selectedCoverId: Int,
@@ -350,76 +370,12 @@ private fun StepSelectCover(
     author: String,
     onSelect: (Int) -> Unit,
 ) {
-    // 步骤 3 复用 CoverPickerSheet 的视觉，但内嵌在 AddBookFlow 内
-    Text(
-        text = "从下方选择一个封面背景：",
-        color = OnSurfaceVariant,
-        fontSize = 13.sp,
-        modifier = Modifier.padding(bottom = 12.dp),
+    CoverPickerContent(
+        selectedId = selectedCoverId,
+        onSelect = onSelect,
+        previewTitle = title.ifBlank { "书名" },
+        previewAuthor = author.ifBlank { "作者" },
+        modifier = Modifier.fillMaxWidth(),
+        gridHeight = 280.dp,
     )
-    // 简化：仅显示前 6 个封面背景
-    val ids = (0..5).toList()
-    LazyVerticalGrid(
-        columns = GridCells.Fixed(3),
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(280.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        items(ids) { id ->
-            val gradients = com.eareyereading.ui.theme.CoverGradients
-            Box(
-                modifier = Modifier
-                    .aspectRatio(0.75f)
-                    .clip(EareyeShapes.md)
-                    .background(androidx.compose.ui.graphics.Brush.linearGradient(gradients[id]))
-                    .border(
-                        width = if (selectedCoverId == id) 2.5.dp else 0.dp,
-                        color = if (selectedCoverId == id) Primary else Color.Transparent,
-                        shape = EareyeShapes.md,
-                    )
-                    .clickable { onSelect(id) },
-            ) {
-                if (selectedCoverId == id) {
-                    Box(
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .padding(6.dp)
-                            .size(20.dp)
-                            .clip(CircleShape)
-                            .background(Primary),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Check,
-                            contentDescription = null,
-                            modifier = Modifier.size(12.dp),
-                            tint = Color.White,
-                        )
-                    }
-                }
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(8.dp),
-                ) {
-                    Text(
-                        text = title.ifBlank { "书名" },
-                        color = Color.White,
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 2,
-                    )
-                    Box(modifier = Modifier.weight(1f))
-                    Text(
-                        text = author.ifBlank { "作者" },
-                        color = Color.White.copy(alpha = 0.85f),
-                        fontSize = 8.sp,
-                        maxLines = 1,
-                    )
-                }
-            }
-        }
-    }
 }

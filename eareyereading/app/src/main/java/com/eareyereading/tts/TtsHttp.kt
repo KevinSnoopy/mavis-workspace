@@ -29,6 +29,26 @@ private fun openConnection(url: String, proxy: java.net.Proxy?): HttpURLConnecti
     return (if (proxy != null) u.openConnection(proxy) else u.openConnection()) as HttpURLConnection
 }
 
+/**
+ * 统一的下载连接配置 + 建连。
+ *
+ * 直连与"重定向后复用同一 Proxy"两条路径必须使用完全一致的头与超时，
+ * 此前两处逐行重复，任何一处漏改都会让重定向路径的行为悄然偏离（DRY）。
+ *
+ * @param rangeFrom > 0 时带上断点续传的 `Range: bytes=N-`
+ */
+private fun configureDownloadConnection(conn: HttpURLConnection, rangeFrom: Long) {
+    conn.connectTimeout = 8_000
+    conn.readTimeout = 120_000
+    conn.doInput = true
+    conn.instanceFollowRedirects = false   // 关键：禁用自动跟随，自己手动跟，
+                                           // 否则 followRedirect 会丢失 Proxy
+    conn.setRequestProperty("Connection", "close")
+    conn.setRequestProperty("User-Agent", "eareyereading/1.0 Android")
+    if (rangeFrom > 0) conn.setRequestProperty("Range", "bytes=$rangeFrom-")
+    conn.connect()
+}
+
 internal suspend fun downloadFileWithResume(
     url: String,
     target: File,
@@ -46,15 +66,7 @@ internal suspend fun downloadFileWithResume(
         var handedOff = false
         try {
             conn = openConnection(url, p)
-            conn.connectTimeout = 8_000
-            conn.readTimeout = 120_000
-            conn.doInput = true
-            conn.instanceFollowRedirects = false   // 关键：禁用自动跟随，自己手动跟，
-                                                   // 否则 followRedirect 会丢失 Proxy
-            conn.setRequestProperty("Connection", "close")
-            conn.setRequestProperty("User-Agent", "eareyereading/1.0 Android")
-            if (existingLen > 0) conn.setRequestProperty("Range", "bytes=$existingLen-")
-            conn.connect()
+            configureDownloadConnection(conn, existingLen)
             val code = conn.responseCode
             Log.i(TAG, "download: candidate #$idx (proxy=${describeProxy(p)}) responded HTTP $code for $url")
             when {
@@ -80,14 +92,7 @@ internal suspend fun downloadFileWithResume(
                     }
                     // 重定向 1 次，递归走一次 candidate 循环（不递归函数，避免栈深）
                     val redirectedConn = openConnection(nextUrl, p)
-                    redirectedConn.connectTimeout = 8_000
-                    redirectedConn.readTimeout = 120_000
-                    redirectedConn.doInput = true
-                    redirectedConn.instanceFollowRedirects = false
-                    redirectedConn.setRequestProperty("Connection", "close")
-                    redirectedConn.setRequestProperty("User-Agent", "eareyereading/1.0 Android")
-                    if (existingLen > 0) redirectedConn.setRequestProperty("Range", "bytes=$existingLen-")
-                    redirectedConn.connect()
+                    configureDownloadConnection(redirectedConn, existingLen)
                     val redirectedCode = redirectedConn.responseCode
                     Log.i(TAG, "download: redirected (via same proxy) -> HTTP $redirectedCode")
                     conn = redirectedConn

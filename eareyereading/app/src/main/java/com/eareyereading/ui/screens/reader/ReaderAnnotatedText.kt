@@ -21,6 +21,50 @@ internal val WordSplitRegex = Regex("([a-zA-Z]+)|([^a-zA-Z]+)")
 internal val PureWordRegex = Regex("^[a-zA-Z]+$")
 
 /**
+ * Collins 词频档位 → 主题色。整段渲染、跨页切片渲染、朗读句渲染三条分支
+ * 此前各内联一份完全相同的 when，档位配色调整时极易漏改其中一两处。
+ * 现为唯一来源。
+ */
+internal fun wordLevelColor(level: WordLevel, textColor: Color): Color = when (level) {
+    WordLevel.CORE -> WordLevelCore
+    WordLevel.INTERMEDIATE -> WordLevelIntmd
+    WordLevel.UPPER_INTERMEDIATE -> WordLevelUpper
+    WordLevel.ADVANCED -> WordLevelAdv
+    WordLevel.RARE -> WordLevelRare
+    WordLevel.UNKNOWN -> textColor.copy(alpha = 0.5f)
+}
+
+/**
+ * 按词频档位把一个文本片段写入 AnnotatedString：
+ *  - 词色开 → 逐词上色，纯词走 [wordLevelColor]，非词字符用低对比正文色；
+ *  - 词色关 → 整段单色。
+ * [alpha] 是该片段所在的整体透明度档位（朗读句已读/当前/未读）。
+ * 朗读句渲染与切片朗读渲染共用，避免两处词色规则漂移。
+ */
+internal fun AnnotatedString.Builder.appendWordLevelColored(
+    text: String,
+    alpha: Float,
+    textColor: Color,
+    showWordLevelColors: Boolean,
+    classifier: CollinsClassifier,
+) {
+    if (!showWordLevelColors) {
+        withStyle(SpanStyle(color = textColor.copy(alpha = alpha))) { append(text) }
+        return
+    }
+    WordSplitRegex.findAll(text).forEach { match ->
+        val word = match.value
+        if (PureWordRegex.matches(word)) {
+            withStyle(
+                SpanStyle(color = wordLevelColor(classifier.classify(word), textColor).copy(alpha = alpha)),
+            ) { append(word) }
+        } else {
+            withStyle(SpanStyle(color = textColor.copy(alpha = alpha * 0.6f))) { append(word) }
+        }
+    }
+}
+
+/**
  * 段落/切片通用的词色 AnnotatedString 构建器：
  *  - 词频着色开 → Collins 词色（已认识词优先绿色）+ 用户高亮底色叠加；
  *  - 仅生词高亮 → 已认识/已学词着色 + 高亮叠加；
@@ -44,16 +88,10 @@ internal fun buildReaderAnnotated(
                 val level = classifier.classify(word)
                 val lower = word.lowercase()
                 // 生词本优先：已认识的词用绿色
-                val color = when {
-                    showKnownWordsHighlight && lower in knownWords -> Success
-                    else -> when (level) {
-                        WordLevel.CORE -> WordLevelCore
-                        WordLevel.INTERMEDIATE -> WordLevelIntmd
-                        WordLevel.UPPER_INTERMEDIATE -> WordLevelUpper
-                        WordLevel.ADVANCED -> WordLevelAdv
-                        WordLevel.RARE -> WordLevelRare
-                        WordLevel.UNKNOWN -> textColor.copy(alpha = 0.5f)
-                    }
+                val color = if (showKnownWordsHighlight && lower in knownWords) {
+                    Success
+                } else {
+                    wordLevelColor(level, textColor)
                 }
                 withStyle(SpanStyle(color = color)) { append(word) }
             } else {

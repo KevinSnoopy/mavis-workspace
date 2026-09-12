@@ -5,7 +5,6 @@ package com.eareyereading.ui.screens.reader
 import androidx.lifecycle.viewModelScope
 import com.eareyereading.domain.model.*
 import com.eareyereading.util.*
-import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 
@@ -120,23 +119,9 @@ fun ReaderViewModel.toggleRsvp() {
         // 初始化放进被追踪的 rsvpJob：初始化窗口内的连点会取消第一次尝试，
         // 不再出现两条并发播放循环交替调 speak() 的乱序音频
         rsvpJob = viewModelScope.launch {
-            if (!_uiState.value.ttsInitialized) {
-                val ok = try {
-                    ttsHelper.initialize(_uiState.value.book?.language ?: "en")
-                } catch (e: TimeoutCancellationException) {
-                    android.util.Log.w("ReaderViewModel", "TTS init timed out", e)
-                    false
-                } catch (e: kotlinx.coroutines.CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    android.util.Log.e("ReaderViewModel", "TTS init failed", e)
-                    false
-                }
-                _uiState.update { it.copy(ttsInitialized = ok) }
-                if (!ok) {
-                    handleTtsInitFailure("RSVP 不可用")
-                    return@launch
-                }
+            if (!_uiState.value.ttsInitialized && !initTtsEngine()) {
+                handleTtsInitFailure("RSVP 不可用")
+                return@launch
             }
             // 内置模型与本书语言不匹配时先切换，已匹配时为 no-op
             ttsHelper.switchEmbeddedModelIfNeeded(_uiState.value.book?.language)
@@ -158,23 +143,9 @@ fun ReaderViewModel.toggleSpeed() {
         if (ttsHelper.getEngineType() != "tencent") ttsHelper.getEmbeddedEngine().beginFirstAudioTrace()
         // 同 toggleRsvp：初始化纳入被追踪的 job，杜绝双循环竞态
         speedJob = viewModelScope.launch {
-            if (!_uiState.value.ttsInitialized) {
-                val ok = try {
-                    ttsHelper.initialize(_uiState.value.book?.language ?: "en")
-                } catch (e: TimeoutCancellationException) {
-                    android.util.Log.w("ReaderViewModel", "TTS init timed out", e)
-                    false
-                } catch (e: kotlinx.coroutines.CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    android.util.Log.e("ReaderViewModel", "TTS init failed", e)
-                    false
-                }
-                _uiState.update { it.copy(ttsInitialized = ok) }
-                if (!ok) {
-                    handleTtsInitFailure("速读不可用")
-                    return@launch
-                }
+            if (!_uiState.value.ttsInitialized && !initTtsEngine()) {
+                handleTtsInitFailure("速读不可用")
+                return@launch
             }
             // 内置模型与本书语言不匹配时先切换，已匹配时为 no-op
             ttsHelper.switchEmbeddedModelIfNeeded(_uiState.value.book?.language)
@@ -221,18 +192,7 @@ fun ReaderViewModel.toggleTts() {
         if (!_uiState.value.ttsInitialized) {
             ttsInitJob?.cancel()
             ttsInitJob = viewModelScope.launch {
-                val ok = try {
-                    ttsHelper.initialize(_uiState.value.book?.language ?: "en")
-                } catch (e: TimeoutCancellationException) {
-                    android.util.Log.w("ReaderViewModel", "TTS init timed out", e)
-                    false
-                } catch (e: kotlinx.coroutines.CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    android.util.Log.e("ReaderViewModel", "TTS init failed", e)
-                    false
-                }
-                _uiState.update { it.copy(ttsInitialized = ok) }
+                val ok = initTtsEngine()
                 if (ok) {
                     hintEmbeddedVoiceMismatchIfNeeded()
                     // 初始化窗口内用户可能已启动别的播放形态（或被停止）：

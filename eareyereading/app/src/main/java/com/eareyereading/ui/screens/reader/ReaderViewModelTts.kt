@@ -19,7 +19,7 @@ import kotlinx.coroutines.launch
 /**
  * 显示 TTS 引导弹窗——已下线系统 TTS 探测，只剩"提醒下载内置引擎"一种场景。
  */
-private suspend fun ReaderViewModel.showTtsInstallPrompt(@Suppress("UNUSED_PARAMETER") reason: TtsHelper.InitFailureReason, force: Boolean = false) {
+private suspend fun ReaderViewModel.showTtsInstallPrompt(force: Boolean = false) {
     val embeddedEngine = ttsHelper.getEmbeddedEngine()
     val embeddedNotDownloaded = AVAILABLE_MODELS.none {
         embeddedEngine.isModelDownloaded(it)
@@ -58,21 +58,33 @@ private fun ReaderViewModel.formatBytes(bytes: Long): String {
 }
 
 /**
- * 用户对 TTS 引导弹窗的操作：只剩"下载内置模型"和"关闭"。
- * 旧的系统 TTS 相关 action 全部 no-op（保留枚举以兼容 UI 调用方）。
+ * 用户对 TTS 引导弹窗的操作：下载内置模型 / 启用已下载的模型 / 关闭。
+ *
+ * ── 修复的功能断链 ──
+ * 原实现的 when 里有 5 个 no-op 分支承接系统 TTS 时代的 action，其中
+ * `RetryWithEngine` 恰恰是弹窗"✅ 启用内置 TTS"按钮唯一发出的动作——
+ * 于是模型已下载的用户点该按钮时，回调什么也不做、弹窗随即关闭，
+ * 引擎仍未初始化。现该动作有真实实现（见 [enableEmbeddedTts]）。
  */
 fun ReaderViewModel.onTtsInstallAction(action: TtsInstallAction) {
     when (action) {
-        is TtsInstallAction.DownloadEmbeddedTts -> {
-            downloadEmbeddedTtsModel()
-        }
+        is TtsInstallAction.DownloadEmbeddedTts -> downloadEmbeddedTtsModel()
+        is TtsInstallAction.EnableEmbeddedTts -> enableEmbeddedTts()
         is TtsInstallAction.Dismiss -> { /* no-op */ }
-        // 占位旧 action — 系统 TTS 已下线，全部 no-op（保留让 UI 编译过）
-        is TtsInstallAction.OpenEngineSettings -> {}
-        is TtsInstallAction.InstallGoogleTts -> {}
-        is TtsInstallAction.OpenUnknownSourcesSettings -> {}
-        is TtsInstallAction.RetryWithEngine -> {}
-        is TtsInstallAction.InstallThirdPartyTtsApp -> {}
+    }
+}
+
+/**
+ * 「✅ 启用内置 TTS」：模型已在本地，走统一初始化入口把引擎拉起来。
+ * 失败时给出可感知的反馈——静默失败会让用户以为按钮坏了。
+ */
+private fun ReaderViewModel.enableEmbeddedTts() {
+    viewModelScope.launch {
+        if (initTtsEngine()) {
+            showToast("内置语音引擎已启用")
+        } else {
+            handleTtsInitFailure("启用内置语音失败")
+        }
     }
 }
 
@@ -214,7 +226,7 @@ internal suspend fun ReaderViewModel.handleTtsInitFailure(prefix: String) {
     }
     showToast(message)
     // 总是弹引导（让用户能进设置页下载/重试）
-    showTtsInstallPrompt(TtsHelper.InitFailureReason.NO_ENGINE)
+    showTtsInstallPrompt()
 }
 
 /**
@@ -228,8 +240,9 @@ internal suspend fun ReaderViewModel.handleTtsInitFailure(prefix: String) {
  */
 internal fun ReaderViewModel.hintEmbeddedVoiceMismatchIfNeeded() {
     if (embeddedVoiceMismatchHintShown) return
-    if (ttsHelper.ttsMode != TtsHelper.TtsMode.EMBEDDED) return
-    // 腾讯云 TTS 在线引擎按语言选音色，不会不匹配
+    // 腾讯云 TTS 在线引擎按语言选音色，不会不匹配；其余情况必然是内置引擎，
+    // 原先这里还先比一次 `ttsMode != EMBEDDED` 提前返回，但该属性自系统 TTS
+    // 下线后恒为 EMBEDDED，是一个永不成立的分支。
     if (ttsHelper.getEngineType() == "tencent") return
     val model = ttsHelper.getEmbeddedEngine().getCurrentModelInfo()
     embeddedVoiceMismatchHintShown = true
@@ -242,27 +255,32 @@ internal fun ReaderViewModel.hintEmbeddedVoiceMismatchIfNeeded() {
 
 /**
  * 单词/句子弹窗里的"播放发音"按钮：对给定文本执行一次朗读。
- * TTS 未初始化则先初始化（用当前书语言），失败静默告警不打断弹窗。
+ * TTS 未初始化则先初始化（用当前书语言），失败静默返回、不打断弹窗。
+ *
+ * ── 为什么要走 [initTtsEngine] 统一入口 ──
+ * 此前这里自写了一份初始化兜底，与其余 5 处播放路径相比缺了两件事：
+ * 1. 没有捕获 [kotlinx.coroutines.TimeoutCancellationException]——它是
+ *    CancellationException 的子类，会被下面的 catch 当成"调用方取消"原样上抛，
+ *    初始化超时直接掐断整个协程，后面的 speak 永不执行（表现为点"播放发音"
+ *    完全没声音且无任何日志），状态位也永远停在 false；
+ * 2. 不回写 [ReaderUiState.ttsInitialized]——于是每次点发音都要重新跑一遍
+ *    完整的引擎初始化，首声延迟被反复叠加。
+ * 统一入口逐条修掉这两点，同时保留本路径"失败不弹 TTS 引导"的语义：
+ * 弹窗里再叠一层引导弹窗会打断用户当前操作。
  */
 fun ReaderViewModel.speakOnDemand(text: String) {
     if (text.isBlank()) return
     viewModelScope.launch {
         try {
-            if (!_uiState.value.ttsInitialized) {
-                try {
-                    ttsHelper.initialize(_uiState.value.book?.language ?: "en")
-                } catch (e: kotlinx.coroutines.CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    android.util.Log.w("ReaderViewModel", "TTS init for on-demand speak failed", e)
-                }
+            if (!_uiState.value.ttsInitialized && !initTtsEngine()) {
+                return@launch
             }
             hintTtsWarmUpIfNeeded()
             ttsHelper.speak(text)
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {
-            android.util.Log.e("ReaderViewModel", "on-demand speak failed", e)
+            android.util.Log.e(TAG_READER_VM, "on-demand speak failed", e)
         }
     }
 }

@@ -1,6 +1,5 @@
 package com.eareyereading.ui.screens.library
 
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -19,14 +18,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import com.eareyereading.data.repository.CategoryPrefs
 import com.eareyereading.domain.model.Book
 import com.eareyereading.ui.components.EmptyState
 import com.eareyereading.ui.components.StatCard
 import com.eareyereading.ui.theme.Primary
 import com.eareyereading.ui.theme.SectionTitle
 import com.eareyereading.ui.theme.Warning
-import kotlinx.coroutines.launch
 
 /**
  * 书籍 Tab 内容：统计面板、分类筛选 chips、书籍列表（骨架屏/空状态/单分类/全部分组）、

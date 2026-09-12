@@ -10,9 +10,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -31,14 +28,14 @@ import javax.inject.Singleton
  *   3) 内置模型（Piper 英文 / Kokoro 中英多音色，2026-09 起双模型可选）
  *      带完整词典，朗读稳定性高于系统 TTS
  *
- * 公共 API（保留原签名以兼容 ReaderViewModel / ReaderScreen 调用方）：
+ * 公共 API（ReaderViewModel / ReaderScreen / 设置页消费）：
  *   - initialize / initializeEmbeddedForced
  *   - speak / speakSentences
  *   - stop / pause / isSpeaking
  *   - shutdown / isInSentenceChain
- *   - getEmbeddedEngine
+ *   - getEmbeddedEngine / getTencentEngine / getEngineType
  *   - onEmbeddedReleased
- *   - setSpeed / getSpeed / ttsModeState
+ *   - setSpeed / getSpeed
  */
 @Singleton
 class TtsHelper @Inject constructor(
@@ -69,9 +66,9 @@ class TtsHelper @Inject constructor(
     var currentSpeed: Float = 1.0f
         private set
 
-    /** 模式流——只剩 EMBEDDED，但保留字段让外部观察代码不被破坏 */
-    private val _ttsModeState = MutableStateFlow(TtsMode.EMBEDDED)
-    val ttsModeState: StateFlow<TtsMode> = _ttsModeState.asStateFlow()
+    // 此处原有 `ttsModeState: StateFlow<TtsMode>`，用于让 UI 观察"系统 TTS / 内置 TTS"
+    // 模式切换。系统 TTS 下线后该流恒为 EMBEDDED，已无任何外部订阅者，
+    // 随之移除（连同 TtsMode 枚举）。
 
     /** 当前内置引擎单句朗读协程，用于 stop() 取消过期朗读 */
     @Volatile
@@ -99,17 +96,14 @@ class TtsHelper @Inject constructor(
 
     /**
      * 初始化 TTS 引擎（按当前引擎类型路由）。
+     * - tencent：在线引擎，网络可达性在首次合成时检验
      * - embedded：模型未下载返回 false，引导用户去设置页下载
-     * - edge：在线引擎，始终返回 true（网络可达性在首次合成时检验）
      */
     suspend fun initialize(language: String = "en"): Boolean {
         refreshEngineType()
         if (engineType == "tencent") {
             val ok = tencentTts.initialize(language)
-            if (ok) {
-                isInitialized = true
-                _ttsModeState.value = TtsMode.EMBEDDED
-            }
+            if (ok) isInitialized = true
             return ok
         }
         return initializeEmbeddedForced(language)
@@ -126,10 +120,6 @@ class TtsHelper @Inject constructor(
         tencentTts.setSpeed(currentSpeed)
     }
 
-    /** 兼容旧 API，等价于 initialize */
-    suspend fun initializeWith(language: String = "en", enginePackage: String?): Boolean =
-        initializeEmbeddedForced(language)
-
     /**
      * 显式初始化内置 TTS（用户从设置页下载完模型后调用）。
      * 不尝试系统 TTS 路径——已下线。
@@ -144,9 +134,6 @@ class TtsHelper @Inject constructor(
         if (ok) {
             isInitialized = true
             currentLocale = Locale.US
-            // 不要再次 updateTtsMode 切到 EMBEDDED（已经是了）。但调用方可能初始化前 mode
-            // 为 SYSTEM（旧登录状态），所以强制同步一下状态
-            _ttsModeState.value = TtsMode.EMBEDDED
             android.util.Log.i(TAG, "initializeEmbeddedForced: ready (${modelInfo.id})")
             // 首次推理预热：后台消化 ONNX Runtime 首次 generate 的冷启动开销
             // （真机实测 Kokoro int8 首块 ~10s vs 稳态 RTF≈0.65），把这笔时间
@@ -329,36 +316,13 @@ class TtsHelper @Inject constructor(
         android.util.Log.w(TAG, "onEmbeddedReleased: embedded engine released, reset isInitialized")
     }
 
-    /**
-     * 当前使用的 TTS 模式（保留枚举——外部 UI 仍可能引用 SYSTEM 但总是隐式被忽略）。
-     */
-    @Suppress("unused")
-    val ttsMode: TtsMode = TtsMode.EMBEDDED
-
-    /** 兼容旧枚举调用方。仅 EMBEDDED 一种值。 */
-    enum class TtsMode(val displayName: String) {
-        @Suppress("unused") SYSTEM("系统 TTS"),     // 已下线：保留常量但不再可达
-        EMBEDDED("内置 TTS"),
-    }
-
-    /**
-     * 占位兼容 — 旧 API 有 `lastFailureReason` 字段，外部可能读它；返回 null
-     * 因为已无系统 TTS 失败类型。
-     */
-    var lastFailureReason: InitFailureReason? = null
-        private set
-
-    /**
-     * 失败原因枚举（占位）：保留枚举项让老调用方编译过；运行时不再 set。
-     */
-    enum class InitFailureReason(@Suppress("unused") val userMessage: String) {
-        @Suppress("unused") NO_ENGINE(""),
-        @Suppress("unused") PHANTOM_DEFAULT(""),
-        @Suppress("unused") ALL_DISABLED(""),
-        @Suppress("unused") TIMEOUT(""),
-        @Suppress("unused") ENGINE_ERROR(""),
-        @Suppress("unused") LANGUAGE_UNSUPPORTED(""),
-    }
+    // ── 重构说明（YAGNI）──
+    // 此处原有 `ttsMode` 属性、`TtsMode` 枚举（含已不可达的 SYSTEM 常量）、
+    // 恒为 null 的 `lastFailureReason` 字段，以及 6 个不再被赋值的
+    // `InitFailureReason` 枚举项。它们都是 2026-08-30 系统 TTS 下线时留下的
+    // 兼容层：既没有生产者也没有读取者，全部挂着 @Suppress("unused")。
+    // 保留"兼容"代码而外部并无消费者，只会让后续维护者误以为还存在
+    // 系统引擎分支需要处理，故一并移除。
 
     companion object {
         private const val TAG = "TtsHelper"

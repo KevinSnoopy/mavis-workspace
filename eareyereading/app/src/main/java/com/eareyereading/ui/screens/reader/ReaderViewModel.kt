@@ -10,10 +10,8 @@ import com.eareyereading.data.local.dao.HighlightDao
 import com.eareyereading.data.local.dao.ReadingStatsDao
 import com.eareyereading.domain.model.*
 import com.eareyereading.domain.repository.*
-import com.eareyereading.tts.EmbeddedTtsEngine
 import com.eareyereading.ui.theme.*
 import com.eareyereading.util.*
-import com.eareyereading.util.CollinsClassifier.WordLevel
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
@@ -71,6 +69,17 @@ class ReaderViewModel @Inject constructor(
     internal var autoReadJob: Job? = null
     internal var currentBookId: Long? = null
     internal var readingStartTime: Long = 0L
+
+    /**
+     * 视口可见段落区间（滚动视图 = 当前可见项区间；翻页视图 = 当前页段落区间）。
+     *
+     * 翻译上屏策略据此判断"哪些段落要先攒着"：视口内的段落不能逐段上屏，
+     * 否则每冒出一段译文就把同屏下方内容往下顶一次。
+     *
+     * 故意放在普通字段而非 uiState：滚动时高频变化，进状态流会驱动整屏
+     * 重组；它只被翻译协程读取，没有 UI 消费方。
+     */
+    internal var visibleParaRange: IntRange = IntRange.EMPTY
 
     // 本次阅读会话的统计（用于 saveProgress/cleanup 时写入 DB）
     internal var sessionCharsRead: Long = 0L
@@ -260,6 +269,15 @@ class ReaderViewModel @Inject constructor(
     fun goToParagraph(index: Int) = navigation.goToParagraph(index)
 
     fun onVisibleParagraphChanged(index: Int) = navigation.onVisibleParagraphChanged(index)
+
+    /**
+     * 视口可见段落区间上报（滚动视图上报可见项区间，翻页视图上报当前页
+     * 覆盖的段落区间）。翻译上屏据此把"正在看的这一屏"整体延后上屏，
+     * 详见 [commitReaderTranslations]。
+     */
+    fun onVisibleRangeChanged(first: Int, last: Int) {
+        visibleParaRange = if (first <= last) first..last else IntRange.EMPTY
+    }
 
     fun setFontSize(size: Int) = settings.setFontSize(size)
 
