@@ -6,8 +6,6 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Archive
-import androidx.compose.material.icons.filled.Category
-import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -200,59 +198,36 @@ fun BookCard(
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                DropdownMenu(
+                BookCardMenu(
                     expanded = showMenu,
-                    onDismissRequest = { showMenu = false },
-                ) {
-                    DropdownMenuItem(
-                        text = { Text("移至分类（当前：${book.category.ifBlank { "未分类" }}）") },
-                        onClick = { showMenu = false; showCategoryDialog = true },
-                        leadingIcon = { Icon(Icons.Default.Category, null) },
-                    )
-                    DropdownMenuItem(
-                        text = { Text("移至归档") },
-                        onClick = { onArchive(); showMenu = false },
-                        leadingIcon = { Icon(Icons.Default.Archive, null) },
-                    )
-                    DropdownMenuItem(
-                        text = { Text("删除") },
-                        onClick = { showMenu = false; showDeleteConfirm = true },
-                        leadingIcon = { Icon(Icons.Default.Delete, null, tint = MaterialTheme.colorScheme.error) },
-                    )
-                }
+                    book = book,
+                    onDismiss = { showMenu = false },
+                    onCategorizeClick = { showMenu = false; showCategoryDialog = true },
+                    onArchiveClick = { onArchive(); showMenu = false },
+                    onDeleteClick = { showMenu = false; showDeleteConfirm = true },
+                )
             }
         }
         }
     }
     ) // 关闭 SwipeToDismiss
 
-    if (showCategoryDialog) {
-        CategoryEditDialog(
-            current = book.category.ifBlank { "未分类" },
-            categories = categories,
-            bookCountByName = bookCounts,
-            categoryMetaByName = categoryMeta,
-            onDismiss = { showCategoryDialog = false },
-            onConfirm = { cat ->
-                showCategoryDialog = false
-                onCategorize(cat)
-            },
-        )
-    }
-
-    if (showDeleteConfirm) {
-        AlertDialog(
-            onDismissRequest = { showDeleteConfirm = false },
-            title = { Text("删除《${book.title}》？") },
-            text = { Text("将同时删除该书的书签、高亮、阅读进度和统计，且无法恢复。") },
-            confirmButton = {
-                TextButton(onClick = { showDeleteConfirm = false; onDelete() }) {
-                    Text("删除", color = MaterialTheme.colorScheme.error)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showDeleteConfirm = false }) { Text("取消") }
-            },
-        )
-    }
+    BookActionDialogs(
+        book = book,
+        showCategory = showCategoryDialog,
+        showDelete = showDeleteConfirm,
+        categories = categories,
+        bookCounts = bookCounts,
+        categoryMetaByName = categoryMeta,
+        onDismissCategory = { showCategoryDialog = false },
+        onConfirmCategory = { cat ->
+            showCategoryDialog = false
+            onCategorize(cat)
+        },
+        onDismissDelete = { showDeleteConfirm = false },
+        onConfirmDelete = {
+            showDeleteConfirm = false
+            onDelete()
+        },
+    )
 }

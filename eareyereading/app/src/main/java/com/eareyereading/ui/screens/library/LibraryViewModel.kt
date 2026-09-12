@@ -9,6 +9,8 @@ import androidx.lifecycle.viewModelScope
 import com.eareyereading.data.local.dao.ReviewRecordDao
 import com.eareyereading.data.local.dao.ReadingStatsDao
 import com.eareyereading.data.repository.CategoryPrefs
+import com.eareyereading.data.repository.LibraryViewMode
+import com.eareyereading.data.repository.LibraryViewPrefs
 import com.eareyereading.domain.model.ArticleSource
 import com.eareyereading.domain.model.ArticleSources
 import com.eareyereading.domain.model.Book
@@ -21,6 +23,7 @@ import com.eareyereading.util.RssParser
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 data class ReadingStatsSummary(
@@ -48,6 +51,8 @@ data class LibraryUiState(
     val showArchived: Boolean = false,
     // ── 书架分类：null = 全部（分组展示），非空 = 只看该分类 ──
     val selectedCategory: String? = null,
+    // 书库排布：列表（行式卡片）/ 封面网格（一屏更多书），随 DataStore 恢复
+    val viewMode: LibraryViewMode = LibraryViewMode.LIST,
     val categories: List<String> = emptyList(),
     // v2 分类自定义：用户为分类定义的图标/颜色元数据（name → Meta）；
     // 无元数据的分类 UI 按 name hash 派生默认值
@@ -96,6 +101,7 @@ class LibraryViewModel @Inject constructor(
     private val reviewRecordDao: ReviewRecordDao,
     private val readingStatsDao: ReadingStatsDao,
     private val categoryPrefs: CategoryPrefs,
+    private val viewPrefs: LibraryViewPrefs,
     @ApplicationContext private val context: Context,
 ) : ViewModel() {
 
@@ -161,6 +167,12 @@ class LibraryViewModel @Inject constructor(
         refineManager.startCollection(viewModelScope)
         statsLoader.startDueCountCollection(viewModelScope)
         statsLoader.loadReadingStats(viewModelScope)
+        // 排布视图随 DataStore 恢复（跨进程启动生效）
+        viewModelScope.launch {
+            viewPrefs.viewModeFlow.collect { mode ->
+                stateController.update { it.copy(viewMode = mode) }
+            }
+        }
 
         // issue 9.10：系统"打开方式"选 .epub 进入（MainActivity 转发 content:// URI），
         // 复用既有 importBook 流程（同样的 loading/结果 snackbar 消息）
@@ -226,6 +238,13 @@ class LibraryViewModel @Inject constructor(
 
     fun dismissLoadingMessage() {
         stateController.dismissLoadingMessage()
+    }
+
+    // ── 书架排布 ─────────────────────────────────
+
+    /** 切换书库排布视图（列表/网格）：先写 DataStore，Flow 回流统一驱动 UI。 */
+    fun setViewMode(mode: LibraryViewMode) {
+        viewModelScope.launch { viewPrefs.setViewMode(mode) }
     }
 
     // ── 书架分类 ─────────────────────────────────
