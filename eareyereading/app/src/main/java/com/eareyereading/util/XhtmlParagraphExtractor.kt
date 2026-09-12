@@ -25,6 +25,21 @@ internal object XhtmlParagraphExtractor {
     private val BR_OR_BLOCK_SPLIT = Regex("<br\\s*/?>|</(?:div|section|article|p)>")
     private val ANY_TAG = Regex("<[^>]+>")
     private val WHITESPACE = Regex("\\s+")
+    private val HEADING_TAG = Regex("<h[1-6]\\b[^>]*>([\\s\\S]*?)</h[1-6]>", RegexOption.IGNORE_CASE)
+
+    /**
+     * 提取 HTML 中第一个 `<h1>`-`<h6>` 标题文本（章标题兜底来源：
+     * 目录文件缺失时用章节自身的标题标签）。
+     * @return 清洗后的标题文本；无标题或清洗后为空时返回 null
+     */
+    fun extractFirstHeading(html: String): String? {
+        val raw = HEADING_TAG.find(html)?.groupValues?.get(1) ?: return null
+        val cleaned = raw.replace(ANY_TAG, " ")
+            .let { HtmlEntities.decode(it) }
+            .replace(WHITESPACE, " ")
+            .trim()
+        return cleaned.ifEmpty { null }
+    }
 
     /**
      * 从 HTML 中提取段落文本。

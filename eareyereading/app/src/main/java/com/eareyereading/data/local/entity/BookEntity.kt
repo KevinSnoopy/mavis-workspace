@@ -42,4 +42,7 @@ data class BookEntity(
     val coverStyle: Int = -1,
     val content: String = "",   // 文章正文（URL导入）
     val addedAt: String = "",   // 添加时间
+    // 章节目录 JSON（TocCodec 格式：[{"t":"Chapter I","p":12},...]）。
+    // null = 无目录；导入时提取，阅读页目录弹窗据此显示章节列表
+    val tocJson: String? = null,
 )

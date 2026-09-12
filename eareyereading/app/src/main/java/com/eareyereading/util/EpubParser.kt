@@ -4,6 +4,7 @@ package com.eareyereading.util
 
 import android.content.ContentResolver
 import android.net.Uri
+import com.eareyereading.domain.model.TocEntry
 import java.io.File
 import java.util.zip.ZipFile
 import javax.inject.Inject
@@ -61,6 +62,8 @@ data class ParsedBook(
     val originalCharCount: Int = 0,
     /** 解析过程中见到的 `<img>` 数量（图册检测用，issue 9.8）。 */
     val images: Int = 0,
+    /** 章节目录（spine 顺序）：章标题 + 章起始段下标。目录文件与章标题标签都缺失时含 "Chapter N" 兜底条目。 */
+    val chapters: List<TocEntry> = emptyList(),
 )
 
 /**
@@ -221,7 +224,10 @@ class EpubParser @Inject constructor() {
             // spine href 是相对 OPF 所在目录的路径
             val opfDir = opfEntry.name.substringBeforeLast('/', "")
 
-            content = EpubContentExtractor.extractContent(zip, entryNames, opfContent, opfDir)
+            // 章节目录：解析 toc.ncx / EPUB3 nav.xhtml（缺失/损坏时返回空映射，
+            // 章标题回落到章内 <h1>-<h6> 与 "Chapter N"）
+            val tocTitles = EpubTocParser.parseToc(zip, entryNames, opfContent, opfDir)
+            content = EpubContentExtractor.extractContent(zip, entryNames, opfContent, opfDir, tocTitles)
         }
 
         // issue 9.8：没有可读段落但全是图片 → 图册，给明确错误而非笼统 NoContent
@@ -237,6 +243,7 @@ class EpubParser @Inject constructor() {
             wasTruncated = content.wasTruncated,
             originalCharCount = content.originalCharCount,
             images = content.images,
+            chapters = content.chapters,
         )
     }
 }

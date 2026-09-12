@@ -3,6 +3,7 @@ package com.eareyereading.data.repository
 import com.eareyereading.data.local.dao.BookListItem
 import com.eareyereading.data.local.entity.BookEntity
 import com.eareyereading.domain.model.Book
+import com.eareyereading.util.TocCodec
 
 /** 书籍实体 ↔ 领域对象的双向映射。
  *
@@ -30,6 +31,7 @@ internal object BookMapper {
         lastReadPosition = entity.lastReadPosition, lastReadTime = entity.lastReadTime,
         dateAdded = entity.dateAdded, language = entity.language, isArchived = entity.isArchived,
         category = entity.category, coverStyle = entity.coverStyle, content = entity.content, addedAt = entity.addedAt,
+        toc = TocCodec.decode(entity.tocJson),
     )
 
     /** 领域对象 → 全字段实体（入库/更新用）。 */
@@ -41,5 +43,6 @@ internal object BookMapper {
         lastReadPosition = book.lastReadPosition, lastReadTime = book.lastReadTime,
         dateAdded = book.dateAdded, language = book.language, isArchived = book.isArchived,
         category = book.category, coverStyle = book.coverStyle, content = book.content, addedAt = book.addedAt,
+        tocJson = TocCodec.encode(book.toc),
     )
 }

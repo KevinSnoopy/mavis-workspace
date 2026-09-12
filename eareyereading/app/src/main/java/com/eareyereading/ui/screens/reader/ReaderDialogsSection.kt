@@ -61,6 +61,7 @@ internal fun ReaderDialogsSection(
     // 目录导航弹窗
     if (uiState.showChapterNav) {
         ChapterNavDialog(
+            toc = uiState.toc,
             paragraphs = uiState.paragraphs,
             currentIndex = uiState.currentParagraphIndex,
             onSelect = viewModel::goToParagraph,

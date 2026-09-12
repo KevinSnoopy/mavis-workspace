@@ -241,6 +241,8 @@ internal class ReaderViewModelBookLoader(
                 // 到"关"，排版会整体重排（页数/页边界全变），按段落恢复的阅读
                 // 位置随之漂移 —— 用户看到的"再次进入进度回滚"就出在这里
                 showTranslation = state?.showTranslation ?: false,
+                // 章节目录随书加载：换书必须整体替换，否则残留上一本书的目录
+                toc = loaded.book.toc,
                 isTranslating = false,
                 selectedVocab = null,
                 showWordDialog = false,

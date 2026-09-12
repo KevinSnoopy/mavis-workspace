@@ -4,7 +4,7 @@ import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
 /**
- * Room 数据库迁移链（v1 → v15）。
+ * Room 数据库迁移链（v1 → v16）。
  *
  * 从 [DatabaseModule] 抽出的单一职责文件（SRP / CCP：迁移逻辑共同闭包）。
  * DatabaseModule 只保留 DI 装配，迁移 SQL 集中在本文件便于审查与维护。
@@ -348,6 +348,15 @@ internal object AppDatabaseMigrations {
         }
     }
 
+    private val MIGRATION_15_16 = object : Migration(15, 16) {
+        // 章节目录：books 新增 tocJson 列（TocCodec 格式的 TocEntry 数组）。
+        // 存量书导入时未提取目录，列默认 NULL → 目录弹窗回落段落导航，
+        // 二期懒回填补齐。可空 TEXT 不加 DEFAULT（与 Migration(8,9)/(10,11) 同款写法）。
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE books ADD COLUMN `tocJson` TEXT")
+        }
+    }
+
     /** 全部迁移，按版本顺序传入 Room.databaseBuilder().addMigrations()。 */
     val ALL: Array<Migration> = arrayOf(
         MIGRATION_1_2,
@@ -364,6 +373,7 @@ internal object AppDatabaseMigrations {
         MIGRATION_12_13,
         MIGRATION_13_14,
         MIGRATION_14_15,
+        MIGRATION_15_16,
     )
 
 }

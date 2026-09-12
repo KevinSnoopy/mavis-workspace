@@ -2,6 +2,7 @@
 
 package com.eareyereading.util
 
+import com.eareyereading.domain.model.TocEntry
 import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
 
@@ -36,12 +37,13 @@ internal object EpubContentExtractor {
     private val IMG_MARKER = Regex("(\\[\\[IMG:)([^\\]]*)(\\]\\])")
 
     /**
-     * 按 spine 顺序提取正文段落与图片条目名。
+     * 按 spine 顺序提取正文段落与图片条目名，并记录章节边界。
      *
      * @param zip 已打开的 ZipFile
      * @param entryNames zip 条目列表
      * @param opfContent OPF 文本
      * @param opfDir OPF 所在目录
+     * @param tocTitles 目录文件解析结果（zip 条目名 → 章标题，EpubTocParser 产物）
      * @return Triple(段落列表, 图片条目名列表, 是否截断, 截断前原文累计字符数, 图片总数)
      */
     fun extractContent(
@@ -49,9 +51,11 @@ internal object EpubContentExtractor {
         entryNames: List<ZipEntry>,
         opfContent: String,
         opfDir: String,
+        tocTitles: Map<String, String> = emptyMap(),
     ): ExtractedContent {
         val paragraphs = mutableListOf<String>()
         val imageEntryNames = mutableListOf<String>()
+        val chapters = mutableListOf<TocEntry>()
         var totalChars = 0
         var originalTotalChars = 0
         var truncated = false
@@ -80,6 +84,9 @@ internal object EpubContentExtractor {
                 ) ?: continue
 
             val html = EpubZipReader.readEntryTextCapped(zip.getInputStream(entry), EpubZipReader.MAX_DOC_CHARS)
+            // 章起始段下标：本条目首段落将插入的位置。
+            // 该条目提取不出任何段落（空章）时 chapters 不记录，避免"点了没反应"的目录项
+            val chapterStart = paragraphs.size
             // issue 9.8：extractParagraphsFromHtml 顺带统计 <img> 数量
             val (entryParagraphs, entryImages) = XhtmlParagraphExtractor.extractParagraphsFromHtml(html)
             imageCount += entryImages
@@ -108,6 +115,17 @@ internal object EpubContentExtractor {
                 // （图片标记段始终保留，即使很短）
                 if (para.isNotBlank()) paragraphs.add(para)
             }
+            // 章边界落袋：标题优先级 目录文件 > 章内 <h1>-<h6> > "Chapter N" 兜底
+            if (paragraphs.size > chapterStart) {
+                chapters.add(
+                    TocEntry(
+                        title = tocTitles[entry.name]
+                            ?: XhtmlParagraphExtractor.extractFirstHeading(html)
+                            ?: "Chapter ${chapters.size + 1}",
+                        paragraphIndex = chapterStart,
+                    ),
+                )
+            }
         }
 
         return ExtractedContent(
@@ -116,6 +134,7 @@ internal object EpubContentExtractor {
             wasTruncated = truncated,
             originalCharCount = if (truncated) originalTotalChars else 0,
             images = imageCount,
+            chapters = chapters.toList(),
         )
     }
 
@@ -162,5 +181,7 @@ internal object EpubContentExtractor {
         val wasTruncated: Boolean,
         val originalCharCount: Int,
         val images: Int,
+        /** 章节目录（按 spine 顺序；段落流下标 + 章标题）。 */
+        val chapters: List<TocEntry> = emptyList(),
     )
 }

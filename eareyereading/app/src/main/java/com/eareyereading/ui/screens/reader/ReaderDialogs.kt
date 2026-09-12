@@ -18,6 +18,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.eareyereading.domain.model.ReadingMode
+import com.eareyereading.domain.model.TocEntry
 import com.eareyereading.ui.theme.*
 import com.eareyereading.util.BookImages
 import com.eareyereading.util.CollinsClassifier.WordLevel
@@ -262,9 +263,88 @@ fun WordDetailDialog(
 }
 
 // ── 章节目录导航（底部抽屉：长列表在抽屉里更接近拇指） ────────
+/**
+ * 双模式目录：有章节目录（EPUB/txt 导入时提取）显示章列表，
+ * 否则回落到段落导航（URL/RSS 单篇文章等无目录来源）。
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ChapterNavDialog(
+    toc: List<TocEntry>,
+    paragraphs: List<String>,
+    currentIndex: Int,
+    onSelect: (Int) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    if (toc.isNotEmpty()) {
+        ChapterListPane(toc, currentIndex, onSelect, onDismiss)
+    } else {
+        ParagraphListPane(paragraphs, currentIndex, onSelect, onDismiss)
+    }
+}
+
+/** 章节目录模式：章名列表，当前章高亮，打开即定位。 */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ChapterListPane(
+    toc: List<TocEntry>,
+    currentIndex: Int,
+    onSelect: (Int) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    // 当前段所属章：段落起点 ≤ 当前段的最后一个章条目
+    val currentChapter = toc.indexOfLast { it.paragraphIndex <= currentIndex }.coerceAtLeast(0)
+    val listState = rememberLazyListState()
+    LaunchedEffect(Unit) {
+        listState.scrollToItem((currentChapter - 3).coerceAtLeast(0))
+    }
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = MaterialTheme.colorScheme.surface,
+    ) {
+        Text(
+            "目录 · 共 ${toc.size} 章",
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+        )
+        LazyColumn(
+            state = listState,
+            modifier = Modifier.heightIn(max = 480.dp),
+            contentPadding = PaddingValues(bottom = 24.dp),
+        ) {
+            itemsIndexed(toc) { idx, entry ->
+                ListItem(
+                    headlineContent = {
+                        Text(
+                            entry.title,
+                            maxLines = 2,
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                    },
+                    trailingContent = {
+                        if (idx == currentChapter) {
+                            Icon(Icons.Default.PlayArrow, "当前", tint = LocalReaderAccent.current)
+                        }
+                    },
+                    modifier = Modifier.clickable {
+                        onSelect(entry.paragraphIndex)
+                        onDismiss()
+                    },
+                    colors = ListItemDefaults.colors(
+                        containerColor = if (idx == currentChapter)
+                            LocalReaderAccent.current.copy(alpha = 0.1f) else Color.Transparent,
+                    ),
+                )
+            }
+        }
+    }
+}
+
+/** 段落导航模式（无目录来源的回落）：原 ChapterNavDialog 段落列表逻辑。 */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ParagraphListPane(
     paragraphs: List<String>,
     currentIndex: Int,
     onSelect: (Int) -> Unit,

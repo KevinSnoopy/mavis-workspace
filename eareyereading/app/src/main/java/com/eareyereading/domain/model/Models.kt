@@ -1,5 +1,17 @@
 package com.eareyereading.domain.model
 
+/**
+ * 目录条目：章节标题 + 该章在全书段落流中的起始下标。
+ *
+ * 段落下标与 books.content 的 `joinToString("\n\n")`/`split("\n\n")` 口径
+ * 同源同刻生成（导入时提取、持久化），跨会话稳定，可直接作为
+ * goToParagraph 的跳转目标。
+ */
+data class TocEntry(
+    val title: String,
+    val paragraphIndex: Int,
+)
+
 data class Book(
     val id: Long = 0,
     val title: String,
@@ -26,6 +38,9 @@ data class Book(
     val coverStyle: Int = -1,
     val content: String = "",  // 文章正文（URL导入时存储）
     val addedAt: String = "",   // 添加时间（格式：yyyy-MM-dd HH:mm）
+    // 章节目录（导入时从 EPUB spine/toc.ncx 或 txt 章标题提取）。
+    // 空列表 = 无目录（URL/RSS 单篇文章、无章节结构的 txt），目录弹窗回落段落导航
+    val toc: List<TocEntry> = emptyList(),
     // 内容（运行时加载）
     val paragraphs: List<String> = emptyList(),
 )

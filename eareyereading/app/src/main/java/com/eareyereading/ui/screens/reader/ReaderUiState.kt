@@ -111,6 +111,9 @@ data class ReaderUiState(
     val showModeSelector: Boolean = false,
     val showSettings: Boolean = false,
     val showChapterNav: Boolean = false,
+    // 章节目录（导入时提取，随书持久化）。空 = 无目录（URL/RSS 文章等），
+    // 目录弹窗回落到段落导航
+    val toc: List<TocEntry> = emptyList(),
     // 阅读统计
     val readingStartTime: Long = 0L,
     val totalReadChars: Long = 0L,

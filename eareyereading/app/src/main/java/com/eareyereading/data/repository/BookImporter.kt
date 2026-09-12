@@ -6,9 +6,12 @@ import com.eareyereading.data.local.dao.WordFrequencyDao
 import com.eareyereading.data.local.entity.BookEntity
 import com.eareyereading.data.local.entity.WordFrequencyEntity
 import com.eareyereading.domain.model.Book
+import com.eareyereading.domain.model.TocEntry
 import com.eareyereading.util.BookImages
 import com.eareyereading.util.EpubParser
 import com.eareyereading.util.ParsedBook
+import com.eareyereading.util.TocCodec
+import com.eareyereading.util.TocHeadingScanner
 import com.eareyereading.util.WordAnalyzer
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
@@ -73,8 +76,9 @@ internal class BookImporter @Inject constructor(
         val totalWords = countWords(parsed.paragraphs)
         val contentToSave = if (book.content.isNotBlank()) book.content
             else parsed.paragraphs.joinToString("\n\n")
+        val toc = extractToc(parsed)
         val bookId = bookDao.insert(
-            buildEntity(book, parsed.metadata, identifier, totalWords, contentToSave),
+            buildEntity(book, parsed.metadata, identifier, totalWords, contentToSave, toc),
         )
 
         // EPUB 内嵌封面与插图：失败静默，绝不阻断导入主流程
@@ -203,6 +207,16 @@ internal class BookImporter @Inject constructor(
     }
 
     /**
+     * 章节目录提取：EPUB 用解析器产出的章边界（spine 分组 + toc.ncx/nav 标题），
+     * 其余（.txt / URL 文章正文）用章标题段扫描——正文含 URL/RSS 文章时
+     * 连续 3 段命中 "chapter <数字>" 的概率趋近于零，误伤被阈值挡住。
+     */
+    private fun extractToc(parsed: ParsedContent): List<TocEntry> {
+        parsed.metadata?.let { return it.chapters }
+        return TocHeadingScanner.scan(parsed.paragraphs)
+    }
+
+    /**
      * 元数据填充优先级：显式传入 > OPF 解析 > 文件名/Unknown/en 兜底。
      * language 仅在 OPF 声明且非默认值时才覆盖——避免把所有导入书都改回 en。
      */
@@ -212,6 +226,7 @@ internal class BookImporter @Inject constructor(
         identifier: String,
         totalWords: Int,
         contentToSave: String,
+        toc: List<TocEntry>,
     ): BookEntity = BookMapper.toEntity(book).copy(
         title = book.title.ifBlank { metadata?.title.orEmpty() }
             .ifBlank { File(book.filePath).nameWithoutExtension },
@@ -227,6 +242,8 @@ internal class BookImporter @Inject constructor(
         totalWords = totalWords,
         content = contentToSave,
         addedAt = book.addedAt,
+        // 章节目录：TocEntry 列表序列化落库；空目录存 NULL
+        tocJson = TocCodec.encode(toc),
     )
 
     // ── 封面与插图 ─────────────────────────────────────────
