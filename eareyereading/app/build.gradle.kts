@@ -68,6 +68,30 @@ android {
 
     kotlinOptions {
         jvmTarget = "17"
+        // ── Compose 强跳过模式（strong skipping）──
+        // 背景（2026-09-13 编译器报告实测）：ReaderParagraphBlock / ReaderSliceParagraphBlock /
+        // NormalReadingView / SplitReadingView / PagedReadingView / ReaderContentDispatcher
+        // 全部是 restartable 但**不可跳过**——因为参数含 List/Set/Map 等不稳定类型，
+        // 导致自动朗读（每句 currentSentenceIndex 变化）、全文翻译（译文 map 持续增长）、
+        // 模型下载进度回调 都会让视口内所有段落一起重组。
+        //
+        // 强跳过把不稳定参数的比较从"不可跳过"改为"实例相等（===）即跳过"，
+        // 并自动 remember 组件内的 lambda。前提：状态对象不得就地修改——
+        // 本工程全部走 `_uiState.update { it.copy(...) }` + 新建集合，满足前提。
+        //
+        // 验证方式：重新生成 app/build/compose-reports 确认上述组件变为 skippable，
+        // 并在真机跑 朗读 / 全文翻译 / 模型下载 三条路径确认 UI 正常刷新。
+        freeCompilerArgs += listOf(
+            "-P",
+            "plugin:androidx.compose.compiler.plugins.kotlin:experimentalStrongSkipping=true",
+        )
+        // Compose 编译器报告：输出每个 @Composable 的可跳过性（skippable / restartable），
+        // 落到 app/build/compose-reports/。用于性能审计时定位"参数不稳定导致整棵子树重组"。
+        freeCompilerArgs += listOf(
+            "-P",
+            "plugin:androidx.compose.compiler.plugins.kotlin:reportsDestination=" +
+                project.layout.buildDirectory.dir("compose-reports").get().asFile.absolutePath,
+        )
     }
 
     buildFeatures {

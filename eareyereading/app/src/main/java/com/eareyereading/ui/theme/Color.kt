@@ -90,17 +90,6 @@ val WordLevelUnknown = Color(0xFF6B7268)
 val OnPrimary = Color(0xFFFFFFFF)  // 白色文字，在 Primary 背景上使用
 val OnBackground = OnSurface        // 背景上的文字，同 OnSurface
 
-// ── 兼容性别名（保持其他文件引用不报错）──────────────
-
-@Deprecated("Use PrimaryDark", ReplaceWith("PrimaryDark"))
-val PrimaryVariant = PrimaryDark
-
-@Deprecated("Use Error", ReplaceWith("Error"))
-val SecondaryVariant = Error
-
-@Deprecated("Use SurfaceSecondary", ReplaceWith("SurfaceSecondary"))
-val SurfaceVariant = SurfaceSecondary
-
 // ── v2 新增：分类自定义预设色（SPEC §4.9.3）──────────────
 // 10 个语义色，对齐品牌色阶，覆盖冷暖两极。
 // 白字对全部 10 色对比度均 ≥ 4.5:1（最深 #4F5442 也达 5.2:1）。

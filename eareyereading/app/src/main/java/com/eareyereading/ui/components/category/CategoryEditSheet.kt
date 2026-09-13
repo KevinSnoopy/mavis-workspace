@@ -119,7 +119,7 @@ fun CategoryEditSheet(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
                 userScrollEnabled = false,
             ) {
-                items(CategoryIcon.values().toList()) { ic ->
+                items(CategoryIconList, key = { it.name }) { ic ->
                     IconPickerItem(
                         icon = ic,
                         selected = ic == icon,
@@ -145,7 +145,7 @@ fun CategoryEditSheet(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
                 userScrollEnabled = false,
             ) {
-                items(CategoryPalette) { c ->
+                items(CategoryPalette, key = { it.value.toString() }) { c ->
                     ColorPickerItem(
                         color = c,
                         selected = c == color,
@@ -276,4 +276,8 @@ private fun ColorPickerItem(
 
 // LazyVerticalGrid 的 items 已由 androidx.compose.foundation.lazy.grid.items 提供，
 // 无需自定义 LazyGridScope 扩展。
+
+// 图标清单为常量：enum entries 提升为顶层只算一次，避免每次重组
+// 重新 values().toList() 分配数组 + ArrayList
+private val CategoryIconList: List<CategoryIcon> = CategoryIcon.entries
 

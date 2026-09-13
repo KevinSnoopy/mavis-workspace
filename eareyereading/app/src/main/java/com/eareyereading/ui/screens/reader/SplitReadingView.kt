@@ -99,34 +99,39 @@ fun SplitReadingView(
             if (imageRef != null) {
                 ReaderImageBlock(ref = imageRef, bookId = bookId)
             } else {
+                val accent = LocalReaderAccent.current
+                val annotatedPara = remember(para) { AnnotatedString(para) }
+                // readerParagraphStyle 是 @Composable（读主题），只能在组合中取一次，
+                // 后续用 copy() 派生，避免左右两列各调用一次
+                val baseStyle = readerParagraphStyle(fontSize)
+                val paraStyle = baseStyle.copy(color = textColor.copy(alpha = alpha))
+                val translationStyle = baseStyle.copy(
+                    color = if (translation != null) {
+                        accent.copy(alpha = alpha * translationAlpha)
+                    } else {
+                        textColor.copy(alpha = alpha * 0.4f)
+                    },
+                )
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     TappableParagraphText(
-                        text = AnnotatedString(para),
+                        text = annotatedPara,
                         paragraph = para,
                         onWordClick = onWordClick,
                         onSentenceDoubleTap = {},
                         modifier = Modifier
                             .weight(1f)
                             .padding(vertical = 4.dp),
-                        style = readerParagraphStyle(fontSize).copy(
-                            color = textColor.copy(alpha = alpha),
-                        ),
+                        style = paraStyle,
                     )
                     Text(
                         text = translation ?: "（无译文）",
                         modifier = Modifier
                             .weight(1f)
                             .padding(vertical = 4.dp),
-                        style = readerParagraphStyle(fontSize).copy(
-                            color = if (translation != null) {
-                                LocalReaderAccent.current.copy(alpha = alpha * translationAlpha)
-                            } else {
-                                textColor.copy(alpha = alpha * 0.4f)
-                            },
-                        ),
+                        style = translationStyle,
                     )
                 }
             }
