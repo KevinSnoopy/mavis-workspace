@@ -31,7 +31,6 @@ fun RsvpReadingView(
     currentWordIndex: Int,
     fontSize: Int,
     textColor: Color,
-    isPlaying: Boolean,
     rsvpStrength: Int = 3,
 ) {
     val wordAnalyzer = remember { WordAnalyzer() }
@@ -139,11 +138,20 @@ fun SpeedReadingView(
                 }
             }
         } else {
+            // 未播放态：此前只截断正文显示，没有任何操作提示，而隔壁的
+            // RSVP 有「点击播放按钮开始」——同类模式两种行为，用户不知道
+            // 这个模式到底要按哪里。改为正文预览（压淡）+ 明确的第一步指引
             Text(
-                text = paragraph.take(80),
-                color = textColor,
+                text = paragraph.take(120),
+                color = textColor.copy(alpha = 0.55f),
                 fontSize = fontSize.sp,
                 textAlign = TextAlign.Center,
+            )
+            Spacer(modifier = Modifier.height(20.dp))
+            Text(
+                text = "点击上方 ▶ 开始逐句闪现",
+                color = LocalReaderAccent.current,
+                style = MaterialTheme.typography.labelMedium,
             )
         }
     }

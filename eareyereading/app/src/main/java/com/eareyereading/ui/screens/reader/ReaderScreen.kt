@@ -20,6 +20,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.eareyereading.domain.model.ReadingTheme
 import com.eareyereading.ui.theme.*
+import com.eareyereading.ui.theme.LocalApplyAppStatusBar
 import com.eareyereading.util.notificationPermissionGranted
 import com.eareyereading.util.rememberNotificationPermissionRequester
 
@@ -66,10 +67,14 @@ fun ReaderScreen(
     // 此时跳过 cleanup，朗读不再被旋转打断；真退出（返回/VM 销毁）
     // 仍由 onCleared -> cleanup() 兜底落库停播
     val activity = context as? android.app.Activity
+    // 阅读器临时接管了状态栏（跟随书内主题）；App 级主题的 SideEffect
+    // 不因导航返回而重跑，退出时必须显式还原，否则状态栏停在阅读器配色
+    val resetAppStatusBar = LocalApplyAppStatusBar.current
     DisposableEffect(Unit) {
         onDispose {
             if (activity?.isChangingConfigurations != true) {
                 viewModel.cleanup()
+                resetAppStatusBar()
             }
         }
     }
@@ -114,7 +119,8 @@ fun ReaderScreen(
     // 弹窗/选词/朗读等需要操作时强制常亮。
     // forceChrome：需要常亮 chrome 的强状态（弹窗/选词/朗读/自动朗读/速读/章节目录）
     val forceChrome = uiState.showWordDialog || uiState.showModeSelector || uiState.showSettings ||
-        uiState.showChapterNav || uiState.isTtsPlaying || uiState.isAutoReading || uiState.isPlaying
+        uiState.showChapterNav || uiState.showModeHelp || uiState.isTtsPlaying ||
+        uiState.isAutoReading || uiState.isPlaying
     val chromeController = rememberReaderChromeController(forceChrome)
     LaunchedEffect(forceChrome) {
         chromeController.applyForceChrome()
@@ -239,6 +245,7 @@ fun ReaderScreen(
                     onTogglePlay = { viewModel.togglePlay() },
                     onToggleBookmark = { viewModel.toggleBookmark(uiState.currentParagraphIndex) },
                     onShowModeSelector = viewModel::showModeSelector,
+                    onShowModeHelp = viewModel::toggleModeHelp,
                     onToggleAutoRead = viewModel::toggleAutoRead,
                     onToggleChapterNav = viewModel::toggleChapterNav,
                     onToggleWordLevelColors = viewModel::toggleWordLevelColors,
@@ -260,33 +267,35 @@ fun ReaderScreen(
                     onPrev = viewModel::prevParagraph,
                     onNext = viewModel::nextParagraph,
                     onSeek = viewModel::goToParagraph,
-                    textColor = textColor,
                     onFontDelta = viewModel::adjustFontSize,
                     onCycleTheme = viewModel::cycleReadingTheme,
                     onToggleSerif = viewModel::toggleSerifFont,
                 )
             }
         }
+
+        // 弹窗/抽屉必须在阅读主题 MaterialTheme 作用域**内**渲染：
+        // 它们同样要用纸面配色，放在外面会变回 App 级配色 ——
+        // 护眼纸面上弹出冷白抽屉、暗色纸面上弹出纯白对话框
+        ReaderDialogsSection(
+            uiState = uiState,
+            viewModel = viewModel,
+            ttsPrompt = ttsPrompt,
+            onTtsPromptAction = { action ->
+                viewModel.onTtsInstallAction(action)
+                // 下载内置模型时保持弹窗打开，页内直接显示下载进度
+                // （原实现点下载立即关弹窗，进度只在设置页可见）；
+                // 下载结束后进度归空，弹窗回到常规按钮态由用户关闭
+                if (action !is TtsInstallAction.DownloadEmbeddedTts) {
+                    ttsPrompt = null
+                }
+            },
+            onTtsPromptDismiss = {
+                viewModel.onTtsInstallAction(TtsInstallAction.Dismiss)
+                ttsPrompt = null
+            },
+        )
     } // 关闭 Scaffold
     } // 关闭 MaterialTheme(阅读主题配色)
     } // 关闭 CompositionLocalProvider(衬线字体/强调色)
-
-    ReaderDialogsSection(
-        uiState = uiState,
-        viewModel = viewModel,
-        ttsPrompt = ttsPrompt,
-        onTtsPromptAction = { action ->
-            viewModel.onTtsInstallAction(action)
-            // 下载内置模型时保持弹窗打开，页内直接显示下载进度
-            // （原实现点下载立即关弹窗，进度只在设置页可见）；
-            // 下载结束后进度归空，弹窗回到常规按钮态由用户关闭
-            if (action !is TtsInstallAction.DownloadEmbeddedTts) {
-                ttsPrompt = null
-            }
-        },
-        onTtsPromptDismiss = {
-            viewModel.onTtsInstallAction(TtsInstallAction.Dismiss)
-            ttsPrompt = null
-        },
-    )
 }

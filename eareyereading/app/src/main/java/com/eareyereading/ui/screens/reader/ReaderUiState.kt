@@ -111,6 +111,9 @@ data class ReaderUiState(
     val showModeSelector: Boolean = false,
     val showSettings: Boolean = false,
     val showChapterNav: Boolean = false,
+    // 当前模式说明（顶栏溢出菜单入口）：模式选择器里那行副标题说不清
+    // 「进这个模式之后该按哪」，这里给完整的四段说明
+    val showModeHelp: Boolean = false,
     // 章节目录（导入时提取，随书持久化）。空 = 无目录（URL/RSS 文章等），
     // 目录弹窗回落到段落导航
     val toc: List<TocEntry> = emptyList(),
@@ -121,6 +124,8 @@ data class ReaderUiState(
     val bookmarkedParagraphs: Set<Int> = emptySet(),
     // 高亮
     val highlights: Map<Int, List<HighlightData>> = emptyMap(),
+    // 长按选词后的高亮抽屉草稿；null = 抽屉关闭
+    val highlightDraft: HighlightDraft? = null,
     // 内置 TTS 模型下载进度（0..1）；null = 无下载任务。
     // 阅读页引导弹窗内直接展示，不再只能去设置页看进度
     val embeddedDownloadProgress: Float? = null,
@@ -138,6 +143,19 @@ data class HighlightData(
     val endOffset: Int,
     val text: String,
     val color: Color,
+)
+
+/**
+ * 待高亮的词（长按后进入抽屉前的草稿）。
+ *
+ * @param existingId 非空表示该词已被高亮过，抽屉显示「移除」而不是再选一次颜色
+ */
+data class HighlightDraft(
+    val paragraphIndex: Int,
+    val startOffset: Int,
+    val endOffset: Int,
+    val text: String,
+    val existingId: Long? = null,
 )
 
 internal data class ReadingSettings(

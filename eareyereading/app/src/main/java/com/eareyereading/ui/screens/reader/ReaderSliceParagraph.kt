@@ -23,6 +23,7 @@ import com.eareyereading.util.CollinsClassifier
 @Composable
 internal fun ReaderSliceParagraphBlock(
     para: String,
+    paraIndex: Int,
     charStart: Int,
     charEnd: Int,
     isCurrent: Boolean,
@@ -44,6 +45,8 @@ internal fun ReaderSliceParagraphBlock(
     classifier: CollinsClassifier,
     sliceHighlights: List<HighlightData>,
     showBookmarkMark: Boolean,
+    // 长按高亮：回调收到的是切片内偏移，这里加回 charStart 换算成段落坐标
+    onLongPressWord: (paragraphIndex: Int, startOffset: Int, endOffset: Int) -> Unit = { _, _, _ -> },
 ) {
     val start = charStart.coerceIn(0, para.length)
     val end = charEnd.coerceIn(start, para.length)
@@ -100,6 +103,12 @@ internal fun ReaderSliceParagraphBlock(
                 onSentenceDoubleTap = onSentenceDoubleTap,
                 // 句子可能跨页：双击时用全局 offset 在完整段落里找整句
                 sentenceLookup = { local -> findSentenceAtGlobalOffset(para, start + local) },
+                // 长按高亮：切片内偏移 + charStart = 段落坐标
+                onLongPress = { local ->
+                    wordRangeAt(sliceText, local)?.let { r ->
+                        onLongPressWord(paraIndex, start + r.first, start + r.last + 1)
+                    }
+                },
                 modifier = padModifier.alpha(alpha),
                 style = readerParagraphStyle(fontSize),
             )
@@ -125,6 +134,11 @@ internal fun ReaderSliceParagraphBlock(
                 onWordClick = onWordClick,
                 onSentenceDoubleTap = onSentenceDoubleTap,
                 sentenceLookup = { local -> findSentenceAtGlobalOffset(para, start + local) },
+                onLongPress = { local ->
+                    wordRangeAt(sliceText, local)?.let { r ->
+                        onLongPressWord(paraIndex, start + r.first, start + r.last + 1)
+                    }
+                },
                 modifier = padModifier.alpha(alpha),
                 style = readerParagraphStyle(fontSize),
             )

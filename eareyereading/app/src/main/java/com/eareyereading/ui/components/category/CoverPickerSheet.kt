@@ -1,5 +1,6 @@
 package com.eareyereading.ui.components.category
 
+import com.eareyereading.ui.components.EareyeBottomSheet
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -42,7 +43,7 @@ fun CoverPickerSheet(
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var selectedId by remember { mutableIntStateOf(initialCoverId) }
 
-    ModalBottomSheet(
+    EareyeBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         shape = EareyeShapes.bottomSheet,

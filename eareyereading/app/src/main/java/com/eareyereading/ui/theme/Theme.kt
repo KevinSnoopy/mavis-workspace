@@ -5,7 +5,9 @@ import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
@@ -138,19 +140,36 @@ fun EareyeReadingTheme(
     val isDark = if (useDynamic) darkTheme else darkTheme || readingTheme == ReadingTheme.DARK
 
     val view = LocalView.current
-    if (!view.isInEditMode) {
-        SideEffect {
-            val window = (view.context as Activity).window
+    // App 级状态栏（颜色 + 图标明暗）的还原回调。
+    // 阅读器会临时接管状态栏跟随书内主题，但本作用域的 SideEffect
+    // 只在自己的输入变化时才重跑 —— 导航返回不触发它，状态栏于是
+    // 停在阅读器配色上（「从阅读页返回后状态栏颜色不变化」的根因）。
+    // 阅读器退出时调用这个回调精确还原。
+    val applyAppStatusBar: () -> Unit = {
+        val activity = view.context as? Activity
+        if (activity != null) {
+            val window = activity.window
             window.statusBarColor = colorScheme.background.toArgb()
             // 深色主题强制深色状态栏；浅色 / SEPIA 强制浅色状态栏
             WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = !isDark
         }
     }
+    if (!view.isInEditMode) {
+        SideEffect { applyAppStatusBar() }
+    }
 
-    MaterialTheme(
-        colorScheme = colorScheme,
-        typography = Typography,
-        shapes = Shapes,
-        content = content
-    )
+    CompositionLocalProvider(LocalApplyAppStatusBar provides applyAppStatusBar) {
+        MaterialTheme(
+            colorScheme = colorScheme,
+            typography = Typography,
+            shapes = Shapes,
+            content = content
+        )
+    }
 }
+
+/**
+ * 还原 App 级状态栏的回调（颜色 + 图标明暗），见 [EareyeReadingTheme] 内说明。
+ * 仅阅读器等会临时接管状态栏的页面需要在退出时调用。
+ */
+val LocalApplyAppStatusBar = compositionLocalOf { {} }

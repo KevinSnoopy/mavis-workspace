@@ -98,3 +98,51 @@ fun ReaderViewModel.removeHighlight(highlightId: Long) {
         }
     }
 }
+
+// ── 高亮抽屉（长按选词 → 选色 / 移除）──────────────
+
+/**
+ * 长按命中后打开高亮抽屉。
+ *
+ * @param startOffset / endOffset 调用方（段落块）已解析好的词区间，
+ *   这里不再二次分词 —— 视图与 VM 用同一套 [wordRangeAt] 规则即可，
+ *   各解析一次只会引入两处分词逻辑漂移的机会
+ */
+fun ReaderViewModel.showHighlightSheet(paragraphIndex: Int, startOffset: Int, endOffset: Int) {
+    val para = _uiState.value.paragraphs.getOrNull(paragraphIndex) ?: return
+    val s = startOffset.coerceIn(0, para.length)
+    val e = endOffset.coerceIn(s, para.length)
+    if (e <= s) return
+    // 已被覆盖则走「移除」分支：对一个已高亮的词再叠一层只会越涂越花
+    val existing = _uiState.value.highlights[paragraphIndex]
+        ?.firstOrNull { it.startOffset <= s && it.endOffset >= e }
+    _uiState.update {
+        it.copy(
+            highlightDraft = HighlightDraft(
+                paragraphIndex = paragraphIndex,
+                startOffset = s,
+                endOffset = e,
+                text = para.substring(s, e),
+                existingId = existing?.id,
+            ),
+        )
+    }
+}
+
+fun ReaderViewModel.dismissHighlightSheet() {
+    _uiState.update { it.copy(highlightDraft = null) }
+}
+
+/** 抽屉里选定颜色后落库并关闭。 */
+fun ReaderViewModel.confirmHighlight(colorHex: String) {
+    val draft = _uiState.value.highlightDraft ?: return
+    addHighlight(draft.paragraphIndex, draft.startOffset, draft.endOffset, draft.text, colorHex)
+    _uiState.update { it.copy(highlightDraft = null) }
+}
+
+/** 抽屉里移除已存在的高亮并关闭。 */
+fun ReaderViewModel.removeDraftedHighlight() {
+    val id = _uiState.value.highlightDraft?.existingId ?: return
+    removeHighlight(id)
+    _uiState.update { it.copy(highlightDraft = null) }
+}

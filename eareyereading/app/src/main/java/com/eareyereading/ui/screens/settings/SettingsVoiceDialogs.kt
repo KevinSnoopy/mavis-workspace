@@ -2,14 +2,20 @@ package com.eareyereading.ui.screens.settings
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.HelpOutline
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
@@ -59,7 +65,7 @@ internal fun TtsEngineTypeDialog(
                     )
                     Column {
                         Text("离线 sherpa-onnx", style = MaterialTheme.typography.bodyMedium, fontWeight = if (currentType == "embedded") FontWeight.Bold else FontWeight.Normal)
-                        Text("无需联网，英文男声，首声 <1s", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("推荐 · 无需账号、无需联网，英文男声，首声 <1s", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
                 Row(
@@ -75,7 +81,13 @@ internal fun TtsEngineTypeDialog(
                     )
                     Column {
                         Text("在线腾讯云 TTS", style = MaterialTheme.typography.bodyMedium, fontWeight = if (currentType == "tencent") FontWeight.Bold else FontWeight.Normal)
-                        Text("100 万字/月免费 · 101 音色 · 国内稳定 · 需配置凭证", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        // 把「要自己申请密钥」这件事在选项层面就说清楚：
+                        // 此前只写"需配置凭证"，用户点进来才发现要走腾讯云实名+访问管理
+                        Text(
+                            "进阶 · 101 音色，但需自备腾讯云账号与密钥",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
                 }
             }
@@ -86,13 +98,19 @@ internal fun TtsEngineTypeDialog(
     )
 }
 
-/** 腾讯云凭证配置弹窗。 */
+/**
+ * 腾讯云凭证配置弹窗。
+ *
+ * @param onOpenGuide 非空时展示「怎么拿到这两个值」入口 —— 腾讯云的密钥页在
+ *                    「访问管理」而不是语音合成控制台，用户十有八九找不到。
+ */
 @Composable
 internal fun TencentCredentialDialog(
     initialSecretId: String,
     initialSecretKey: String,
     onDismiss: () -> Unit,
     onConfirm: (secretId: String, secretKey: String) -> Unit,
+    onOpenGuide: (() -> Unit)? = null,
 ) {
     var secretId by remember { mutableStateOf(initialSecretId) }
     var secretKey by remember { mutableStateOf(initialSecretKey) }
@@ -102,21 +120,37 @@ internal fun TencentCredentialDialog(
         text = {
             Column {
                 Text(
-                    text = "在腾讯云控制台 → 访问管理 → API 密钥管理获取",
+                    text = "在腾讯云控制台 → 访问管理 → API 密钥管理获取。" +
+                        "SecretKey 只在创建时显示一次，请当场保存。",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                if (onOpenGuide != null) {
+                    TextButton(
+                        onClick = onOpenGuide,
+                        contentPadding = PaddingValues(0.dp),
+                    ) {
+                        Icon(
+                            Icons.Default.HelpOutline,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp),
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("不知道去哪拿？看获取步骤", style = MaterialTheme.typography.labelMedium)
+                    }
+                }
                 Spacer(modifier = Modifier.height(8.dp))
                 OutlinedTextField(
                     value = secretId,
-                    onValueChange = { secretId = it },
+                    // 从控制台整段复制常带上换行与空格，就地清洗
+                    onValueChange = { secretId = it.trim() },
                     label = { Text("SecretId") },
                     modifier = Modifier.fillMaxWidth(),
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 OutlinedTextField(
                     value = secretKey,
-                    onValueChange = { secretKey = it },
+                    onValueChange = { secretKey = it.trim() },
                     label = { Text("SecretKey") },
                     modifier = Modifier.fillMaxWidth(),
                 )

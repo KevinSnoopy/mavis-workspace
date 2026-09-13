@@ -25,7 +25,6 @@ import com.eareyereading.util.ClozeWord
 @Composable
 fun ClozeReadingView(
     clozeWords: List<ClozeWord>,
-    answer: String?,
     fontSize: Int,
     textColor: Color,
     showTranslation: Boolean,
@@ -40,6 +39,14 @@ fun ClozeReadingView(
             .verticalScroll(rememberScrollState())
             .padding(vertical = 8.dp),
     ) {
+        // 操作提示：空位本身实现了「点击单独揭示」（见下方 clickable），
+        // 但此前没有任何文字说明，用户只会用底部按钮一次性全揭
+        Text(
+            text = "点 ____ 可单独揭示该空，或用下方按钮一次全揭",
+            style = MaterialTheme.typography.labelSmall,
+            color = textColor.copy(alpha = 0.55f),
+            modifier = Modifier.padding(bottom = 10.dp),
+        )
         // FlowRow 行内排布：原实现把每个词放进纵向 Column，
         // 一段话被渲染成一列单词，完全不可读。
         // 揭示是渐进的：VM 每按一次"显示答案"清除一个隐藏词标记

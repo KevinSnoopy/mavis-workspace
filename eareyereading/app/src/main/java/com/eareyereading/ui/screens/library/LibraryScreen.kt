@@ -63,6 +63,7 @@ fun LibraryScreen(
     }
 
     Scaffold(
+        contentWindowInsets = WindowInsets(0),
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             LibraryTopBar(onNavigateToSettings = onNavigateToSettings) {

@@ -38,6 +38,7 @@ internal fun ReaderTopBar(
     onTogglePlay: () -> Unit,
     onToggleBookmark: () -> Unit,
     onShowModeSelector: () -> Unit,
+    onShowModeHelp: () -> Unit,
     onToggleAutoRead: () -> Unit,
     onToggleChapterNav: () -> Unit,
     onToggleWordLevelColors: () -> Unit,
@@ -130,6 +131,16 @@ internal fun ReaderTopBar(
                     expanded = showOverflowMenu,
                     onDismissRequest = { showOverflowMenu = false },
                 ) {
+                    // 放在最前：用户在这个模式里看不懂时，第一反应就是打开
+                    // 溢出菜单找帮助，这个入口不该排在第五位
+                    DropdownMenuItem(
+                        text = { Text("这个模式怎么用") },
+                        leadingIcon = { Icon(Icons.Default.HelpOutline, null) },
+                        onClick = {
+                            showOverflowMenu = false
+                            onShowModeHelp()
+                        },
+                    )
                     DropdownMenuItem(
                         text = {
                             Text(if (isAutoReading) "停止自动朗读" else "自动朗读")

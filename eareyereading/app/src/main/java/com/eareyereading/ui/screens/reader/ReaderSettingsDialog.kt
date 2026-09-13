@@ -1,5 +1,6 @@
 package com.eareyereading.ui.screens.reader
 
+import com.eareyereading.ui.components.EareyeBottomSheet
 import androidx.compose.animation.*
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
@@ -48,7 +49,7 @@ fun ReaderSettingsDialog(
     onTogglePageMode: () -> Unit = {},
     onDismiss: () -> Unit,
 ) {
-    ModalBottomSheet(
+    EareyeBottomSheet(
         onDismissRequest = onDismiss,
         shape = EareyeShapes.bottomSheet,
         containerColor = MaterialTheme.colorScheme.surface,

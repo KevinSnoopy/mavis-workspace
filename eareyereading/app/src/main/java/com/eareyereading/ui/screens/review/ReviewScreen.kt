@@ -41,6 +41,7 @@ fun ReviewScreen(
     }
 
     Scaffold(
+        contentWindowInsets = WindowInsets(0),
         topBar = {
             AppTopBar(title = "复习") {
                 if (dueCount > 0) {

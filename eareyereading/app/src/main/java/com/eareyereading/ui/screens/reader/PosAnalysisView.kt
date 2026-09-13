@@ -58,77 +58,90 @@ fun PosAnalysisView(
         paragraphOffset = 0,
         onVisibleParagraphChanged = onVisibleParagraphChanged,
     )
-    LazyColumn(
-        state = listState,
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(vertical = 8.dp),
-    ) {
-        itemsIndexed(
-            items = paragraphs,
-            key = { index, _ -> index },
-        ) { index, para ->
-            val isCurrent = index == currentIndex
-            val alpha = if (isCurrent) 1f else 0.5f
+    Column(modifier = Modifier.fillMaxSize()) {
+        // 图例置顶常驻：此前它挂在 LazyColumn 的末尾 item，用户要一直滑到
+        // 全书结尾才会撞见"哪种颜色是名词"，首屏完全没有解读线索
+        PosLegendRow(textColor = textColor)
+        Divider(color = textColor.copy(alpha = 0.15f))
 
-            // 词性着色文本（remember 缓存：原实现在组合里裸建，
-            // 任何状态变化都重新切词+分类整本书）
-            val annotatedText = remember(para, alpha, textColor) {
-                buildAnnotatedString {
-                    val allMatches = Regex("([a-zA-Z]+)|([^a-zA-Z]+)").findAll(para).toList()
-                    allMatches.forEach { match ->
-                        val token = match.value
-                        if (Regex("^[a-zA-Z]+$").matches(token)) {
-                            val word = token.lowercase()
-                            val tag = wordPosMap[word] ?: classifyBySuffix(word)
-                            val color = posColor(tag).copy(alpha = alpha)
-                            withStyle(SpanStyle(color = color)) { append(token) }
-                        } else {
-                            withStyle(SpanStyle(color = textColor.copy(alpha = alpha * 0.5f))) {
-                                append(token)
+        LazyColumn(
+            state = listState,
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(vertical = 8.dp),
+        ) {
+            itemsIndexed(
+                items = paragraphs,
+                key = { index, _ -> index },
+            ) { index, para ->
+                val isCurrent = index == currentIndex
+                val alpha = if (isCurrent) 1f else 0.5f
+
+                // 词性着色文本（remember 缓存：原实现在组合里裸建，
+                // 任何状态变化都重新切词+分类整本书）
+                val annotatedText = remember(para, alpha, textColor) {
+                    buildAnnotatedString {
+                        val allMatches = Regex("([a-zA-Z]+)|([^a-zA-Z]+)").findAll(para).toList()
+                        allMatches.forEach { match ->
+                            val token = match.value
+                            if (Regex("^[a-zA-Z]+$").matches(token)) {
+                                val word = token.lowercase()
+                                val tag = wordPosMap[word] ?: classifyBySuffix(word)
+                                val color = posColor(tag).copy(alpha = alpha)
+                                withStyle(SpanStyle(color = color)) { append(token) }
+                            } else {
+                                withStyle(SpanStyle(color = textColor.copy(alpha = alpha * 0.5f))) {
+                                    append(token)
+                                }
                             }
                         }
                     }
                 }
-            }
-            TappableParagraphText(
-                text = annotatedText,
-                paragraph = para,
-                onWordClick = onWordClick,
-                onSentenceDoubleTap = {},
-                modifier = Modifier.padding(vertical = 6.dp, horizontal = 4.dp),
-                style = readerParagraphStyle(fontSize),
-            )
-
-            if (index < paragraphs.lastIndex) {
-                Divider(
-                    modifier = Modifier.padding(vertical = 8.dp),
-                    color = textColor.copy(alpha = 0.15f),
+                TappableParagraphText(
+                    text = annotatedText,
+                    paragraph = para,
+                    onWordClick = onWordClick,
+                    onSentenceDoubleTap = {},
+                    modifier = Modifier.padding(vertical = 6.dp, horizontal = 4.dp),
+                    style = readerParagraphStyle(fontSize),
                 )
-            }
-        }
 
-        // 底部图例
-        item {
-            Spacer(modifier = Modifier.height(16.dp))
-            Divider()
-            Spacer(modifier = Modifier.height(8.dp))
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                PosLegendItem("青灰", Info, "名词")
-                PosLegendItem("赤褐", Error, "动词")
-                PosLegendItem("暖金", Warning, "形容词")
-                PosLegendItem("暖棕", Primary, "副词")
+                if (index < paragraphs.lastIndex) {
+                    Divider(
+                        modifier = Modifier.padding(vertical = 8.dp),
+                        color = textColor.copy(alpha = 0.15f),
+                    )
+                }
             }
         }
     }
 }
 
+/** 常驻图例行：FlowRow 保证窄屏/大字号下自动换行，不被截断。 */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
-private fun PosLegendItem(colorName: String, color: Color, tag: String) {
+private fun PosLegendRow(textColor: Color) {
+    // 加一层表面底衬：正文在它下方滚动经过时，色点与词性名不会被文字压花。
+    // 取舍说明：阅读页的顶栏是**叠加层**（沉浸态设计，chrome 自动收起），
+    // 所以顶栏显示时这一行会被遮住。可接受——顶栏显示意味着用户正在操作
+    // 工具栏，而不是在认颜色；顶栏收起后图例就是常驻的。
+    Surface(color = MaterialTheme.colorScheme.surface) {
+        FlowRow(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 4.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            PosLegendItem(Info, "名词", textColor)
+            PosLegendItem(Error, "动词", textColor)
+            PosLegendItem(Warning, "形容词", textColor)
+            PosLegendItem(Primary, "副词", textColor)
+        }
+    }
+}
+
+@Composable
+private fun PosLegendItem(color: Color, label: String, textColor: Color) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Surface(
             modifier = Modifier.size(12.dp),
@@ -136,7 +149,13 @@ private fun PosLegendItem(colorName: String, color: Color, tag: String) {
             color = color,
         ) {}
         Spacer(modifier = Modifier.width(4.dp))
-        Text("$tag", style = MaterialTheme.typography.labelSmall)
+        // 标签只保留词性名：此前写作「青灰 · 名词」，颜色名对用户零信息量
+        // 文字色跟随阅读主题，深色纸面上不会变成深底深字
+        Text(
+            label,
+            style = MaterialTheme.typography.labelSmall,
+            color = textColor.copy(alpha = 0.8f),
+        )
     }
 }
 

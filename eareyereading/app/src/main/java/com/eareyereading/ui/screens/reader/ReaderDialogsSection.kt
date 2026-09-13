@@ -37,6 +37,25 @@ internal fun ReaderDialogsSection(
         )
     }
 
+    // 当前模式说明：看完可直接跳去换模式，不用先关抽屉再找入口
+    if (uiState.showModeHelp) {
+        ModeHelpSheet(
+            mode = uiState.readingMode,
+            onChangeMode = viewModel::showModeSelector,
+            onDismiss = viewModel::toggleModeHelp,
+        )
+    }
+
+    // 高亮抽屉：长按选词 → 选色落库，或移除已有高亮
+    uiState.highlightDraft?.let { draft ->
+        HighlightSheet(
+            draft = draft,
+            onPickColor = viewModel::confirmHighlight,
+            onRemove = viewModel::removeDraftedHighlight,
+            onDismiss = viewModel::dismissHighlightSheet,
+        )
+    }
+
     // 设置弹窗
     if (uiState.showSettings) {
         ReaderSettingsDialog(

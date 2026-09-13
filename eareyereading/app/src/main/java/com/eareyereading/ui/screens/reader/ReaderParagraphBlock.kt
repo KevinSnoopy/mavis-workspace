@@ -23,7 +23,7 @@ import com.eareyereading.util.CollinsClassifier
  */
 @androidx.compose.runtime.Composable
 internal fun ReaderParagraphBlock(
-    index: Int,
+    paraIndex: Int,
     para: String,
     isCurrent: Boolean,
     isBookmarked: Boolean,
@@ -44,6 +44,9 @@ internal fun ReaderParagraphBlock(
     onWordClick: (String) -> Unit,
     onSentenceDoubleTap: (String) -> Unit,
     classifier: CollinsClassifier,
+    // 长按高亮：回调只带命中偏移，词区间在块内解析（块里有整段文本）。
+    // 这是高亮链路断点修复后的唯一创建入口
+    onLongPressWord: (paragraphIndex: Int, startOffset: Int, endOffset: Int) -> Unit = { _, _, _ -> },
     bookId: Long = 0L,
 ) {
     // 插图段：整块渲染为图片（书签标记照常保留），不参与词色/高亮/译文
@@ -51,6 +54,12 @@ internal fun ReaderParagraphBlock(
     if (imageRef != null) {
         ReaderImageBlock(ref = imageRef, bookId = bookId)
         return
+    }
+    // 长按 → 词区间 → 交给上层开高亮抽屉；落在标点/空白时静默忽略
+    val handleLongPress: (Int) -> Unit = { charOffset ->
+        wordRangeAt(para, charOffset)?.let { range ->
+            onLongPressWord(paraIndex, range.first, range.last + 1)
+        }
     }
     // 朗读中的当前段落：背景直接加在内容容器上。
     // 原实现额外放了一个包 Text("") 的 Surface —— 零高度，背景永远不可见
@@ -93,6 +102,7 @@ internal fun ReaderParagraphBlock(
                     .padding(vertical = ReaderLayout.ParagraphPadding)
                     .alpha(alpha),
                 style = readerParagraphStyle(fontSize),
+                onLongPress = handleLongPress,
             )
         } else {
             // 词色/生词高亮/用户高亮统一构建（与翻页切片共用同一构建器，
@@ -121,6 +131,7 @@ internal fun ReaderParagraphBlock(
                     .padding(vertical = ReaderLayout.ParagraphPadding)
                     .alpha(alpha),
                 style = readerParagraphStyle(fontSize),
+                onLongPress = handleLongPress,
             )
         }
 

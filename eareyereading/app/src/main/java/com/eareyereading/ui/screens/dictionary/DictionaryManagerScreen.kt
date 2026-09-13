@@ -152,6 +152,7 @@ fun DictionaryManagerScreen(
     }
 
     Scaffold(
+        contentWindowInsets = WindowInsets(0),
         topBar = {
             AppTopBar(title = "词典管理", onBack = onBack) {
                 // 刷新中给可见反馈：旧实现点刷新无任何状态变化，

@@ -5,7 +5,6 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MenuBook
@@ -18,9 +17,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -31,6 +28,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.eareyereading.ui.components.EmptyState
 import com.eareyereading.ui.components.ReadingHeatmap
 import com.eareyereading.ui.components.StatCard
 import com.eareyereading.ui.theme.*
@@ -66,6 +64,7 @@ fun HomeScreen(
     }
 
     Scaffold(
+        contentWindowInsets = WindowInsets(0),
         topBar = {
             TopAppBar(
                 title = {
@@ -249,41 +248,17 @@ private fun EmptyReadingGuide(onNavigateToLibrary: () -> Unit) {
             containerColor = MaterialTheme.colorScheme.surface,
         ),
     ) {
-        Column(
+        // 复用通用 EmptyState：此前这里自绘了一套「圆底图标 + 标题 + 副文案 + 按钮」，
+        // 与复习空状态、书库空状态长相各不相同
+        EmptyState(
+            icon = Icons.Default.MenuBook,
+            title = "开始你的第一本书",
+            subtitle = "导入 EPUB/TXT，或粘贴网址抓一篇文章，边读边攒生词",
+            actionLabel = "去书库导入",
+            onAction = onNavigateToLibrary,
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(vertical = 28.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            Surface(
-                shape = CircleShape,
-                color = Primary.copy(alpha = 0.10f),
-            ) {
-                Icon(
-                    Icons.Default.MenuBook,
-                    null,
-                    tint = Primary,
-                    modifier = Modifier
-                        .padding(18.dp)
-                        .size(28.dp),
-                )
-            }
-            Spacer(modifier = Modifier.height(12.dp))
-            Text(
-                "开始你的第一本书",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
-            )
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-                "导入 EPUB 或用 URL 添加文章，边读边攒生词",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(modifier = Modifier.height(16.dp))
-            OutlinedButton(onClick = onNavigateToLibrary) {
-                Text("去书库导入")
-            }
-        }
+        )
     }
 }

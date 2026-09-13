@@ -11,7 +11,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.eareyereading.domain.model.ReadingTheme
@@ -27,7 +26,6 @@ fun ReadingBottomBar(
     onPrev: () -> Unit,
     onNext: () -> Unit,
     onSeek: (Int) -> Unit,
-    textColor: Color,
     onFontDelta: (Int) -> Unit = {},
     onCycleTheme: () -> Unit = {},
     onToggleSerif: () -> Unit = {},
@@ -35,11 +33,15 @@ fun ReadingBottomBar(
     Surface(
         shadowElevation = 4.dp,
         color = MaterialTheme.colorScheme.surface,
-        // Scaffold contentWindowInsets=0：底栏必须自己避让手势导航条，
-        // 否则上一段/下一段按钮整行被系统手势区压住
-        modifier = Modifier.navigationBarsPadding(),
     ) {
-        Column(modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp)) {
+        // 手势条避让加在**内容层**而不是 Surface 上：旧写法把 navigationBarsPadding
+        // 加在 Surface 上，底栏到不了屏幕底，导航栏区域露出的是页面背景色，
+        // 与底栏的 surface 色形成一条"镂空"（护眼模式下尤其明显）
+        Column(
+            modifier = Modifier
+                .navigationBarsPadding()
+                .padding(horizontal = 8.dp, vertical = 8.dp)
+        ) {
             // 快捷设置行（微信读书式）：字号 ±、主题循环、衬线切换。
             // 沉浸阅读最高频的三个调整一步直达，不再进设置弹窗
             Row(

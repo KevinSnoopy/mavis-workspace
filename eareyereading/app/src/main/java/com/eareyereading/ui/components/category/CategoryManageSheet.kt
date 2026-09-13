@@ -1,5 +1,6 @@
 package com.eareyereading.ui.components.category
 
+import com.eareyereading.ui.components.EareyeBottomSheet
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
@@ -89,7 +90,7 @@ fun CategoryManageSheet(
     var dragOffsetY by remember { mutableFloatStateOf(0f) }
     val rowHeightPx = with(LocalDensity.current) { ManageRowHeight.toPx() }
 
-    ModalBottomSheet(
+    EareyeBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         shape = EareyeShapes.bottomSheet,

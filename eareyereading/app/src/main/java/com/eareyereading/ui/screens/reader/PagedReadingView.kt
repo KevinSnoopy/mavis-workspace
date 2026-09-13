@@ -68,6 +68,8 @@ fun PagedReadingView(
     onVisibleRangeChanged: (Int, Int) -> Unit = { _, _ -> },
     bookmarkedParagraphs: Set<Int> = emptySet(),
     highlights: Map<Int, List<HighlightData>> = emptyMap(),
+    // 长按高亮：与滚动视图同一入口；跨页切片由切片块把局部偏移加回 charStart
+    onLongPressWord: (paragraphIndex: Int, startOffset: Int, endOffset: Int) -> Unit = { _, _, _ -> },
     // 仿电子书装饰：页眉书名 + 页脚页码；中键点击回调（左右边缘被翻页区占用）
     bookTitle: String = "",
     onCenterTap: () -> Unit = {},
@@ -259,7 +261,7 @@ fun PagedReadingView(
                                 // 整段都在本页：走与滚动视图完全一致的段落渲染
                                 slice.charStart == 0 && slice.charEnd >= para.length ->
                                     ReaderParagraphBlock(
-                                        index = slice.paraIndex,
+                                        paraIndex = slice.paraIndex,
                                         para = para,
                                         isCurrent = slice.paraIndex == currentIndex,
                                         isBookmarked = slice.paraIndex in bookmarkedParagraphs,
@@ -280,12 +282,14 @@ fun PagedReadingView(
                                         currentSentenceIndex = currentSentenceIndex,
                                         onWordClick = onWordClick,
                                         onSentenceDoubleTap = onSentenceDoubleTap,
+                                        onLongPressWord = onLongPressWord,
                                         classifier = classifier,
                                         bookId = bookId,
                                     )
                                 // 跨页切片：行级拆分渲染
                                 else -> ReaderSliceParagraphBlock(
                                     para = para,
+                                    paraIndex = slice.paraIndex,
                                     charStart = slice.charStart,
                                     charEnd = slice.charEnd,
                                     isCurrent = slice.paraIndex == currentIndex,
@@ -307,6 +311,7 @@ fun PagedReadingView(
                                     onSentenceDoubleTap = onSentenceDoubleTap,
                                     classifier = classifier,
                                     sliceHighlights = highlights[slice.paraIndex] ?: emptyList(),
+                                    onLongPressWord = onLongPressWord,
                                     showBookmarkMark = slice.isFirstOfPara &&
                                         slice.paraIndex in bookmarkedParagraphs,
                                 )

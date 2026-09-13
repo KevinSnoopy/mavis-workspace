@@ -11,11 +11,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.MenuBook
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -28,7 +24,6 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -38,7 +33,6 @@ import com.eareyereading.ui.theme.HeatmapLevel1
 import com.eareyereading.ui.theme.HeatmapLevel2
 import com.eareyereading.ui.theme.HeatmapLevel3
 import com.eareyereading.ui.theme.HeatmapLevel4
-import com.eareyereading.ui.theme.Primary
 
 /**
  * 学习热力图（GitHub contributions 式）：
@@ -147,47 +141,6 @@ private fun heatmapCellColor(minutes: Int): Color = when {
     else -> CELL_LEVEL_4
 }
 
-/**
- * 通用空状态：图标 + 标题 + 副文案，替代原先的 emoji 占位。
- */
-@Composable
-fun EmptyState(
-    icon: ImageVector,
-    title: String,
-    modifier: Modifier = Modifier,
-    subtitle: String = "",
-) {
-    Column(
-        modifier = modifier,
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Box(
-            modifier = Modifier
-                .size(84.dp)
-                .clip(CircleShape)
-                .background(Primary.copy(alpha = 0.1f)),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                icon,
-                contentDescription = null,
-                tint = Primary.copy(alpha = 0.85f),
-                modifier = Modifier.size(38.dp),
-            )
-        }
-        Spacer(modifier = Modifier.height(14.dp))
-        Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-        if (subtitle.isNotBlank()) {
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-                subtitle,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-    }
-}
-
 @Preview(showBackground = true)
 @Composable
 private fun ReadingHeatmapPreview() {
@@ -197,18 +150,6 @@ private fun ReadingHeatmapPreview() {
                 repeat(84) { i -> add(if (i % 3 == 0) (i * 7) % 130 else if (i > 77) -1 else 0) }
             },
             modifier = Modifier.padding(16.dp),
-        )
-    }
-}
-
-@Preview(showBackground = true)
-@Composable
-private fun EmptyStatePreview() {
-    EareyeReadingTheme {
-        EmptyState(
-            icon = Icons.Outlined.MenuBook,
-            title = "书架为空",
-            subtitle = "导入 EPUB/TXT，或从经典名著一键下载",
         )
     }
 }

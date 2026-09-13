@@ -10,6 +10,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Downloading
 import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.HelpOutline
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.RecordVoiceOver
 import androidx.compose.material3.Divider
@@ -23,8 +24,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.eareyereading.ui.theme.Info
 import com.eareyereading.ui.theme.OnSurfaceTertiary
 import com.eareyereading.ui.theme.Primary
+import com.eareyereading.ui.theme.SuccessBg
 import com.eareyereading.ui.theme.SurfaceHover
 
 /**
@@ -53,6 +56,7 @@ internal fun SettingsVoiceSection(
     var showTtsVoiceDialog by remember { mutableStateOf(false) }
     var showTencentVoiceDialog by remember { mutableStateOf(false) }
     var showTencentCredDialog by remember { mutableStateOf(false) }
+    var showTencentGuideSheet by remember { mutableStateOf(false) }
 
     SettingsSectionTitle("语音")
     SettingsListCard {
@@ -62,7 +66,7 @@ internal fun SettingsVoiceSection(
             iconBg = SurfaceHover,
             iconColor = Primary,
             title = "语音引擎",
-            subtitle = if (uiState.ttsEngineType == "tencent") "在线腾讯云 TTS" else "离线 sherpa-onnx",
+            subtitle = if (uiState.ttsEngineType == "tencent") "在线腾讯云 TTS" else "离线 sherpa-onnx · 无需任何账号",
             onClick = { showTtsEngineDialog = true },
         )
 
@@ -74,8 +78,22 @@ internal fun SettingsVoiceSection(
                 iconBg = SurfaceHover,
                 iconColor = Primary,
                 title = "腾讯云凭证",
-                subtitle = if (uiState.tencentSecretId.isNotEmpty()) "已配置（${uiState.tencentSecretId.take(8)}...）" else "未配置，点击设置",
+                subtitle = if (uiState.tencentSecretId.isNotEmpty()) {
+                    "已配置（${uiState.tencentSecretId.take(8)}...）"
+                } else {
+                    "未配置 · 需要一对 SecretId / SecretKey"
+                },
                 onClick = { showTencentCredDialog = true },
+            )
+            Divider(modifier = Modifier.padding(horizontal = 20.dp))
+            // 密钥藏在「访问管理」而不是语音合成控制台，这一步单独给入口引导
+            SettingRowClickable(
+                icon = Icons.Default.HelpOutline,
+                iconBg = SuccessBg,
+                iconColor = Info,
+                title = "如何获取腾讯云凭证",
+                subtitle = "分 5 步，含常见踩坑点",
+                onClick = { showTencentGuideSheet = true },
             )
             Divider(modifier = Modifier.padding(horizontal = 20.dp))
             SettingRowClickable(
@@ -214,10 +232,23 @@ internal fun SettingsVoiceSection(
             initialSecretId = uiState.tencentSecretId,
             initialSecretKey = uiState.tencentSecretKey,
             onDismiss = { showTencentCredDialog = false },
+            // 先关弹窗再开引导：两个 Modal 叠着会让抽屉被压在对话框后面
+            onOpenGuide = {
+                showTencentCredDialog = false
+                showTencentGuideSheet = true
+            },
             onConfirm = { id, key ->
                 onSetTencentCredentials(id, key)
                 showTencentCredDialog = false
             },
+        )
+    }
+
+    // 腾讯云凭证获取引导（分步 + 一键跳转访问管理控制台）
+    if (showTencentGuideSheet) {
+        KeyGuideSheet(
+            guide = TencentKeyGuide,
+            onDismiss = { showTencentGuideSheet = false },
         )
     }
 

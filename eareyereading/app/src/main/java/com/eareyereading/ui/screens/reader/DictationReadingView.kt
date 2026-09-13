@@ -32,7 +32,6 @@ fun DictationReadingView(
     answer: String?,
     fontSize: Int,
     textColor: Color,
-    paragraph: String,
     onCheckAnswer: (String) -> Boolean,
     onStartDictation: () -> Unit,
 ) {

@@ -1,5 +1,6 @@
 package com.eareyereading.ui.components.category
 
+import com.eareyereading.ui.components.EareyeBottomSheet
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -82,7 +83,7 @@ fun AddBookFlowSheet(
 
     val stepLabels = listOf("基础信息", "分类", "封面")
 
-    ModalBottomSheet(
+    EareyeBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         shape = EareyeShapes.bottomSheet,

@@ -162,12 +162,21 @@ internal class ReaderViewModelSettings(
         vm._uiState.update { it.copy(showChapterNav = !it.showChapterNav) }
     }
 
+    /** 当前模式说明（顶栏溢出菜单）。开与关都由同一个入口驱动。 */
+    fun toggleModeHelp() {
+        // 打开说明时收起模式选择器：两个抽屉叠着会让用户不知道该看哪个
+        vm._uiState.update {
+            it.copy(showModeHelp = !it.showModeHelp, showModeSelector = false)
+        }
+    }
+
     fun dismissModeSelector() {
         vm._uiState.update { it.copy(showModeSelector = false) }
     }
 
     fun showModeSelector() {
-        vm._uiState.update { it.copy(showModeSelector = true) }
+        // 与 toggleModeHelp 对称：两个抽屉互斥，避免叠在一起
+        vm._uiState.update { it.copy(showModeSelector = true, showModeHelp = false) }
     }
 
     fun toggleSettings() {

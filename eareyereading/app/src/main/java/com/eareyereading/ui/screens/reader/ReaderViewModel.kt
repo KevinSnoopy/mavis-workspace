@@ -330,6 +330,8 @@ class ReaderViewModel @Inject constructor(
 
     fun toggleChapterNav() = settings.toggleChapterNav()
 
+    fun toggleModeHelp() = settings.toggleModeHelp()
+
     fun startDictation(paragraphIndex: Int) = practice.startDictation(paragraphIndex)
 
     /**

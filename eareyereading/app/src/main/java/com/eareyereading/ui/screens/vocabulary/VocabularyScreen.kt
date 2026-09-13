@@ -20,9 +20,9 @@ import com.eareyereading.ui.theme.Primary
 import com.eareyereading.ui.theme.SectionTitle
 
 /**
- * 词汇本主屏：搜索、学习概览、难度分布、Tab 筛选与单词列表。
+ * 生词本主屏：搜索、学习概览、难度分布、Tab 筛选与单词列表。
  *
- * 一级 Tab（底部导航「词汇」）：顶栏不带返回箭头，页面间靠底部导航平行切换。
+ * 一级 Tab（底部导航「生词本」）：顶栏不带返回箭头，页面间靠底部导航平行切换。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -32,8 +32,11 @@ fun VocabularyScreen(
     val uiState by viewModel.uiState.collectAsState()
 
     Scaffold(
+        contentWindowInsets = WindowInsets(0),
         topBar = {
-            AppTopBar(title = "词汇本")
+            // 与底部导航标签保持一致（此前这里叫「词汇本」，导航叫「词汇」，
+            // 首页统计卡又叫「生词本」）
+            AppTopBar(title = "生词本")
         },
     ) { padding ->
         Column(

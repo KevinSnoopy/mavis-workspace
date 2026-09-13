@@ -11,50 +11,39 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.eareyereading.ui.components.ConfettiCelebration
+import com.eareyereading.ui.components.EmptyState
 import com.eareyereading.ui.theme.*
 
 /**
  * 空复习状态：没有待复习卡片时展示"去阅读攒生词"出口，形成学习闭环。
+ *
+ * 副文案补上了闭环链路说明 —— 此前只写「今日复习已完成」，用户看不出来
+ * 生词是从哪来的、什么时候会再出现，这个页面读起来像功能坏了。
  */
 @Composable
 internal fun EmptyReviewView(onGoReading: () -> Unit) {
-    Column(
-        modifier = Modifier.fillMaxSize(),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
-    ) {
-        Icon(
-            Icons.Default.CheckCircle,
-            contentDescription = null,
-            modifier = Modifier.size(80.dp),
+    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        EmptyState(
+            icon = Icons.Default.CheckCircle,
+            title = "今日复习已完成",
+            // 说清"生词怎么来的、什么时候回来"，而不是只报一句状态
+            subtitle = "生词来自阅读时点开的词。按遗忘曲线排期，到点会自动回到这里。",
             tint = Success,
+            actionLabel = "去阅读攒生词",
+            actionIcon = Icons.Default.MenuBook,
+            onAction = onGoReading,
+            // 满屏居中时文案会一路顶到屏幕两侧：留出边距让它是一个块，
+            // 而不是横贯整屏的一行字
+            modifier = Modifier.padding(horizontal = 32.dp),
         )
-        Spacer(modifier = Modifier.height(16.dp))
-        Text(
-            "太棒了！",
-            style = MaterialTheme.typography.headlineSmall,
-            fontWeight = FontWeight.Bold,
-        )
-        Spacer(modifier = Modifier.height(8.dp))
-        Text(
-            "今日复习已完成",
-            style = MaterialTheme.typography.bodyLarge,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Spacer(modifier = Modifier.height(20.dp))
-        // 返回继续阅读：阅读中点词加生词才会进复习队列，
-        // 这里指一条"攒生词"的去路，页面不留死胡同
-        // （回调名点明目的地：复习是一级 Tab，无栈可弹，必须显式跳书库）
-        OutlinedButton(onClick = onGoReading) {
-            Icon(Icons.Default.MenuBook, null, modifier = Modifier.size(16.dp))
-            Spacer(modifier = Modifier.width(6.dp))
-            Text("去阅读攒生词")
-        }
     }
 }
 
 /**
  * 加载失败状态：与"全部完成"可区分，并提供重试入口。
+ *
+ * 与 [EmptyReviewView] 共用 [EmptyState]，只换图标色与文案 ——
+ * 两种都是"内容为空"，不该长出两套视觉。
  */
 @Composable
 internal fun ErrorReviewView(
@@ -62,32 +51,20 @@ internal fun ErrorReviewView(
     onRetry: () -> Unit,
     onBack: () -> Unit,
 ) {
-    Column(
-        modifier = Modifier.fillMaxSize(),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
-    ) {
-        Icon(
-            Icons.Default.Warning,
-            contentDescription = null,
-            modifier = Modifier.size(80.dp),
-            tint = Error,
-        )
-        Spacer(modifier = Modifier.height(16.dp))
-        Text(
-            message ?: "加载失败",
-            style = MaterialTheme.typography.bodyLarge,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Spacer(modifier = Modifier.height(24.dp))
-        Button(onClick = onRetry) {
-            Icon(Icons.Default.Refresh, null)
-            Spacer(modifier = Modifier.width(8.dp))
-            Text("重试")
-        }
-        Spacer(modifier = Modifier.height(12.dp))
-        OutlinedButton(onClick = onBack) {
-            Text("返回")
+    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            EmptyState(
+                icon = Icons.Default.Warning,
+                title = message ?: "加载失败",
+                subtitle = "已复习的记录不会丢失，重试即可继续。",
+                tint = Error,
+                actionLabel = "重试",
+                actionIcon = Icons.Default.Refresh,
+                onAction = onRetry,
+                modifier = Modifier.padding(horizontal = 32.dp),
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            TextButton(onClick = onBack) { Text("返回") }
         }
     }
 }

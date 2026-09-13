@@ -24,6 +24,7 @@ import androidx.compose.material.icons.outlined.Replay
 import androidx.compose.material.icons.outlined.School
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationRail
@@ -36,6 +37,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.unit.dp
 import androidx.navigation.NavBackStackEntry
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
@@ -89,7 +91,10 @@ data class BottomNavItem(
 val bottomNavItems = listOf(
     BottomNavItem(Screen.Home, "首页", Icons.Filled.Home, Icons.Outlined.Home),
     BottomNavItem(Screen.Library, "书库", Icons.Filled.LibraryBooks, Icons.Outlined.LibraryBooks),
-    BottomNavItem(Screen.Vocabulary, "词汇", Icons.Filled.School, Icons.Outlined.School),
+    // 术语统一：此前底部栏叫「词汇」、页面顶栏叫「词汇本」、首页统计卡叫「生词本」，
+    // 同一个页面三个名字。统一为「生词本」——它是用户实际产生的东西（查过的生词），
+    // 也与复习页「去阅读攒生词」的文案对上
+    BottomNavItem(Screen.Vocabulary, "生词本", Icons.Filled.School, Icons.Outlined.School),
     BottomNavItem(Screen.Review, "复习", Icons.Filled.Replay, Icons.Outlined.Replay),
     BottomNavItem(Screen.Settings, "设置", Icons.Filled.Settings, Icons.Outlined.Settings),
 )
@@ -152,7 +157,17 @@ fun AppNavigation(
                     // 标准 M3 NavigationBarItem：图标药丸指示器 + 主题色令牌。
                     // 原实现是自绘 Box（选中整块填充主色 + 白字），是 web 标签页
                     // 风格，且绕过了涟漪/无障碍/状态层的默认行为
-                    NavigationBar {
+                    //
+                    // containerColor 显式跟 background：M3 默认是 surfaceContainer，
+                    // 与各页面的 background 之间会有一条颜色断层（用户看到的
+                    // "页面与底部 tab 之间有留白"）。本 App 的页面全是
+                    // background 打底，底栏同色才能无缝衔接
+                    NavigationBar(
+                        containerColor = MaterialTheme.colorScheme.background,
+                        // 归零色调海拔：M3 默认 3dp 会在容器色上叠一层主色染色，
+                        // 即便 containerColor 已跟 background 也对不上
+                        tonalElevation = 0.dp,
+                    ) {
                         bottomNavItems.forEach { item ->
                             val selected = item.screen.route in selectedRoutes
                             NavigationBarItem(
@@ -177,7 +192,10 @@ fun AppNavigation(
                     .padding(padding),
             ) {
                 if (showBottomBar && isExpanded) {
-                    NavigationRail {
+                    // 与窄屏 NavigationBar 同色（见上）：侧栏也要与页面背景无缝
+                    NavigationRail(
+                        containerColor = MaterialTheme.colorScheme.background,
+                    ) {
                         bottomNavItems.forEach { item ->
                             val selected = item.screen.route in selectedRoutes
                             NavigationRailItem(
