@@ -76,11 +76,28 @@ data class Category(
     val color: Color = derivedColorFor(name),
 )
 
-/** 默认预设分类（无书籍时的冷启动演示） */
-val DefaultCategories = listOf(
-    Category("英语学习", 8),
-    Category("文学小说", 6),
-    Category("商业思维", 5),
-    Category("科学认知", 3),
-    Category("科技前沿", 2),
+/**
+ * 预制分类（书库「分类」开箱可用，SPEC §4.9 扩展）
+ *
+ * 设计判断：分类的图标/颜色**显式指定**而非走 name hash 派生——
+ * 预制分类是给用户"一眼认出"的语义标签，必须稳定且符合直觉
+ * （英语学习=书本、口语听力=星标…），不能听凭 hash 撞色撞图标。
+ *
+ * 消费方两处：
+ * 1. [CategoryEditSheet] 新建分类顶部快选：一键填充「名称 + 图标 + 颜色」
+ * 2. [CategoryManageSheet] 预制分类区：一键把常用分类收进书库
+ */
+val PresetCategories: List<Category> = listOf(
+    Category("英语学习", icon = CategoryIcon.BOOK, color = CategoryPalette[0]),
+    Category("单词词汇", icon = CategoryIcon.NOTE, color = CategoryPalette[2]),
+    Category("语法精读", icon = CategoryIcon.COMPASS, color = CategoryPalette[3]),
+    Category("口语听力", icon = CategoryIcon.STAR, color = CategoryPalette[4]),
+    Category("文学小说", icon = CategoryIcon.HEART, color = CategoryPalette[5]),
+    Category("经典名著", icon = CategoryIcon.CROWN, color = CategoryPalette[1]),
+    Category("商业思维", icon = CategoryIcon.BOLT, color = CategoryPalette[6]),
+    Category("科技前沿", icon = CategoryIcon.GLOBE, color = CategoryPalette[7]),
+    Category("科学认知", icon = CategoryIcon.LEAF, color = CategoryPalette[8]),
+    Category("考试备考", icon = CategoryIcon.TROPHY, color = CategoryPalette[9]),
+    Category("休闲阅读", icon = CategoryIcon.COFFEE, color = CategoryPalette[4]),
+    Category("新闻时政", icon = CategoryIcon.FLAME, color = CategoryPalette[5]),
 )

@@ -132,6 +132,7 @@ fun ModeSelectorDialog(
 ) {
     ModalBottomSheet(
         onDismissRequest = onDismiss,
+        shape = EareyeShapes.bottomSheet,
         containerColor = MaterialTheme.colorScheme.surface,
     ) {
         Text(
@@ -186,6 +187,7 @@ fun WordDetailDialog(
 ) {
     ModalBottomSheet(
         onDismissRequest = onDismiss,
+        shape = EareyeShapes.bottomSheet,
         containerColor = MaterialTheme.colorScheme.surface,
     ) {
         Column(
@@ -300,6 +302,7 @@ private fun ChapterListPane(
     }
     ModalBottomSheet(
         onDismissRequest = onDismiss,
+        shape = EareyeShapes.bottomSheet,
         containerColor = MaterialTheme.colorScheme.surface,
     ) {
         Text(
@@ -358,6 +361,7 @@ private fun ParagraphListPane(
     }
     ModalBottomSheet(
         onDismissRequest = onDismiss,
+        shape = EareyeShapes.bottomSheet,
         containerColor = MaterialTheme.colorScheme.surface,
     ) {
         Text(
@@ -420,6 +424,7 @@ fun SentenceTranslationDialog(
 ) {
     ModalBottomSheet(
         onDismissRequest = onDismiss,
+        shape = EareyeShapes.bottomSheet,
         containerColor = MaterialTheme.colorScheme.surface,
     ) {
         Column(

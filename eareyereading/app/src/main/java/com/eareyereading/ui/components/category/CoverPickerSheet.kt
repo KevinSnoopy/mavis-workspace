@@ -45,7 +45,7 @@ fun CoverPickerSheet(
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        shape = EareyeShapes.xxl,
+        shape = EareyeShapes.bottomSheet,
     ) {
         Column(
             modifier = Modifier

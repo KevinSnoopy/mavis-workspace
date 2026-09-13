@@ -5,6 +5,7 @@ import com.eareyereading.ui.components.category.AddBookFlowSheet
 import com.eareyereading.ui.components.category.Category
 import com.eareyereading.ui.components.category.CategoryEditSheet
 import com.eareyereading.ui.components.category.CategoryManageSheet
+import com.eareyereading.ui.components.category.PresetCategories
 import androidx.compose.runtime.Composable
 import com.eareyereading.domain.model.Book
 
@@ -14,6 +15,7 @@ import com.eareyereading.domain.model.Book
  * @param categories 合成的全部分类列表
  * @param onEdit 编辑分类回调
  * @param onAdd 新建分类回调
+ * @param onAddPreset 一键添加预制分类回调（分类名、图标名、颜色 ARGB long）
  * @param onDelete 删除分类元数据回调
  * @param onReorder 拖动排序回调
  * @param onDismiss 关闭回调
@@ -26,6 +28,7 @@ internal fun LibraryCategoryManageSheetWrapper(
     onDelete: (Category) -> Unit,
     onReorder: (List<Category>) -> Unit,
     onDismiss: () -> Unit,
+    onAddPreset: (name: String, icon: String, color: Long) -> Unit = { _, _, _ -> },
 ) {
     CategoryManageSheet(
         categories = categories,
@@ -34,6 +37,11 @@ internal fun LibraryCategoryManageSheetWrapper(
         onDelete = onDelete,
         onReorder = onReorder,
         onDismiss = onDismiss,
+        presets = PresetCategories,
+        // 与 LibraryCategoryEditSheetWrapper 保持同一套持久化参数形态
+        onAddPreset = { cat ->
+            onAddPreset(cat.name, cat.icon.name, cat.color.toArgb().toLong())
+        },
     )
 }
 

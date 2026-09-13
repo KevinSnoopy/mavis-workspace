@@ -17,7 +17,7 @@ import com.eareyereading.ui.theme.*
  * 空复习状态：没有待复习卡片时展示"去阅读攒生词"出口，形成学习闭环。
  */
 @Composable
-internal fun EmptyReviewView(onBack: () -> Unit) {
+internal fun EmptyReviewView(onGoReading: () -> Unit) {
     Column(
         modifier = Modifier.fillMaxSize(),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -44,7 +44,8 @@ internal fun EmptyReviewView(onBack: () -> Unit) {
         Spacer(modifier = Modifier.height(20.dp))
         // 返回继续阅读：阅读中点词加生词才会进复习队列，
         // 这里指一条"攒生词"的去路，页面不留死胡同
-        OutlinedButton(onClick = onBack) {
+        // （回调名点明目的地：复习是一级 Tab，无栈可弹，必须显式跳书库）
+        OutlinedButton(onClick = onGoReading) {
             Icon(Icons.Default.MenuBook, null, modifier = Modifier.size(16.dp))
             Spacer(modifier = Modifier.width(6.dp))
             Text("去阅读攒生词")

@@ -17,6 +17,7 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -50,7 +51,14 @@ internal const val GRID_COLUMNS = 3
  * 与列表卡 [BookCard] 同一动作集（分类/归档/删除）：封面右上角 ⋮ 常驻入口
  * （长按在网格里发现性差，列表卡的 ⋮ 用户已有肌肉记忆）。
  * 无滑动归档（横向滑动手势在网格里会与换行视线冲突），归档走菜单。
+ *
+ * ── 修复记录（P0）──
+ * 此前 [onClick] 只声明未接到卡片上（Card 用了无 onClick 的重载），
+ * 导致「切换为网格/瀑布流后整块书卡点不开、无法进入阅读」。
+ * 改用 Card 的可点击重载：涟漪与圆角裁剪由 Card 内部处理，
+ * 右上角 ⋮ 的 IconButton 自行消费点击，不会误触发进入阅读。
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun BookGridCard(
     book: Book,
@@ -68,6 +76,7 @@ internal fun BookGridCard(
     var showCategoryDialog by remember { mutableStateOf(false) }
 
     Card(
+        onClick = onClick,
         modifier = modifier,
         shape = RoundedCornerShape(14.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),

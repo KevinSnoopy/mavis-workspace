@@ -40,7 +40,6 @@ import kotlinx.coroutines.launch
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
-    onBack: () -> Unit,
     onNavigateToDictionaryManager: () -> Unit = {},
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
@@ -115,7 +114,7 @@ fun SettingsScreen(
 
     Scaffold(
         topBar = {
-            AppTopBar(title = "设置", onBack = onBack)
+            AppTopBar(title = "设置")
         },
         snackbarHost = { SnackbarHost(snackbarHostState) },
     ) { padding ->

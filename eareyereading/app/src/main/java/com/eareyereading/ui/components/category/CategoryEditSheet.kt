@@ -11,6 +11,8 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -19,6 +21,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
@@ -48,6 +51,7 @@ import com.eareyereading.ui.theme.Surface
  * 新建 / 编辑分类弹窗（SPEC §4.9.3）
  *
  * 三字段表单：名称 + 12 枚预设图标 + 10 个语义色 + 实时预览。
+ * 新建模式额外提供 [PresetCategories] 快选条（一键填充三元组）。
  *
  * 设计判断：
  * - icon-picker 6 列网格（12 图标正好两行）
@@ -69,7 +73,7 @@ fun CategoryEditSheet(
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        shape = EareyeShapes.xxl,
+        shape = EareyeShapes.bottomSheet,
     ) {
         Column(
             modifier = Modifier
@@ -83,6 +87,44 @@ fun CategoryEditSheet(
                 fontWeight = FontWeight.SemiBold,
                 modifier = Modifier.padding(bottom = 16.dp),
             )
+
+            // 预制分类快选（仅新建模式）：点一下即填充「名称 + 图标 + 颜色」，
+            // 用户不必从零敲名字、再从 12 图标 / 10 色里盲选
+            if (initial == null) {
+                Text(
+                    text = "预制分类（点击直接填充）",
+                    color = OnSurfaceVariant,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(bottom = 8.dp),
+                )
+                LazyRow(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 20.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    items(PresetCategories, key = { "preset_${it.name}" }) { preset ->
+                        FilterChip(
+                            selected = name == preset.name,
+                            onClick = {
+                                name = preset.name
+                                icon = preset.icon
+                                color = preset.color
+                            },
+                            label = { Text(preset.name) },
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = preset.icon.imageVector,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp),
+                                    tint = preset.color,
+                                )
+                            },
+                        )
+                    }
+                }
+            }
 
             // 字段 1：名称
             Text(

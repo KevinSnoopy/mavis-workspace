@@ -29,8 +29,18 @@ object EareyeShapes {
     /** 20dp：弹窗 sheet 顶部 */
     val xl = RoundedCornerShape(20.dp)
 
-    /** 28dp：bottom sheet 顶部圆角 */
+    /** 28dp：大圆角容器（值同 bottom sheet 顶部圆角） */
     val xxl = RoundedCornerShape(28.dp)
+
+    /**
+     * bottom sheet 专用：顶部 28dp 圆角 + **底部直角**。
+     *
+     * 底部直角不是审美取舍，是几何必然：ModalBottomSheet 始终贴屏底，
+     * 四角全圆会让屏幕下缘两侧露出 sheet 背后的内容（圆角镂空），
+     * 且与 M3 [androidx.compose.material3.BottomSheetDefaults] 默认形状不一致。
+     * 所有 ModalBottomSheet 一律传本 token，勿再传 [xxl]。
+     */
+    val bottomSheet = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
 
     /** 胶囊：full 圆角（50% 半径） */
     val full = RoundedCornerShape(50)

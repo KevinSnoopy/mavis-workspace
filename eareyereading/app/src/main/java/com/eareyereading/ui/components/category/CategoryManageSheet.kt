@@ -11,14 +11,18 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.AssistChip
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -56,7 +60,7 @@ private val ManageRowHeight = 60.dp
  * 分类管理弹窗（SPEC §4.9.2）
  *
  * 列出所有分类，每行：拖动手柄 / 图标 / 名称+计数 / 编辑+删除按钮。
- * 顶部「新建」次按钮。
+ * 顶部「新建」次按钮 + 「预制分类」一键添加区。
  *
  * 拖动排序（v2）：
  * - 长按手柄进入拖拽，固定行高 + 位移换算，越过整行即交换两项
@@ -72,6 +76,8 @@ fun CategoryManageSheet(
     onDelete: (Category) -> Unit,
     onReorder: (List<Category>) -> Unit,
     onDismiss: () -> Unit,
+    presets: List<Category> = PresetCategories,
+    onAddPreset: (Category) -> Unit = {},
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     // 删除确认：null = 未在确认流程
@@ -86,7 +92,7 @@ fun CategoryManageSheet(
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        shape = EareyeShapes.xxl,
+        shape = EareyeShapes.bottomSheet,
     ) {
         Column(
             modifier = Modifier
@@ -115,6 +121,44 @@ fun CategoryManageSheet(
                 color = OnSurfaceVariant,
                 modifier = Modifier.padding(vertical = 8.dp),
             )
+
+            // ── 预制分类：一键收进书库 ──
+            // 只列尚未拥有的（按名字判重），全部拥有后整块隐藏，
+            // 避免"点了没反应"的死按钮长期占位
+            val availablePresets = remember(categories, presets) {
+                val owned = categories.mapTo(HashSet()) { it.name }
+                presets.filterNot { it.name in owned }
+            }
+            if (availablePresets.isNotEmpty()) {
+                Text(
+                    text = "预制分类 · 点击添加到书库",
+                    color = Primary,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(bottom = 8.dp),
+                )
+                LazyRow(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    items(availablePresets, key = { "preset_${it.name}" }) { preset ->
+                        AssistChip(
+                            onClick = { onAddPreset(preset) },
+                            label = { Text(preset.name) },
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = Icons.Default.Add,
+                                    contentDescription = "添加${preset.name}",
+                                    modifier = Modifier.size(14.dp),
+                                    tint = preset.color,
+                                )
+                            },
+                        )
+                    }
+                }
+            }
             // 分类列表：长按手柄拖动重排；固定行高让位换算
             Column(
                 modifier = Modifier

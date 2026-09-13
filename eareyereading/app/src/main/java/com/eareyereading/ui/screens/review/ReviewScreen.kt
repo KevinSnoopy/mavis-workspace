@@ -13,10 +13,18 @@ import com.eareyereading.ui.theme.*
 import com.eareyereading.util.notificationPermissionGranted
 import com.eareyereading.util.rememberNotificationPermissionRequester
 
+/**
+ * 复习主屏：待复习列表与通知权限入口。
+ *
+ * 一级 Tab（底部导航「复习」）：顶栏不带返回箭头——它是导航图的顶层目的地，
+ * 无栈可弹。页面内容区的动作显式声明目的地：
+ * [onBack] = 回首页（错误态/完成页的"返回"），[onGoReading] = 去书库攒生词。
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ReviewScreen(
     onBack: () -> Unit,
+    onGoReading: () -> Unit = onBack,
     viewModel: ReviewViewModel = hiltViewModel(),
 ) {
     val uiState by viewModel.uiState.collectAsState()
@@ -34,7 +42,7 @@ fun ReviewScreen(
 
     Scaffold(
         topBar = {
-            AppTopBar(title = "复习", onBack = onBack) {
+            AppTopBar(title = "复习") {
                 if (dueCount > 0) {
                     Badge(
                         containerColor = Warning,
@@ -63,7 +71,7 @@ fun ReviewScreen(
                 uiState.isSessionComplete && uiState.totalReviewed == 0 -> {
                     // 没有待复习：给"去阅读攒生词"出口，形成学习闭环
                     //（旧实现只有一句贺词，页面无任何下一步）
-                    EmptyReviewView(onBack = onBack)
+                    EmptyReviewView(onGoReading = onGoReading)
                 }
                 uiState.isSessionComplete -> {
                     // 复习完成总结

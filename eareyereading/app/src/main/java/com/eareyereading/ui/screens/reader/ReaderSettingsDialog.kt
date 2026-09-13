@@ -50,6 +50,7 @@ fun ReaderSettingsDialog(
 ) {
     ModalBottomSheet(
         onDismissRequest = onDismiss,
+        shape = EareyeShapes.bottomSheet,
         containerColor = MaterialTheme.colorScheme.surface,
     ) {
         Column(

@@ -251,16 +251,24 @@ fun AppNavigation(
                 }
 
                 composable(Screen.Vocabulary.route) {
-                    VocabularyScreen(onBack = { navController.popBackStack() })
+                    // 一级 Tab：无返回箭头，也不需要 onBack——
+                    // 页面间切换由底部导航栏完成（popUpTo + saveState，不堆栈）
+                    VocabularyScreen()
                 }
 
                 composable(Screen.Review.route) {
-                    ReviewScreen(onBack = { navController.popBackStack() })
+                    // 一级 Tab：顶栏无返回箭头。内容区的"返回/完成"回首页、
+                    // "去阅读攒生词"跳书库——都是顶层导航，不走 popBackStack
+                    ReviewScreen(
+                        onBack = { navController.navigateToTopLevel(Screen.Home.route) },
+                        onGoReading = { navController.navigateToTopLevel(Screen.Library.route) },
+                    )
                 }
 
                 composable(Screen.Settings.route) {
+                    // 设置是一级 Tab（无返回箭头）；词典管理是它下面的二级页，
+                    // 由该页自己的 AppTopBar(onBack = ...) 提供返回
                     SettingsScreen(
-                        onBack = { navController.popBackStack() },
                         onNavigateToDictionaryManager = { navController.navigate(Screen.DictionaryManager.route) },
                     )
                 }

@@ -167,6 +167,9 @@ fun LibraryScreen(
                 editingCategory = null
                 showCategoryEdit = true
             },
+            onAddPreset = { name, icon, color ->
+                viewModel.saveCategoryMeta(name, icon, color)
+            },
             onDelete = { cat ->
                 viewModel.deleteCategoryMeta(cat.name)
                 if (uiState.selectedCategory == cat.name) viewModel.setCategory(null)

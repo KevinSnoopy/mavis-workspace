@@ -21,18 +21,19 @@ import com.eareyereading.ui.theme.SectionTitle
 
 /**
  * 词汇本主屏：搜索、学习概览、难度分布、Tab 筛选与单词列表。
+ *
+ * 一级 Tab（底部导航「词汇」）：顶栏不带返回箭头，页面间靠底部导航平行切换。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun VocabularyScreen(
-    onBack: () -> Unit,
     viewModel: VocabularyViewModel = hiltViewModel(),
 ) {
     val uiState by viewModel.uiState.collectAsState()
 
     Scaffold(
         topBar = {
-            AppTopBar(title = "词汇本", onBack = onBack)
+            AppTopBar(title = "词汇本")
         },
     ) { padding ->
         Column(
