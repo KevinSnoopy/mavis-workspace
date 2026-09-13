@@ -15,6 +15,8 @@ import androidx.navigation.compose.rememberNavController
 import com.eareyereading.domain.repository.SettingsRepository
 import com.eareyereading.ui.AppNavigation
 import com.eareyereading.ui.Screen
+import com.eareyereading.ui.compliance.PRIVACY_VERSION
+import com.eareyereading.ui.compliance.PrivacyConsentGate
 import com.eareyereading.ui.navigateToTopLevel
 import com.eareyereading.ui.screens.library.LibraryViewModel
 import com.eareyereading.ui.screens.onboarding.FirstLaunchOnboarding
@@ -62,10 +64,23 @@ class MainActivity : ComponentActivity() {
                 showOnboarding = false
             }
 
+            // ── 上架合规：隐私政策同意门（工信部 164 号文 / 商店审核硬性要求）──
+            // 同意前不渲染任何主功能 UI、不消费外部导入 Intent（pendingViewUri
+            // 保持挂起，同意后由下方 LaunchedEffect 接手），不发起联网/权限。
+            // 存版本号：政策实质变更后（PRIVACY_VERSION +1）已同意用户需重新同意。
+            var privacyAgreed by remember {
+                mutableStateOf(prefs.getInt("privacy_agreed_version", 0) >= PRIVACY_VERSION)
+            }
+            val agreePrivacy = {
+                prefs.edit().putInt("privacy_agreed_version", PRIVACY_VERSION).apply()
+                privacyAgreed = true
+            }
+
             // 收到外部 EPub 后跳到书库展示导入进度（冷启动时 pendingViewUri 已在
-            // 首次组合前由 onCreate 写值，onNewIntent 时靠 state 触达重组）
-            LaunchedEffect(pendingViewUri) {
-                if (pendingViewUri != null) {
+            // 首次组合前由 onCreate 写值，onNewIntent 时靠 state 触达重组）。
+            // 仅在隐私政策已同意后消费：同意前一切联网/导入暂停。
+            LaunchedEffect(pendingViewUri, privacyAgreed) {
+                if (privacyAgreed && pendingViewUri != null) {
                     pendingViewUri = null
                     navController.navigateToTopLevel(Screen.Library.route)
                 }
@@ -79,8 +94,14 @@ class MainActivity : ComponentActivity() {
                 dynamicColor = dynamicColor,
             ) {
                 Surface(modifier = Modifier.fillMaxSize()) {
-                    // issue 5.1：首启引导页（单次）在上层，之后进主界面
-                    if (showOnboarding) {
+                    // 上架合规：隐私同意门在最外层——未同意只见弹窗，见不到任何功能界面
+                    if (!privacyAgreed) {
+                        PrivacyConsentGate(
+                            onAgreed = agreePrivacy,
+                            onDecline = { finishAffinity() },
+                        )
+                    } else if (showOnboarding) {
+                        // issue 5.1：首启引导页（单次）在上层，之后进主界面
                         FirstLaunchOnboarding(onDone = finishOnboarding)
                     } else {
                         AppNavigation(navController = navController)

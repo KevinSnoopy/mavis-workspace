@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -47,6 +49,29 @@ android {
         }
     }
 
+    // ── release 正式签名（上架商店必备）──
+    // 凭据来源优先级：keystore/signing.properties（本地，gitignore）> 环境变量 > 不签名。
+    // 未配置时 release 构建退回 unsigned，CI/他人克隆不会因缺签名文件而挂掉。
+    signingConfigs {
+        create("release") {
+            val propFile = rootProject.file("keystore/signing.properties")
+            if (propFile.exists()) {
+                val props = Properties().apply {
+                    propFile.inputStream().use { load(it) }
+                }
+                storeFile = rootProject.file(props.getProperty("storeFile"))
+                storePassword = props.getProperty("storePassword")
+                keyAlias = props.getProperty("keyAlias")
+                keyPassword = props.getProperty("keyPassword")
+            } else if (System.getenv("RELEASE_STORE_FILE") != null) {
+                storeFile = rootProject.file(System.getenv("RELEASE_STORE_FILE"))
+                storePassword = System.getenv("RELEASE_STORE_PASSWORD")
+                keyAlias = System.getenv("RELEASE_KEY_ALIAS")
+                keyPassword = System.getenv("RELEASE_KEY_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
         release {
             // R8 裁剪 + 资源缩减：未用到的类/方法/资源全部裁掉。
@@ -58,6 +83,11 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            // 仅在凭据齐全时挂签名（storeFile 为 null 说明本地/CI 无签名配置）
+            val releaseSigning = signingConfigs.getByName("release")
+            if (releaseSigning.storeFile?.exists() == true) {
+                signingConfig = releaseSigning
+            }
         }
     }
 

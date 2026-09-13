@@ -7,6 +7,11 @@ build/
 # Local config (contains device-specific paths)
 local.properties
 
+# Release signing (NEVER commit keystore or passwords)
+keystore/*.jks
+keystore/*.keystore
+keystore/signing.properties
+
 # Android Studio
 /.cxx/
 *.apk

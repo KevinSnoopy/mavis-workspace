@@ -20,6 +20,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -113,13 +114,20 @@ fun SettingsScreen(
         }
     }
 
-    Scaffold(
-        contentWindowInsets = WindowInsets(0),
-        topBar = {
-            AppTopBar(title = "设置")
-        },
-        snackbarHost = { SnackbarHost(snackbarHostState) },
-    ) { padding ->
+    // ── 关于与合规：政策全文查看层 + 开源许可对话框 ──
+    var viewingDoc by androidx.compose.runtime.remember {
+        androidx.compose.runtime.mutableStateOf<com.eareyereading.ui.compliance.ComplianceDoc?>(null)
+    }
+    var showLicenses by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+
+    androidx.compose.foundation.layout.Box(modifier = Modifier.fillMaxSize()) {
+        Scaffold(
+            contentWindowInsets = WindowInsets(0),
+            topBar = {
+                AppTopBar(title = "设置")
+            },
+            snackbarHost = { SnackbarHost(snackbarHostState) },
+        ) { padding ->
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
@@ -222,10 +230,33 @@ fun SettingsScreen(
                 )
             }
 
+            // ── 关于与合规（隐私政策/用户协议/开源许可/备案号）──
+            item {
+                Spacer(modifier = Modifier.height(8.dp))
+                SettingsAboutSection(
+                    onViewDoc = { viewingDoc = it },
+                    onShowLicenses = { showLicenses = true },
+                )
+                Spacer(modifier = Modifier.height(20.dp))
+            }
+
             // ── 版本 ──────────────────────────────────
             item {
                 SettingsVersionFooter(versionName)
             }
+        }
+        }
+
+        // 政策全文覆盖层：全屏渲染（WebView，内置 assets 离线可看）
+        viewingDoc?.let { doc ->
+            com.eareyereading.ui.compliance.ComplianceDocViewer(
+                doc = doc,
+                onBack = { viewingDoc = null },
+            )
+        }
+
+        if (showLicenses) {
+            OpenSourceLicensesDialog(onDismiss = { showLicenses = false })
         }
     }
 }
