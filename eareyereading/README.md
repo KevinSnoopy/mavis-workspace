@@ -53,6 +53,28 @@ app/src/main/java/com/eareyereading/
 └── util/                 # 工具类 (EpubParser, WordAnalyzer, TtsHelper)
 ```
 
+## 项目文档
+
+项目文档统一放在 [`docs/`](docs/) 目录，根目录只保留本 README。
+
+**当前有效文档**（`docs/`）：
+
+| 文档 | 内容 |
+|------|------|
+| [REFACTOR_13_PRINCIPLES.md](docs/REFACTOR_13_PRINCIPLES.md) | 第一轮重构报告（13 条设计原则，职责拆分） |
+| [REFACTOR_13_PRINCIPLES_R2.md](docs/REFACTOR_13_PRINCIPLES_R2.md) | 第二轮重构报告（DRY 专题，重复消除） |
+| [COMPLETION_R3.md](docs/COMPLETION_R3.md) | 第三轮重构报告（功能补全与遗留清理） |
+| [FIX_TRANSLATION_LAYOUT.md](docs/FIX_TRANSLATION_LAYOUT.md) | 修复：阅读页翻译导致布局持续刷新 |
+| [TOC_FEATURE_RESEARCH.md](docs/TOC_FEATURE_RESEARCH.md) | 阅读页「目录」功能调研与实现方案 |
+| [PERF_AUDIT_2026-09-13.md](docs/PERF_AUDIT_2026-09-13.md) | 全项目性能与死代码审计（2026-09-13） |
+| [UI_GUIDANCE_REVIEW_2026-09-13.md](docs/UI_GUIDANCE_REVIEW_2026-09-13.md) | UI 设计评审与功能引导缺口报告（2026-09-13） |
+
+**历史归档**（`docs/archive/`，阶段性评审/修复过程记录，结论已吸收进代码）：
+
+- [REVIEW_CYCLE1-10.md](docs/archive/) — Round 1~10 循环评审报告
+- [FIX_REPORT.md](docs/archive/FIX_REPORT.md) — P0/P1 静态评审与修复报告
+- [ISSUES_2026-08-31.md](docs/archive/ISSUES_2026-08-31.md) — 问题清单（按状态重组版）
+
 ## 构建
 
 1. **克隆项目**
